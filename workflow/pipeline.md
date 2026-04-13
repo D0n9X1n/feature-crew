@@ -1,4 +1,4 @@
-# M-Team Development Pipeline
+# Feature-Crew Development Pipeline
 
 This document defines the full orchestration flow for the agent team. The **main Copilot session** acts as the **Product Manager (PM)** and orchestrates all other agents.
 

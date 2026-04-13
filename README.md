@@ -1,4 +1,4 @@
-# M-Team
+# Feature-Crew
 
 An agent team framework for AI-assisted development. Defines 5 specialized agent roles that work as a pipeline to turn ideas into production-ready code.
 
@@ -8,7 +8,7 @@ An agent team framework for AI-assisted development. Defines 5 specialized agent
 
 ```bash
 cd your-project
-git submodule add <m-team-repo-url> m-team
+git submodule add <feature-crew-repo-url> feature-crew
 ```
 
 ### Wire it up
@@ -16,17 +16,17 @@ git submodule add <m-team-repo-url> m-team
 Create `.github/copilot-instructions.md` in your project root:
 
 ```markdown
-This project uses the m-team agent framework.
+This project uses the feature-crew agent framework.
 
-Read and follow `m-team/.github/copilot-instructions.md` for all development workflows.
+Read and follow `feature-crew/.github/copilot-instructions.md` for all development workflows.
 
 When the user asks to build, fix, or change anything:
 1. Act as the PM — discuss requirements, produce a spec
-2. Dispatch agents from `m-team/agents/` following `m-team/workflow/pipeline.md`
+2. Dispatch agents from `feature-crew/agents/` following `feature-crew/workflow/pipeline.md`
 3. Run all independent work in parallel
 
-Agent templates: `m-team/agents/`
-Pipeline definition: `m-team/workflow/pipeline.md`
+Agent templates: `feature-crew/agents/`
+Pipeline definition: `feature-crew/workflow/pipeline.md`
 ```
 
 That's it. Start a new Copilot session and describe what you want to build.
@@ -67,7 +67,7 @@ Everything that can run in parallel does:
 ## Project Structure
 
 ```
-m-team/
+feature-crew/
 ├── .github/
 │   └── copilot-instructions.md   ← PM behavior + orchestration rules
 ├── agents/
@@ -98,11 +98,11 @@ These apply to all agents in the team:
 ## Updating
 
 ```bash
-cd your-project/m-team
+cd your-project/feature-crew
 git pull origin main
 cd ..
-git add m-team
-git commit -m "chore: update m-team"
+git add feature-crew
+git commit -m "chore: update feature-crew"
 ```
 
 ## License

@@ -1,11 +1,11 @@
-# Integrating M-Team Into a Project
+# Integrating Feature-Crew Into a Project
 
 ## Step 1: Add the submodule
 
 ```bash
 cd your-project
-git submodule add <m-team-repo-url> m-team
-git commit -m "chore: add m-team agent framework"
+git submodule add <feature-crew-repo-url> feature-crew
+git commit -m "chore: add feature-crew agent framework"
 ```
 
 ## Step 2: Create your project's Copilot instructions
@@ -15,19 +15,19 @@ Create `.github/copilot-instructions.md` in your project root with the content b
 ```markdown
 # [Your Project Name]
 
-This project uses the **m-team** agent framework for all development.
+This project uses the **feature-crew** agent framework for all development.
 
 ## Agent Framework
 
-Read and follow `m-team/.github/copilot-instructions.md` for all development workflows.
+Read and follow `feature-crew/.github/copilot-instructions.md` for all development workflows.
 
 When asked to build, fix, or change anything:
 1. Act as the PM — discuss requirements, produce a spec
-2. Dispatch agents from `m-team/agents/` following `m-team/workflow/pipeline.md`
+2. Dispatch agents from `feature-crew/agents/` following `feature-crew/workflow/pipeline.md`
 3. Run all independent work in parallel using background mode
 
-Agent templates: `m-team/agents/`
-Pipeline: `m-team/workflow/pipeline.md`
+Agent templates: `feature-crew/agents/`
+Pipeline: `feature-crew/workflow/pipeline.md`
 
 ## Project-Specific
 
@@ -62,10 +62,10 @@ Start a new Copilot session in your project and ask it to build something. It sh
 
 ### Override agent behavior
 
-If your project needs different agent behavior, create a `m-team-overrides/` directory in your project root with modified prompt templates. Reference them in your `.github/copilot-instructions.md`:
+If your project needs different agent behavior, create a `feature-crew-overrides/` directory in your project root with modified prompt templates. Reference them in your `.github/copilot-instructions.md`:
 
 ```markdown
-Use agent templates from `m-team-overrides/` when they exist, falling back to `m-team/agents/` otherwise.
+Use agent templates from `feature-crew-overrides/` when they exist, falling back to `feature-crew/agents/` otherwise.
 ```
 
 ### Skip phases for small changes
