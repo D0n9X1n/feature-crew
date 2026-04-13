@@ -51,7 +51,7 @@ You (human) ←→ PM (Copilot session)
 
 | Role | Agent Type | What It Does |
 |------|-----------|--------------|
-| **PM** | Main session | Discusses requirements with you, writes spec, orchestrates the pipeline |
+| **PM** | Main session | Brainstorms with you, writes spec, orchestrates the pipeline (`agents/pm.md`) |
 | **Architect** | `general-purpose` subagent | Takes spec → produces design + task-by-task implementation plan |
 | **Developer** | `general-purpose` subagent | Implements one task with TDD. Fresh agent per task. Runs in parallel |
 | **QA** | `general-purpose` + `code-review` | Two-stage: spec compliance first, then code quality. Parallel across tasks |

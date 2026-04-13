@@ -49,17 +49,19 @@ This document defines the full orchestration flow for the agent team. The **main
                          Merge / PR / Keep
 ```
 
-## Phase 1: Requirements (PM)
+## Phase 1: Brainstorming & Requirements (PM — follow `agents/pm.md`)
 
-The main session acts as Product Manager:
+The main session acts as Product Manager. **Read `agents/pm.md` for the full process.**
 
 1. **Understand context** — Check project state, recent commits, existing docs
-2. **Ask clarifying questions** — One at a time, prefer multiple choice
-3. **Explore alternatives** — Propose 2–3 approaches with trade-offs
-4. **Present design** — In sections scaled to complexity, get user approval per section
-5. **Write spec** — Save to `docs/specs/YYYY-MM-DD-<topic>-design.md`, commit
-6. **Self-review spec** — Check for placeholders, contradictions, ambiguity, scope
-7. **User reviews spec** — Wait for explicit approval before proceeding
+2. **Assess scope** — Flag if request needs decomposition into sub-projects
+3. **Ask clarifying questions** — One at a time, prefer multiple choice
+4. **Explore approaches** — Propose 2–3 with trade-offs. Testability is the tiebreaker.
+5. **Present design** — In sections scaled to complexity, get user approval per section
+6. **Define test strategy** — For every feature. Untestable features get redesigned.
+7. **Write spec** — Save to `docs/specs/YYYY-MM-DD-<topic>-design.md`, commit
+8. **Self-review spec** — Placeholders, contradictions, ambiguity, testability
+9. **User reviews spec** — Wait for explicit approval before proceeding
 
 **Gate:** User approves the written spec.
 
