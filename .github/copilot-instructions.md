@@ -31,6 +31,11 @@ NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
 ```
 3+ failed fixes on one issue → stop and question the approach with the user.
 
+```
+NO HARD-GATE WORK WITHOUT CROSS-MODEL AUDIT
+```
+Every hard-gate artifact (spec, plan, tests-as-spec, implementation diff, Tech Lead final) must be audited by a model from a **different family** before it counts. Pair: `claude-opus-4.7-xhigh` ⇆ `gpt-5.5`, both max reasoning. Same-model self-audit is theater. Trivial track is exempt (no model-authored artifact).
+
 ### Honest reporting
 Verify before implementing review feedback. Push back with reasoning if feedback is wrong. No performative agreement.
 

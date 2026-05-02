@@ -47,14 +47,15 @@ No spec doc. No subagent. No QA pass. **The verification output is the test evid
    - Behavior (3–8 bullets)
    - Test approach (1–3 bullets, including the must-pass test command)
    - Non-goals (anything excluded to prevent scope creep)
-2. **User approves the spec.** Hard gate.
-3. **Implement.** Either:
+2. **Cross-audit spec.** Dispatch a different-family model in one-clue mode to review the spec — especially the must-pass test — for ambiguity, missing edge cases, or a test that doesn't actually verify the stated behavior. Address CRITICAL findings before user approval.
+3. **User approves the spec.** Hard gate.
+4. **Implement.** Either:
    - PM does it directly (preferred for ≤2 files), or
    - Dispatch one developer subagent with TDD prompt.
-4. **Verify.** PM runs the must-pass test command from the spec and pastes output. Hard gate.
-5. **One QA pass.** Dispatch `code-review` subagent in **one-clue mode** (see `workflow/pipeline.md`). Skip the dedicated spec-compliance stage — PM verified spec match while implementing.
-6. PM judges QA finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
-7. **Commit on feature branch + offer PR.**
+5. **Verify.** PM runs the must-pass test command from the spec and pastes output. Hard gate.
+6. **One QA pass.** Dispatch `code-review` subagent in **one-clue mode** (see `workflow/pipeline.md`). Skip the dedicated spec-compliance stage — spec was already cross-audited and PM verified spec match while implementing.
+7. PM judges QA finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
+8. **Commit on feature branch + offer PR.**
 
 Rough cost target: ≤2 subagent dispatches.
 
@@ -64,13 +65,14 @@ Follow the full pipeline in `workflow/pipeline.md`. Summary:
 
 1. **Brainstorm.** One question at a time, multiple-choice preferred. Cover: purpose, constraints, success criteria, edge cases, **test strategy for every feature**.
 2. **Spec doc, capped.** Write to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap: 1000 words.** If you can't fit, decompose into sub-projects, each with its own spec → plan cycle.
-3. **User approves spec.** Hard gate.
-4. **Architect produces plan.** Dispatch with full spec text. Plan has hard cap **500 lines**. Over the cap → architect decomposes; if irreducible, escalate to user for re-scoping.
-5. **User approves plan.** Hard gate.
-6. **Parallel implementation.** Group tasks by file independence. Dispatch developers in parallel **only when ≥3 truly independent tasks remain**. For 1–2 tasks, sequential is fine.
-7. **Per-task QA in one-clue mode.** Spec-compliance pass first, then code-quality pass.
-8. **Tech Lead final review.** Hard gate before merge.
-9. **Cost telemetry** — see `workflow/pipeline.md` (Standard and Complex tracks both record telemetry; format and target are canonical there).
+3. **Cross-audit spec.** Different-family one-clue review of spec doc — especially must-pass criteria and test strategy — before requesting user approval. Address CRITICAL findings.
+4. **User approves spec.** Hard gate.
+5. **Architect produces plan.** Dispatch with full spec text. Plan has hard cap **500 lines**. Over the cap → architect decomposes; if irreducible, escalate to user for re-scoping.
+6. **User approves plan.** Hard gate.
+7. **Parallel implementation.** Group tasks by file independence. Dispatch developers in parallel **only when ≥3 truly independent tasks remain**. For 1–2 tasks, sequential is fine.
+8. **Per-task QA in one-clue mode.** Spec-compliance pass first, then code-quality pass.
+9. **Tech Lead final review.** Hard gate before merge.
+10. **Cost telemetry** — see `workflow/pipeline.md` (Standard and Complex tracks both record telemetry; format and target are canonical there).
 
 ---
 
@@ -90,9 +92,9 @@ For executable code: RED → verify-fail → GREEN → verify-pass → REFACTOR 
 
 For docs/markdown work: write the must-pass acceptance tests (objective, grep/wc-checkable) **before** writing the doc. The test set is the RED phase; the doc draft must make it green.
 
-### No same-model self-audit
+### Cross-model audit at hard gates
 
-A model auditing its own output with a rotated prompt is theater, not independent perspective. If you want a second opinion: ask the user, or dispatch a subagent on a **different model**. Never schedule "self-vote round 2."
+Every model-authored hard-gate artifact (spec, plan, **tests-as-spec**, implementation diff, Tech Lead final) must be audited by a model from a **different family** before it counts. Strongest pair, max reasoning: `claude-opus-4.7-xhigh` ⇆ `gpt-5.5`. Same-model audit (even self-critique) is theater — does not satisfy the gate. See `workflow/pipeline.md` for the full hard-gate list.
 
 ### Decompose, don't push past caps
 

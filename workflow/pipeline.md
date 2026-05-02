@@ -26,6 +26,16 @@ A **hard gate** blocks all forward motion until satisfied. The complete list:
 
 A **soft gate** is advisory — the agent reports findings, the PM decides whether to act now or file a follow-up. **Code-quality QA findings (style, structure, maintainability) are soft gates by default.** Promote to hard only when the finding is a confirmed correctness, security, or data-loss bug — but spec-compliance failures (gate #7) are *always* hard regardless of severity.
 
+### Cross-Model Audit at Every Hard Gate
+
+Every model-authored hard-gate artifact (spec, plan, **tests-as-spec**, implementation diff, Tech Lead final review) must be audited by a model from a **different family** before it counts as satisfied. Strongest pair, both at max reasoning effort:
+
+- `claude-opus-4.7-xhigh` ⇆ `gpt-5.5`
+
+Same-model audit (even self-critique with rotated prompts) is theater and **does not satisfy the gate**. The author of the must-pass tests is the spec author for cross-audit purposes — bad tests poison every downstream gate.
+
+Trivial-track work has only user-approval and mechanical-verification gates (no model-authored artifact), so cross-model audit does not apply there. Speed is preserved.
+
 ---
 
 ## Track 1 — Trivial
@@ -93,12 +103,13 @@ A 1-line change in any of these areas can have outsized blast radius and needs a
    - Behavior (3–8 bullets)
    - Test approach (must-pass test command)
    - Non-goals
-4. User approves spec (hard gate).
-5. PM implements directly (≤2 files) **or** dispatches one developer subagent with TDD prompt.
-6. PM runs the must-pass tests; output pasted (hard gate).
-7. Dispatch one `code-review` subagent in **one-clue mode** (see below).
-8. PM judges the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
-9. Commit on feature branch; offer PR to the user.
+4. **Cross-audit spec.** Before requesting user approval, dispatch a different-family model in one-clue mode to review the spec — especially the must-pass test command — for ambiguity, missing edge cases, or a test that doesn't actually verify the stated behavior. Address CRITICAL findings.
+5. User approves spec (hard gate).
+6. PM implements directly (≤2 files) **or** dispatches one developer subagent with TDD prompt.
+7. PM runs the must-pass tests; output pasted (hard gate).
+8. Dispatch one `code-review` subagent in **one-clue mode** (see below).
+9. PM judges the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
+10. Commit on feature branch; offer PR to the user.
 
 ### Worked example
 
@@ -106,7 +117,7 @@ A 1-line change in any of these areas can have outsized blast radius and needs a
 >
 > PM: "Standard — 2 files (`deploy.sh`, `tests/deploy_test.sh`), no architectural change. OK?" → user OK.
 >
-> PM writes 5-bullet spec inline → user approves.
+> PM writes 5-bullet spec inline → dispatches gpt-5.5 in one-clue mode to cross-audit spec → returns PASS → user approves.
 >
 > PM implements TDD: failing test for `--dry-run` not yet supported → makes it pass → all tests green.
 >
@@ -114,7 +125,7 @@ A 1-line change in any of these areas can have outsized blast radius and needs a
 >
 > PM dispatches `code-review` in one-clue mode → returns PASS.
 >
-> PM commits, offers PR. Total: 0 dev dispatches (PM did it), 1 QA dispatch.
+> PM commits, offers PR. Total: 2 subagent dispatches (1 spec cross-audit, 1 code-review).
 
 ### Cost expectation
 
@@ -139,28 +150,29 @@ A 1-line change in any of these areas can have outsized blast radius and needs a
 3. **Brainstorm.** PM asks clarifying questions, one at a time, multiple-choice preferred. Covers purpose, constraints, success criteria, edge cases, test strategy.
 4. PM presents design in sections, gets per-section user approval.
 5. **Spec.** Write to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap: 1000 words.** If draft exceeds, decompose into sub-projects.
-6. User approves spec (hard gate).
-7. **Architect.** Dispatch `general-purpose` subagent with full spec text + project structure + tech constraints. Architect produces plan.
-8. **Plan cap.** Plan ≤ **500 lines**. Over the cap → architect decomposes; if irreducible, escalate to user for re-scoping.
-9. User approves plan (hard gate).
-10. **Parallel implementation.** Group tasks by file independence. Dispatch developers in parallel **only when ≥3 truly independent tasks remain**. For 1–2 tasks, sequential is fine.
-11. **Per-task QA in one-clue mode.** Spec-compliance pass first, then code-quality pass. Each returns single most important finding or PASS.
-12. **Tech Lead final review.** Dispatch with spec, plan, full diff, task summaries. Hard gate before merge.
-13. **Cost telemetry.** PM appends one-liner to PR description: total dispatches, approximate wall-clock, model mix.
+6. **Cross-audit spec.** Different-family one-clue review of spec doc — especially must-pass criteria and test strategy — before requesting user approval. Address CRITICAL findings.
+7. User approves spec (hard gate).
+8. **Architect.** Dispatch `general-purpose` subagent with full spec text + project structure + tech constraints. Architect produces plan.
+9. **Plan cap.** Plan ≤ **500 lines**. Over the cap → architect decomposes; if irreducible, escalate to user for re-scoping.
+10. User approves plan (hard gate).
+11. **Parallel implementation.** Group tasks by file independence. Dispatch developers in parallel **only when ≥3 truly independent tasks remain**. For 1–2 tasks, sequential is fine.
+12. **Per-task QA in one-clue mode.** Spec-compliance pass first, then code-quality pass. Each returns single most important finding or PASS.
+13. **Tech Lead final review.** Dispatch with spec, plan, full diff, task summaries. Hard gate before merge.
+14. **Cost telemetry.** PM appends one-liner to PR description: total dispatches, approximate wall-clock, model mix.
 
 ### Worked example (sketch)
 
 > User: "build OAuth + SAML auth subsystem."
 >
-> PM proposes Complex. Brainstorms: which providers? session vs JWT? RBAC scope? → spec written, 850 words, committed. User approves.
+> PM proposes Complex. Brainstorms: which providers? session vs JWT? RBAC scope? → spec written, 850 words, committed. **gpt-5.5 cross-audits spec** → flags one IMPORTANT (missing logout flow in must-pass criteria) → addressed → user approves.
 >
-> Architect produces 380-line plan with 12 tasks. User approves.
+> Architect (Opus) produces 380-line plan with 12 tasks. User approves.
 >
 > 4 tasks are independent (DB schema, OAuth provider config, SAML config, login UI shell) — dispatched in parallel. 8 sequenced behind them.
 >
 > Per-task QA in one-clue mode catches one CRITICAL (session token not invalidated on logout) — fixed in a single dev cycle.
 >
-> Tech Lead approves. PR opened. Cost line: `17 dispatches, ~3h wall-clock, mix of Sonnet (architect, tech lead) and Haiku (mechanical dev tasks)`.
+> **Tech Lead final on gpt-5.5** (different family from Opus implementers) approves. PR opened. Cost line: `17 dispatches, ~3h wall-clock, models: claude-opus-4.7-xhigh (architect, devs) + gpt-5.5 (spec audit, tech lead) + Haiku (mechanical tasks)`.
 
 ---
 
@@ -215,7 +227,7 @@ The cap is not silently overridable. If the user explicitly says "I am intention
 - **Fresh context per dispatch.** Paste the task/spec text inline. Do not tell subagents to "read the plan file."
 - **Model selection:** Haiku for mechanical tasks (well-specified, single-file). Sonnet/default for design or judgment. Don't over-spec models — defaults are fine.
 - **Subagent self-review does not replace QA.** Both happen.
-- **No same-model self-audit.** A subagent re-reading its own output with a "now critique it" prompt produces near-zero independent signal. Use a different model or escalate to the user.
+- **No same-model self-audit.** See "Cross-Model Audit at Every Hard Gate" above. Even outside hard gates, prefer a different-family model for any second-opinion pass.
 - **Max 3 fix cycles per issue.** Then stop and question the approach with the user.
 
 ---
