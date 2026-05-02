@@ -18,51 +18,46 @@ Create `.github/copilot-instructions.md` in your project root:
 ```markdown
 This project uses the feature-crew agent framework.
 
-Read and follow `feature-crew/.github/copilot-instructions.md` for all development workflows.
+Read `feature-crew/.github/copilot-instructions.md`, `feature-crew/agents/pm.md`, and `feature-crew/workflow/pipeline.md` at session start.
 
 When the user asks to build, fix, or change anything:
-1. Act as the PM — discuss requirements, produce a spec
-2. Dispatch agents from `feature-crew/agents/` following `feature-crew/workflow/pipeline.md`
-3. Run all independent work in parallel
-
-Agent templates: `feature-crew/agents/`
-Pipeline definition: `feature-crew/workflow/pipeline.md`
+1. Act as the PM — propose a track (Trivial / Standard / Complex) and confirm with the user
+2. Follow the matching flow in `feature-crew/workflow/pipeline.md`
+3. Right-size the process to the change — don't apply Complex ceremony to Trivial work
 ```
 
 That's it. Start a new Copilot session and describe what you want to build.
 
 ## How It Works
 
+Every request starts with the PM picking a **track**:
+
 ```
-You (human) ←→ PM (Copilot session)
-                    ↓ spec
-               Architect → design + plan
-                    ↓ (you approve)
-               Developers → code + tests  (parallel)
-                    ↓
-               QA → spec check + code review  (parallel)
-                    ↓
-               Tech Lead → final review
-                    ↓
-               Merge / PR
+Trivial   →  PM does it directly + verifies + commits           (1 file, no design)
+Standard  →  bullet-spec + light build + one QA pass            (1–5 files, small feature)
+Complex   →  brainstorm → spec → architect → devs → QA → tech lead   (multi-module, new arch)
 ```
+
+Wrong track = wasted work or missed risk. The PM proposes a track on every request; the user can override. See `workflow/pipeline.md` for full flows + worked examples.
 
 ### The Team
 
-| Role | Agent Type | What It Does |
-|------|-----------|--------------|
-| **PM** | Main session | Brainstorms with you, writes spec, orchestrates the pipeline (`agents/pm.md`) |
-| **Architect** | `general-purpose` subagent | Takes spec → produces design + task-by-task implementation plan |
-| **Developer** | `general-purpose` subagent | Implements one task with TDD. Fresh agent per task. Runs in parallel |
-| **QA** | `general-purpose` + `code-review` | Two-stage: spec compliance first, then code quality. Parallel across tasks |
-| **Tech Lead** | `general-purpose` subagent | Final integration review of all changes before merge |
+| Role | Used in | What It Does |
+|------|---------|--------------|
+| **PM** | All tracks | Picks track, brainstorms, orchestrates. Implements directly on Trivial / light Standard. (`agents/pm.md`) |
+| **Developer** | Standard, Complex | Implements one task with TDD. Fresh agent per task. |
+| **QA Reviewer** | Standard, Complex | One-clue feedback: single most important finding, or PASS. |
+| **Architect** | Complex only | Spec → design + task-by-task plan (≤500 lines). |
+| **Tech Lead** | Complex only | Final integration review before merge. |
 
 ### Speed
 
-Everything that can run in parallel does:
-- Independent tasks → multiple developers at once
-- QA starts the moment each developer finishes (doesn't wait for others)
+A Trivial change ships in seconds. A Standard change ships with one dev pass + one QA pass. Within Complex:
+- Independent tasks (≥3) run in parallel
+- QA starts the moment each developer finishes
 - Fix loops on one task don't block the rest
+
+Right-sizing the process is the speed lever — not just parallelism.
 
 ## Project Structure
 

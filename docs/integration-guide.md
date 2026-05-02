@@ -1,5 +1,7 @@
 # Integrating Feature-Crew Into a Project
 
+Feature-Crew is an agent framework added as a git submodule. This guide gets you set up.
+
 ## Step 1: Add the submodule
 
 ```bash
@@ -10,24 +12,24 @@ git commit -m "chore: add feature-crew agent framework"
 
 ## Step 2: Create your project's Copilot instructions
 
-Create `.github/copilot-instructions.md` in your project root with the content below. Replace the placeholder sections with your project's specifics.
+Create `.github/copilot-instructions.md` in your project root. Replace bracketed sections with your project's specifics.
 
 ```markdown
 # [Your Project Name]
 
-This project uses the **feature-crew** agent framework for all development.
+This project uses the **feature-crew** agent framework.
 
 ## Agent Framework
 
-Read and follow `feature-crew/.github/copilot-instructions.md` for all development workflows.
+Read at session start:
+- `feature-crew/.github/copilot-instructions.md`
+- `feature-crew/agents/pm.md`
+- `feature-crew/workflow/pipeline.md`
 
 When asked to build, fix, or change anything:
-1. Act as the PM — discuss requirements, produce a spec
-2. Dispatch agents from `feature-crew/agents/` following `feature-crew/workflow/pipeline.md`
-3. Run all independent work in parallel using background mode
-
-Agent templates: `feature-crew/agents/`
-Pipeline: `feature-crew/workflow/pipeline.md`
+1. Act as the PM — propose a track (Trivial / Standard / Complex) and confirm with the user
+2. Follow the matching flow in `feature-crew/workflow/pipeline.md`
+3. Right-size the process to the change — don't apply Complex ceremony to Trivial work
 
 ## Project-Specific
 
@@ -43,41 +45,36 @@ Pipeline: `feature-crew/workflow/pipeline.md`
 ]
 
 ### Architecture
-[Brief description of your project's structure — what lives where, how components connect]
+[Brief: what lives where, how components connect]
 
 ### Conventions
-[Any project-specific patterns that agents need to know]
+[Project-specific patterns agents need to know]
 ```
 
 ## Step 3: Verify it works
 
-Start a new Copilot session in your project and ask it to build something. It should:
-1. Ask you clarifying questions (PM role)
-2. Produce a spec and ask for approval
-3. Dispatch an architect to create a plan
-4. Execute tasks in parallel with developer + QA subagents
-5. Run a final Tech Lead review
+Start a new Copilot session and ask the PM to do something. It should:
+
+1. **Propose a track** (Trivial / Standard / Complex) and ask you to confirm.
+2. For non-Trivial: write a spec (bullet list for Standard, full doc for Complex), ask for approval.
+3. Implement and verify with concrete test output.
+4. For Complex: dispatch architect → developers → QA → tech lead. For Standard: implement + one QA pass. For Trivial: just do it + verify.
+
+If your PM session jumps straight to implementing without proposing a track, or writes a spec for a Trivial change "for completeness," the framework integration didn't take. Re-check the file pointers in your `.github/copilot-instructions.md`.
 
 ## Customizing for Your Project
 
 ### Override agent behavior
 
-If your project needs different agent behavior, create a `feature-crew-overrides/` directory in your project root with modified prompt templates. Reference them in your `.github/copilot-instructions.md`:
+If your project needs different agent behavior, create a `feature-crew-overrides/` directory in your project root with modified prompt templates and reference them in your project instructions:
 
 ```markdown
 Use agent templates from `feature-crew-overrides/` when they exist, falling back to `feature-crew/agents/` otherwise.
 ```
 
-### Skip phases for small changes
-
-For trivial changes (typo fixes, config tweaks), tell the PM:
-> "Skip the full pipeline, just make this change directly."
-
-The PM should comply — user instructions always take precedence.
-
 ### Adjust parallelism
 
-If your project has constraints (shared test database, limited CI runners), note it in your project instructions:
+If you have shared resources (test DB, limited CI runners), document the constraint:
 
 ```markdown
 ## Constraints

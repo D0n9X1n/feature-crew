@@ -1,273 +1,264 @@
-# Feature-Crew Development Pipeline
+# Feature-Crew Pipeline — Three Tracks
 
-This document defines the full orchestration flow for the agent team. The **main Copilot session** acts as the **Product Manager (PM)** and orchestrates all other agents.
+This is the canonical orchestration document. The PM picks one of three tracks per request. Each track defines its own flow, gates, and worked example.
 
-## Pipeline Overview
+## Why three tracks
+
+A 5-line README typo and a multi-module auth subsystem are not the same problem. Applying the same gates to both produces RFC-grade ceremony for trivial work and rushes complex work. The framework right-sizes by:
+
+- **Trivial** — direct edit + verification
+- **Standard** — bullet spec + lightweight build + one review
+- **Complex** — full pipeline with size caps and Tech Lead final
+
+The PM proposes a track on every request. The user can override.
+
+## Hard gates vs soft gates
+
+A **hard gate** blocks all forward motion until satisfied. The complete list:
+
+1. **User approves track** — every request, every track.
+2. **User approves spec** — Standard (inline bullet spec) and Complex (doc). Never required for Trivial.
+3. **User approves plan** — Complex only.
+4. **Verification evidence is present** for every "done" claim — every agent, every phase.
+5. **All tests pass** before any commit-claiming-done.
+6. **Tech Lead approval** before merging Complex work to main.
+7. **Implementation matches approved spec.** A QA-spec-reviewer finding of "implementation does not satisfy approved requirement X" or "required test absent" is a hard gate — it blocks "done" for that task regardless of severity rubric below.
+
+A **soft gate** is advisory — the agent reports findings, the PM decides whether to act now or file a follow-up. **Code-quality QA findings (style, structure, maintainability) are soft gates by default.** Promote to hard only when the finding is a confirmed correctness, security, or data-loss bug — but spec-compliance failures (gate #7) are *always* hard regardless of severity.
+
+---
+
+## Track 1 — Trivial
+
+### Use when
+
+- ≤30 minutes
+- 1 file, single concept change
+- No design decision required
+- Reverting via `git revert` is trivially safe
+
+### Trivial does NOT apply if
+
+If any of the following is touched, the change is **at minimum Standard**, regardless of how few lines it is:
+
+- Runtime behavior (default values, feature flags, config)
+- Auth, security, secrets handling
+- Persistence (DB schema, data formats, migrations)
+- Public API contract (request/response shapes, CLI flags, library exports)
+- Deploy behavior (CI/CD scripts, infra-as-code, rollout)
+- Anything where a 1-line wrong value reaches production
+
+A 1-line change in any of these areas can have outsized blast radius and needs at least a bullet spec + verification + one QA pass.
+
+### Flow
+
+1. PM proposes "Trivial" with one-line reason.
+2. User approves track (hard gate).
+3. PM makes the change.
+4. PM runs verification command and pastes output (hard gate).
+5. PM commits.
+
+### Worked example
+
+> User: "fix typo — 'orchestrats' → 'orchestrates' in README.md"
+>
+> PM: "Trivial — agreed?" → user "yes" → PM edits → PM runs `grep -n 'orchestr' README.md` → output confirms fix → PM commits with message `docs: fix typo in README`. Total: 0 subagent dispatches, ~30 seconds.
+
+### What you do NOT do
+
+- No spec doc.
+- No subagent.
+- No QA pass.
+- No new branch unless the user prefers one.
+
+---
+
+## Track 2 — Standard
+
+### Use when
+
+- 1–5 files
+- Single coherent feature
+- No new architecture
+- Security/data-integrity not central
+- **All framework-internal changes** (per the meta-work cap below)
+
+### Flow
+
+1. PM proposes "Standard" with reason.
+2. User approves track (hard gate).
+3. PM writes bullet-list spec in chat (≤1 page):
+   - Purpose (1 sentence)
+   - Files touched (list)
+   - Behavior (3–8 bullets)
+   - Test approach (must-pass test command)
+   - Non-goals
+4. User approves spec (hard gate).
+5. PM implements directly (≤2 files) **or** dispatches one developer subagent with TDD prompt.
+6. PM runs the must-pass tests; output pasted (hard gate).
+7. Dispatch one `code-review` subagent in **one-clue mode** (see below).
+8. PM judges the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
+9. Commit on feature branch; offer PR to the user.
+
+### Worked example
+
+> User: "add a `--dry-run` flag to deploy.sh"
+>
+> PM: "Standard — 2 files (`deploy.sh`, `tests/deploy_test.sh`), no architectural change. OK?" → user OK.
+>
+> PM writes 5-bullet spec inline → user approves.
+>
+> PM implements TDD: failing test for `--dry-run` not yet supported → makes it pass → all tests green.
+>
+> PM runs `bats tests/deploy_test.sh` → output: `8 tests, 0 failures` → pastes.
+>
+> PM dispatches `code-review` in one-clue mode → returns PASS.
+>
+> PM commits, offers PR. Total: 0 dev dispatches (PM did it), 1 QA dispatch.
+
+### Cost expectation
+
+≤2 subagent dispatches typical. Anything more = wrong track or scope creep.
+
+---
+
+## Track 3 — Complex
+
+### Use when
+
+- Multi-module change
+- New architecture or new subsystem
+- Security/data-integrity central
+- Public API change
+- **Never** for framework-internal changes (those route to Track 2 max — see meta-work cap)
+
+### Flow
+
+1. PM proposes "Complex" with reason.
+2. User approves track (hard gate).
+3. **Brainstorm.** PM asks clarifying questions, one at a time, multiple-choice preferred. Covers purpose, constraints, success criteria, edge cases, test strategy.
+4. PM presents design in sections, gets per-section user approval.
+5. **Spec.** Write to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap: 1000 words.** If draft exceeds, decompose into sub-projects.
+6. User approves spec (hard gate).
+7. **Architect.** Dispatch `general-purpose` subagent with full spec text + project structure + tech constraints. Architect produces plan.
+8. **Plan cap.** Plan ≤ **500 lines**. Over the cap → architect decomposes; if irreducible, escalate to user for re-scoping.
+9. User approves plan (hard gate).
+10. **Parallel implementation.** Group tasks by file independence. Dispatch developers in parallel **only when ≥3 truly independent tasks remain**. For 1–2 tasks, sequential is fine.
+11. **Per-task QA in one-clue mode.** Spec-compliance pass first, then code-quality pass. Each returns single most important finding or PASS.
+12. **Tech Lead final review.** Dispatch with spec, plan, full diff, task summaries. Hard gate before merge.
+13. **Cost telemetry.** PM appends one-liner to PR description: total dispatches, approximate wall-clock, model mix.
+
+### Worked example (sketch)
+
+> User: "build OAuth + SAML auth subsystem."
+>
+> PM proposes Complex. Brainstorms: which providers? session vs JWT? RBAC scope? → spec written, 850 words, committed. User approves.
+>
+> Architect produces 380-line plan with 12 tasks. User approves.
+>
+> 4 tasks are independent (DB schema, OAuth provider config, SAML config, login UI shell) — dispatched in parallel. 8 sequenced behind them.
+>
+> Per-task QA in one-clue mode catches one CRITICAL (session token not invalidated on logout) — fixed in a single dev cycle.
+>
+> Tech Lead approves. PR opened. Cost line: `17 dispatches, ~3h wall-clock, mix of Sonnet (architect, tech lead) and Haiku (mechanical dev tasks)`.
+
+---
+
+## The Meta-Work Cap
+
+**Any change to feature-crew itself is Track 2 maximum.**
+
+### Numeric caps
+
+- The **orchestration layer** (`agents/pm.md` + `workflow/pipeline.md` + `.github/copilot-instructions.md`) stays **≤ 600 lines combined**.
+- The **framework total** (orchestration layer + all `agents/*.md` prompt templates + `README.md` + framework-owned `docs/*.md` such as `docs/integration-guide.md`) stays **≤ 1200 lines combined**.
+
+If a proposed change would push either total over its cap, **decompose**, never "make an exception this one time."
+
+### What counts as framework-internal
+
+A request is framework-internal — and therefore Track-2-max + subject to the caps above — if it modifies any of:
+
+- **Orchestration rules** — when phases run, what gates trigger, how the PM dispatches
+- **Gate semantics** — what hard/soft gates exist, what promotes a soft to a hard
+- **Agent roster** — adding, removing, or renaming agents (e.g., new auditor role, new reviewer role)
+- **Prompt contracts** — what subagents are told to do or how they report
+- **Framework-owned docs** — anything in this repo authored by feature-crew itself: `agents/*.md`, `workflow/*.md`, `.github/copilot-instructions.md`, `README.md`, `docs/integration-guide.md`, and any other top-level `docs/*.md` (excluding the user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/` subdirectories)
+- **Framework artifacts** — adding new files in any of the directories above, or new top-level framework-owned docs
+
+The literal "multi-auditor voting" case is one instance of this class. **Any** request that changes orchestration, gates, agents, prompts, or framework docs is in the same class and gets the same treatment, regardless of phrasing.
+
+### Refusal example
+
+> User: "redesign feature-crew with multi-auditor voting and North-Star injection."
+>
+> PM: "This is framework-internal — capped at Track 2 max. The full proposal would add ~400 lines to pipeline.md alone, breaking the 600-line orchestration cap. Options:
+>
+> 1. Add a single optional second-opinion auditor for spec only (Track 2, ~50 lines). Ship it, evaluate, then decide whether to add more.
+> 2. North-Star injection is a separate question — file as a follow-up.
+> 3. Drop the multi-auditor direction.
+>
+> Which?"
+
+The deleted-branch experience (6,800 lines of meta-work for an unrun feature) is what this cap exists to prevent.
+
+### If the user wants to override
+
+The cap is not silently overridable. If the user explicitly says "I am intentionally bypassing the framework meta-work cap," comply but record the override in the commit message as `framework-cap-override: <reason>`. A casual "use Complex track for this" is not enough — confirm intent first.
+
+---
+
+## Subagent Dispatch Rules
+
+- **Background mode** for any subagent that does substantive work; handle results as notifications arrive.
+- **Parallel only when independent.** ≥3 truly independent tasks → parallel. 1–2 tasks or shared files → sequential. "Maximize parallelism" is a trap when each branch needs its own context construction and review.
+- **Fresh context per dispatch.** Paste the task/spec text inline. Do not tell subagents to "read the plan file."
+- **Model selection:** Haiku for mechanical tasks (well-specified, single-file). Sonnet/default for design or judgment. Don't over-spec models — defaults are fine.
+- **Subagent self-review does not replace QA.** Both happen.
+- **No same-model self-audit.** A subagent re-reading its own output with a "now critique it" prompt produces near-zero independent signal. Use a different model or escalate to the user.
+- **Max 3 fix cycles per issue.** Then stop and question the approach with the user.
+
+---
+
+## One-Clue Feedback Mode
+
+For every QA dispatch in Standard/Complex tracks, instruct the subagent:
+
+> Report your **single most important finding**. Format:
+>
+> - **PASS** — nothing material to flag, OR
+> - **CRITICAL** — bug / security / data-loss risk; specific `file:line` + minimal repro
+> - **IMPORTANT** — design problem / missing test / unclear behavior; specific `file:line`
+>
+> Do not list multiple issues. Pick one. Save the rest for follow-up.
+
+This trades comprehensive defect lists for actionable signal. Long reports invite nitpicks and inflate fix cycles.
+
+---
+
+## Cost Telemetry
+
+For every Standard or Complex feature, append a single-line telemetry record at the end of the work:
+
+- For PR-bound work: append to the PR description
+- For non-PR work (e.g., direct commit on a feature branch): append to the final commit message body
+
+Format:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                          PM (Main Session)                       │
-│  Discusses requirements with user, produces spec, orchestrates   │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ approved spec
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Architect (Subagent)                          │
-│  Produces technical design + implementation plan                 │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ plan (user approves)
-                               ▼
-                    ┌──── Per Task Loop ────┐
-                    │                       │
-                    ▼                       │
-┌──────────────────────────────┐           │
-│   Developer (Subagent)       │           │
-│   Implements task with TDD   │           │
-└──────────────┬───────────────┘           │
-               ▼                           │
-┌──────────────────────────────┐           │
-│   QA: Spec Reviewer          │           │
-│   Code matches spec?         │──── NO ──→ Developer fixes
-└──────────────┬───────────────┘           │
-               │ YES                       │
-               ▼                           │
-┌──────────────────────────────┐           │
-│   QA: Code Reviewer          │           │
-│   Code well-built?           │──── NO ──→ Developer fixes
-└──────────────┬───────────────┘           │
-               │ YES                       │
-               ▼                           │
-         Mark task done ───────────────────┘
-                    │
-                    ▼ (all tasks done)
-┌─────────────────────────────────────────────────────────────────┐
-│                   Tech Lead (Subagent)                            │
-│  Final integration review of all changes                         │
-└──────────────────────────────┬───────────────────────────────────┘
-                               │ approved
-                               ▼
-                         Merge / PR / Keep
+Cost: <N> subagent dispatches, ~<M> minutes wall-clock, models: <list>
 ```
 
-## Phase 1: Brainstorming & Requirements (PM — follow `agents/pm.md`)
-
-The main session acts as Product Manager. **Read `agents/pm.md` for the full process.**
-
-1. **Understand context** — Check project state, recent commits, existing docs
-2. **Assess scope** — Flag if request needs decomposition into sub-projects
-3. **Ask clarifying questions** — One at a time, prefer multiple choice
-4. **Explore approaches** — Propose 2–3 with trade-offs. Testability is the tiebreaker.
-5. **Present design** — In sections scaled to complexity, get user approval per section
-6. **Define test strategy** — For every feature. Untestable features get redesigned.
-7. **Write spec** — Save to `docs/specs/YYYY-MM-DD-<topic>-design.md`, commit
-8. **Self-review spec** — Placeholders, contradictions, ambiguity, testability
-9. **User reviews spec** — Wait for explicit approval before proceeding
-
-**Gate:** User approves the written spec.
-
-## Phase 2: Architecture (Architect Subagent)
-
-Dispatch a `general-purpose` subagent with:
-- Prompt template: `agents/architect.md`
-- Input: full spec text + project structure + tech constraints
-
-The architect produces:
-- Technical design (file structure, component boundaries, data flow)
-- Implementation plan with bite-sized tasks
-
-**Gate:** User approves the plan.
-
-```
-Dispatch:
-  agent_type: general-purpose
-  name: architect
-  prompt: |
-    [Contents of agents/architect.md]
-
-    ## Spec
-
-    [Full spec text]
-
-    ## Current Project Structure
-
-    [Output of tree/ls]
-
-    ## Tech Constraints
-
-    [Any constraints from user]
-```
-
-## Phase 3: Implementation (Developer Subagents, PARALLEL)
-
-**Speed is a priority. Maximize parallelism.**
-
-### Step 1: Dependency Analysis
-
-Before dispatching, analyze the plan and group tasks:
-
-```
-For each task, identify:
-  - Files it creates or modifies
-  - Files it reads/depends on
-  - Tasks that must complete before it can start
-
-Group into parallel batches:
-  Batch 1: [tasks with no dependencies — dispatch ALL simultaneously]
-  Batch 2: [tasks that depend only on Batch 1 — dispatch ALL when Batch 1 completes]
-  ...
-```
-
-Tasks that touch **different files** are independent — run them in parallel. Tasks that share files or have data dependencies must be sequenced.
-
-### Step 2: Parallel Dispatch
-
-Dispatch ALL independent tasks in the same batch simultaneously:
-
-```
-# Dispatch all Batch 1 tasks at once
-Dispatch (background):
-  agent_type: general-purpose
-  name: dev-task-1
-  prompt: [agents/developer.md + task 1 text + context]
-
-Dispatch (background):
-  agent_type: general-purpose
-  name: dev-task-2
-  prompt: [agents/developer.md + task 2 text + context]
-
-Dispatch (background):
-  agent_type: general-purpose
-  name: dev-task-3
-  prompt: [agents/developer.md + task 3 text + context]
-
-# All three run concurrently — wait for completion notifications
-```
-
-**Model selection:**
-- Simple/mechanical tasks (1–2 files, clear spec) → `claude-haiku-4.5`
-- Multi-file integration or judgment calls → default model
-- Complex architecture decisions → `claude-sonnet-4`
-
-### Step 3: Handle Results
-
-As each developer reports back:
-- **DONE** → immediately dispatch QA (don't wait for other devs)
-- **DONE_WITH_CONCERNS** → assess concerns, then QA
-- **NEEDS_CONTEXT** → provide context, re-dispatch (don't block other tasks)
-- **BLOCKED** → escalate, continue with other tasks
-
-## Phase 4: QA (Two-Stage Review, PARALLEL per task)
-
-QA reviews run **as soon as each developer completes** — don't wait for all developers to finish.
-
-### Parallel QA Strategy
-
-```
-Developer Task 1 completes → immediately dispatch QA-Spec-1
-Developer Task 3 completes → immediately dispatch QA-Spec-3
-  (Task 2 still running — that's fine, don't wait)
-QA-Spec-1 passes → immediately dispatch QA-Code-1
-Developer Task 2 completes → immediately dispatch QA-Spec-2
-QA-Spec-3 passes → immediately dispatch QA-Code-3
-...
-```
-
-**Rule:** QA reviews for different tasks run in parallel. Only the two stages within ONE task are sequential (spec before code quality).
-
-### Stage 1: Spec Compliance
-
-Dispatch `general-purpose` subagent (background):
-
-```
-Dispatch (background):
-  agent_type: general-purpose
-  name: qa-spec-N
-  prompt: |
-    [Contents of agents/qa-spec-reviewer.md]
-
-    ## What Was Requested
-    [Full task text from plan]
-
-    ## What Developer Claims They Built
-    [Developer's report]
-```
-
-If ❌ FAIL → Developer fixes → re-review
-If ✅ PASS → immediately dispatch Stage 2
-
-### Stage 2: Code Quality
-
-Dispatch `code-review` subagent (background):
-
-```
-Dispatch (background):
-  agent_type: code-review
-  name: qa-code-N
-  prompt: |
-    [Contents of agents/qa-code-reviewer.md]
-
-    Review the changes for Task N.
-    What was implemented: [summary]
-    Requirements: [task text]
-```
-
-If NEEDS_CHANGES → Developer fixes → re-review
-If APPROVED → task complete
-
-## Phase 5: Final Review (Tech Lead Subagent)
-
-After ALL tasks complete, dispatch a `general-purpose` subagent:
-
-```
-Dispatch:
-  agent_type: general-purpose
-  name: tech-lead
-  prompt: |
-    [Contents of agents/tech-lead.md]
-
-    ## Original Spec
-
-    [Full spec text]
-
-    ## Implementation Plan
-
-    [Full plan text]
-
-    ## Changes
-
-    The full diff is between [base-branch] and [feature-branch].
-    Run: git diff [base]...[head]
-
-    ## Task Review Summaries
-
-    [Summary of each task's spec + code review results]
-```
-
-If ❌ NEEDS CHANGES → Fix and re-review
-If ✅ APPROVED → Proceed to finish
-
-## Phase 6: Finish
-
-Present options to user:
-1. Merge back to base branch locally
-2. Push and create a Pull Request
-3. Keep the branch as-is
-4. Discard the work
-
-Execute chosen option. Clean up worktree if applicable.
-
-## Parallelism Rules
-
-1. **Independent tasks run simultaneously** — If tasks don't share files, dispatch them all at once
-2. **QA starts immediately** — Don't wait for all devs to finish; review each as it completes
-3. **Fix loops don't block others** — If Task 2 needs fixes, Tasks 1 and 3 keep moving
-4. **Only Tech Lead is sequential** — It needs all tasks done before it can review the whole
-5. **Background mode always** — Dispatch all subagents in background mode, handle results as notifications arrive
-6. **Batch next wave early** — While reviewing Batch 1 results, prepare Batch 2 prompts
-
-## Error Handling
-
-**Developer blocked:** Provide more context → re-dispatch → don't block other tasks → if still blocked, escalate to user
-**QA finds issues:** Developer fixes → re-review → repeat until pass (max 3 cycles, then escalate) → other tasks continue
-**Tech Lead rejects:** Assess severity → fix specific issues → re-review → if architectural, escalate to user
-**3+ fix attempts failed on same issue:** Stop. Question the approach with the user. Don't keep trying.
+Trivial work does not require telemetry (it's by definition cheap). If we don't measure, we won't tighten — visible cost is the friction that keeps small changes small.
+
+---
+
+## Anti-Patterns
+
+- Applying full Complex flow to a one-file change.
+- Writing a spec doc for a Trivial change "for completeness."
+- Dispatching multiple parallel devs on overlapping files.
+- Same-model self-audit (theater).
+- Pushing past spec/plan size caps "this one time."
+- Adding gates without removing them — gate count grows monotonically.
+- Treating QA findings as automatic blockers rather than PM-judged signals.
