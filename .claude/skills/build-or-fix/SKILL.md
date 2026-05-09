@@ -1,6 +1,13 @@
-# Feature-Crew Pipeline — Three Tracks
+---
+name: build-or-fix
+description: Build, fix, change, refactor, implement, add, or extend code. TRIGGER whenever the user asks for any code change (e.g. "add login", "fix this bug", "refactor the parser", "implement X"). Runs the request through the Feature-Crew pipeline: picks a track (Trivial / Standard / Complex), runs the matching gates with cross-family model audits, and dispatches role agents (PM, Architect, Developer, QA, Tech Lead). SKIP for pure questions, read-only exploration, status checks, or codebase searches.
+---
 
-This is the canonical orchestration document. The PM picks one of three tracks per request. Each track defines its own flow, gates, and worked example.
+# build-or-fix — Feature-Crew Pipeline (Three Tracks)
+
+This is the canonical orchestration document for any build/fix/change request. The PM picks one of three tracks per request. Each track defines its own flow, gates, and worked example.
+
+> **Canonical home for cross-family audit rule:** `agents/pm.md` §Universal Rules. The copy below mirrors it so this skill is self-sufficient — keep the two in sync when either is edited.
 
 ## Why three tracks
 
@@ -32,9 +39,13 @@ Every model-authored hard-gate artifact (spec, plan, **tests-as-spec**, implemen
 
 - `claude-opus-4.7-xhigh` ⇆ `gpt-5.5`
 
+**Fallback when the cross-vendor pair is unavailable** (GPT access down, quota exhausted, offline, etc.): a same-vendor cross-family pair such as `claude-opus-4.7-xhigh` ⇆ `claude-sonnet-4.7` is **acceptable but degraded**. It satisfies the hard gate only when the preferred cross-vendor pair cannot be reached; the PM must note `audit-pair: degraded (same-vendor)` in the cost telemetry line so reviewers know a weaker check was used. Never use the fallback by default — always attempt the preferred pair first.
+
 Same-model audit (even self-critique with rotated prompts) is theater and **does not satisfy the gate**. The author of the must-pass tests is the spec author for cross-audit purposes — bad tests poison every downstream gate.
 
 Trivial-track work has only user-approval and mechanical-verification gates (no model-authored artifact), so cross-model audit does not apply there. Speed is preserved.
+
+**This rule applies to every skill in this repo, not just build-or-fix.** Any future skill that produces a model-authored hard-gate artifact must follow it.
 
 ---
 
@@ -182,8 +193,8 @@ A 1-line change in any of these areas can have outsized blast radius and needs a
 
 ### Numeric caps
 
-- The **orchestration layer** (`agents/pm.md` + `workflow/pipeline.md` + `.github/copilot-instructions.md`) stays **≤ 600 lines combined**.
-- The **framework total** (orchestration layer + all `agents/*.md` prompt templates + `README.md` + framework-owned `docs/*.md` such as `docs/integration-guide.md`) stays **≤ 1200 lines combined**.
+- The **orchestration layer** (`agents/pm.md` + `.claude/skills/build-or-fix/SKILL.md` + `.github/copilot-instructions.md`) stays **≤ 600 lines combined**.
+- The **framework total** (orchestration layer + all `agents/*.md` prompt templates + `README.md` + `AGENTS.md` + `CLAUDE.md` + framework-owned `docs/*.md` such as `docs/integration-guide.md` + every `.claude/skills/*/SKILL.md`) stays **≤ 1500 lines combined**. The cap was raised from 1200 to accommodate the Claude Code skill wiring; the +300 covers the SKILL expansion that absorbed the legacy pipeline doc plus headroom for one or two future skills.
 
 If a proposed change would push either total over its cap, **decompose**, never "make an exception this one time."
 
@@ -195,7 +206,7 @@ A request is framework-internal — and therefore Track-2-max + subject to the c
 - **Gate semantics** — what hard/soft gates exist, what promotes a soft to a hard
 - **Agent roster** — adding, removing, or renaming agents (e.g., new auditor role, new reviewer role)
 - **Prompt contracts** — what subagents are told to do or how they report
-- **Framework-owned docs** — anything in this repo authored by feature-crew itself: `agents/*.md`, `workflow/*.md`, `.github/copilot-instructions.md`, `README.md`, `docs/integration-guide.md`, and any other top-level `docs/*.md` (excluding the user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/` subdirectories)
+- **Framework-owned docs** — anything in this repo authored by feature-crew itself: `agents/*.md`, `.claude/skills/*/SKILL.md`, `.github/copilot-instructions.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/integration-guide.md`, and any other top-level `docs/*.md` (excluding the user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/` subdirectories)
 - **Framework artifacts** — adding new files in any of the directories above, or new top-level framework-owned docs
 
 The literal "multi-auditor voting" case is one instance of this class. **Any** request that changes orchestration, gates, agents, prompts, or framework docs is in the same class and gets the same treatment, regardless of phrasing.
@@ -204,7 +215,7 @@ The literal "multi-auditor voting" case is one instance of this class. **Any** r
 
 > User: "redesign feature-crew with multi-auditor voting and North-Star injection."
 >
-> PM: "This is framework-internal — capped at Track 2 max. The full proposal would add ~400 lines to pipeline.md alone, breaking the 600-line orchestration cap. Options:
+> PM: "This is framework-internal — capped at Track 2 max. The full proposal would add ~400 lines to this skill alone, breaking the 600-line orchestration cap. Options:
 >
 > 1. Add a single optional second-opinion auditor for spec only (Track 2, ~50 lines). Ship it, evaluate, then decide whether to add more.
 > 2. North-Star injection is a separate question — file as a follow-up.

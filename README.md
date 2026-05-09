@@ -18,15 +18,15 @@ Create `.github/copilot-instructions.md` in your project root:
 ```markdown
 This project uses the feature-crew agent framework.
 
-Read `feature-crew/.github/copilot-instructions.md`, `feature-crew/agents/pm.md`, and `feature-crew/workflow/pipeline.md` at session start.
+Read `feature-crew/.github/copilot-instructions.md`, `feature-crew/agents/pm.md`, and `feature-crew/.claude/skills/build-or-fix/SKILL.md` at session start.
 
 When the user asks to build, fix, or change anything:
 1. Act as the PM — propose a track (Trivial / Standard / Complex) and confirm with the user
-2. Follow the matching flow in `feature-crew/workflow/pipeline.md`
+2. Follow the matching flow in `feature-crew/.claude/skills/build-or-fix/SKILL.md`
 3. Right-size the process to the change — don't apply Complex ceremony to Trivial work
 ```
 
-That's it. Start a new Copilot session and describe what you want to build.
+That's it. Start a new Copilot session and describe what you want to build. Claude Code users get the same flow auto-loaded via the `build-or-fix` skill — invoke it explicitly with `/skill build-or-fix` or just describe the change.
 
 ## How It Works
 
@@ -38,7 +38,7 @@ Standard  →  bullet-spec + light build + one QA pass            (1–5 files, 
 Complex   →  brainstorm → spec → architect → devs → QA → tech lead   (multi-module, new arch)
 ```
 
-Wrong track = wasted work or missed risk. The PM proposes a track on every request; the user can override. See `workflow/pipeline.md` for full flows + worked examples.
+Wrong track = wasted work or missed risk. The PM proposes a track on every request; the user can override. See `.claude/skills/build-or-fix/SKILL.md` for full flows + worked examples.
 
 ### The Team
 
@@ -63,20 +63,26 @@ Right-sizing the process is the speed lever — not just parallelism.
 
 ```
 feature-crew/
+├── .claude/
+│   └── skills/
+│       └── build-or-fix/
+│           └── SKILL.md            ← Full pipeline (auto-loads in Claude Code)
 ├── .github/
-│   └── copilot-instructions.md   ← PM behavior + orchestration rules
+│   └── copilot-instructions.md     ← Copilot entry point (mirrors AGENTS.md)
 ├── agents/
-│   ├── architect.md              ← Design + planning prompt
-│   ├── developer.md              ← TDD implementation prompt
-│   ├── qa-spec-reviewer.md       ← "Does code match spec?" prompt
-│   ├── qa-code-reviewer.md       ← "Is code well-built?" prompt
-│   └── tech-lead.md              ← Final review prompt
-├── workflow/
-│   └── pipeline.md               ← Full pipeline with dispatch examples
+│   ├── architect.md                ← Design + planning prompt
+│   ├── developer.md                ← TDD implementation prompt
+│   ├── pm.md                       ← PM behavior + orchestration
+│   ├── qa-spec-reviewer.md         ← "Does code match spec?" prompt
+│   ├── qa-code-reviewer.md         ← "Is code well-built?" prompt
+│   └── tech-lead.md                ← Final review prompt
 ├── docs/
-│   ├── specs/                    ← Design specs go here
-│   ├── plans/                    ← Implementation plans go here
-│   └── reviews/                  ← Review records (optional)
+│   ├── integration-guide.md        ← How to wire feature-crew into a project
+│   ├── specs/                      ← Design specs go here
+│   ├── plans/                      ← Implementation plans go here
+│   └── reviews/                    ← Review records (optional)
+├── AGENTS.md                       ← Vendor-neutral instructions (Cursor, Aider, etc.)
+├── CLAUDE.md                       ← Claude Code loader → points at AGENTS.md
 └── README.md
 ```
 

@@ -24,11 +24,11 @@ This project uses the **feature-crew** agent framework.
 Read at session start:
 - `feature-crew/.github/copilot-instructions.md`
 - `feature-crew/agents/pm.md`
-- `feature-crew/workflow/pipeline.md`
+- `feature-crew/.claude/skills/build-or-fix/SKILL.md`
 
 When asked to build, fix, or change anything:
 1. Act as the PM — propose a track (Trivial / Standard / Complex) and confirm with the user
-2. Follow the matching flow in `feature-crew/workflow/pipeline.md`
+2. Follow the matching flow in `feature-crew/.claude/skills/build-or-fix/SKILL.md`
 3. Right-size the process to the change — don't apply Complex ceremony to Trivial work
 
 ## Project-Specific
@@ -51,7 +51,18 @@ When asked to build, fix, or change anything:
 [Project-specific patterns agents need to know]
 ```
 
-## Step 3: Verify it works
+## Step 3: (Claude Code only) Wire up the skill
+
+Claude Code only auto-discovers skills under the consumer project's own `.claude/skills/` directory. Symlink the build-or-fix skill so it loads in the consumer:
+
+```bash
+mkdir -p .claude/skills
+ln -s ../../feature-crew/.claude/skills/build-or-fix .claude/skills/build-or-fix
+```
+
+Verify with `/skill build-or-fix` in a fresh Claude Code session — it should resolve. Skip this step for Copilot-only projects.
+
+## Step 4: Verify it works
 
 Start a new Copilot session and ask the PM to do something. It should:
 
