@@ -20,6 +20,17 @@ Options: `--force` (overwrite), `--dry-run`, `--uninstall`, `--prefix DIR`.
 
 After install, agents live in `~/.claude/agents/feature-crew/` (as `fc-pm`, `fc-architect`, `fc-developer`, `fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`) and the skill in `~/.claude/skills/build-or-fix/`. Invoke with `/skill build-or-fix` from any project.
 
+### Install for GitHub Copilot (per-project)
+
+Copilot has no global config — it only reads files inside the repo. To wire feature-crew into a target project for Copilot:
+
+```bash
+./install.sh --project /path/to/your-project              # also installs Claude globally
+./install.sh --project /path/to/your-project --copilot-only   # Copilot only
+```
+
+This vendors feature-crew under `your-project/.feature-crew/` and writes a `.github/copilot-instructions.md` that points at it. Copilot will pick it up on the next session.
+
 ### Add to your project
 
 ```bash

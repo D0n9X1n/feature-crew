@@ -14,7 +14,9 @@ param(
   [switch]$Force,
   [switch]$DryRun,
   [switch]$Uninstall,
-  [string]$Prefix = (Join-Path $HOME ".claude")
+  [string]$Prefix = (Join-Path $HOME ".claude"),
+  [string]$Project = "",
+  [switch]$CopilotOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,12 +26,19 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bash = Get-Command bash -ErrorAction SilentlyContinue
 if ($bash) {
   $args = @()
-  if ($Force)     { $args += "--force" }
-  if ($DryRun)    { $args += "--dry-run" }
-  if ($Uninstall) { $args += "--uninstall" }
-  if ($Prefix)    { $args += @("--prefix", $Prefix) }
+  if ($Force)        { $args += "--force" }
+  if ($DryRun)       { $args += "--dry-run" }
+  if ($Uninstall)    { $args += "--uninstall" }
+  if ($Prefix)       { $args += @("--prefix", $Prefix) }
+  if ($Project)      { $args += @("--project", $Project) }
+  if ($CopilotOnly)  { $args += "--copilot-only" }
   & bash (Join-Path $ScriptDir "install.sh") @args
   exit $LASTEXITCODE
+}
+
+if ($Project -or $CopilotOnly) {
+  Write-Error "Native PowerShell fallback does not yet support --Project / --CopilotOnly. Install Git Bash or WSL and re-run."
+  exit 1
 }
 
 # --- Pure-PowerShell fallback ---
