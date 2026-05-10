@@ -43,7 +43,7 @@ if ($bash) {
 
 $SrcAgents     = Join-Path $ScriptDir "agents"
 $SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
-$DestAgents    = Join-Path $Prefix "agents\feature-crew"
+$DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
 
 $AgentMeta = @{
@@ -130,7 +130,10 @@ function Install-ClaudeGlobal {
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
     if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.") }
-    Install-Agent $_.FullName (Join-Path $DestAgents $_.Name) $meta[0] $meta[1]
+    # Install flat under ~/.claude/agents/ with the fc-* name so they don't
+    # collide with personal agents.
+    $destFile = Join-Path $DestAgents ($meta[0] + ".md")
+    Install-Agent $_.FullName $destFile $meta[0] $meta[1]
     $count++
   }
 
@@ -213,9 +216,15 @@ function Install-Project($projPath) {
 
 function Uninstall-ClaudeGlobal {
   Write-Host "feature-crew: uninstalling from $Prefix"
-  if (Test-Path $DestAgents) {
-    Do-Or-Echo "removed: $DestAgents" { Remove-Item -Recurse -Force $DestAgents }
-  } else { Write-Host "not present: $DestAgents" }
+  # Remove only our fc-* files; leave personal agents in the dir alone.
+  Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
+    $meta = $AgentMeta[$_.Name]
+    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.") }
+    $d = Join-Path $DestAgents ($meta[0] + ".md")
+    if (Test-Path $d) {
+      Do-Or-Echo "removed: $d" { Remove-Item -Force $d }
+    } else { Write-Host "not present: $d" }
+  }
   if (Test-Path $SrcSkillsDir) {
     Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
       $d = Join-Path $DestSkillsDir $_.Name
@@ -223,6 +232,11 @@ function Uninstall-ClaudeGlobal {
         Do-Or-Echo "removed: $d" { Remove-Item -Recurse -Force $d }
       } else { Write-Host "not present: $d" }
     }
+  }
+  # Best-effort cleanup of legacy nested folder from older installer versions.
+  $legacy = Join-Path $DestAgents "feature-crew"
+  if (Test-Path $legacy) {
+    Do-Or-Echo "removed (legacy): $legacy" { Remove-Item -Recurse -Force $legacy }
   }
 }
 

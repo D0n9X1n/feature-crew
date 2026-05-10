@@ -45,7 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_AGENTS="${SCRIPT_DIR}/agents"
 SRC_SKILLS_DIR="${SCRIPT_DIR}/.claude/skills"
 
-DEST_AGENTS="${PREFIX}/agents/feature-crew"
+DEST_AGENTS="${PREFIX}/agents"
 DEST_SKILLS_DIR="${PREFIX}/skills"
 
 # Map agent filename -> Claude Code subagent (name, one-line description).
@@ -125,19 +125,29 @@ install_skill() {
 
 uninstall_paths() {
   local removed_any=0
-  if [ -d "$DEST_AGENTS" ]; then
-    do_or_echo rm -rf "$DEST_AGENTS"
-    say "removed: $DEST_AGENTS"
-    removed_any=1
-  else
-    say "not present: $DEST_AGENTS"
-  fi
+  # Remove each fc-* agent file we know about. Do not rm -rf $DEST_AGENTS —
+  # users may have personal agents alongside ours.
+  for src in "$SRC_AGENTS"/*.md; do
+    [ -e "$src" ] || continue
+    local base meta name dest
+    base="$(basename "$src")"
+    meta="$(agent_meta "$base")"
+    name="${meta%%|*}"
+    dest="$DEST_AGENTS/${name}.md"
+    if [ -e "$dest" ]; then
+      do_or_echo rm -f "$dest"
+      say "removed: $dest"
+      removed_any=1
+    else
+      say "not present: $dest"
+    fi
+  done
   if [ -d "$SRC_SKILLS_DIR" ]; then
     for src in "$SRC_SKILLS_DIR"/*/; do
       [ -d "$src" ] || continue
-      local name dest
-      name="$(basename "$src")"
-      dest="$DEST_SKILLS_DIR/$name"
+      local skill_name dest
+      skill_name="$(basename "$src")"
+      dest="$DEST_SKILLS_DIR/$skill_name"
       if [ -d "$dest" ]; then
         do_or_echo rm -rf "$dest"
         say "removed: $dest"
@@ -146,6 +156,12 @@ uninstall_paths() {
         say "not present: $dest"
       fi
     done
+  fi
+  # Best-effort cleanup of any legacy ~/.claude/agents/feature-crew/ from
+  # older installer versions.
+  if [ -d "$DEST_AGENTS/feature-crew" ]; then
+    do_or_echo rm -rf "$DEST_AGENTS/feature-crew"
+    say "removed (legacy): $DEST_AGENTS/feature-crew"
   fi
 }
 
@@ -161,12 +177,15 @@ main_install() {
   local count=0
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base meta name desc
+    local base meta name desc dest
     base="$(basename "$src")"
     meta="$(agent_meta "$base")"
     name="${meta%%|*}"
     desc="${meta#*|}"
-    install_agent "$src" "$DEST_AGENTS/$base" "$name" "$desc"
+    # Install flat under ~/.claude/agents/ with the fc-* name so they don't
+    # collide with personal agents.
+    dest="$DEST_AGENTS/${name}.md"
+    install_agent "$src" "$dest" "$name" "$desc"
     count=$((count + 1))
   done
 
