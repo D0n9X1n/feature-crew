@@ -4,6 +4,22 @@ An agent team framework for AI-assisted development. Defines 5 specialized agent
 
 ## Quick Start
 
+### Install globally (use in any project)
+
+Install the role agents and the `build-or-fix` skill into your user-level Claude Code config (`~/.claude`):
+
+```bash
+# macOS / Linux / Git Bash / WSL
+./install.sh
+
+# Native Windows PowerShell
+.\install.ps1
+```
+
+Options: `--force` (overwrite), `--dry-run`, `--uninstall`, `--prefix DIR`.
+
+After install, agents live in `~/.claude/agents/feature-crew/` (as `fc-pm`, `fc-architect`, `fc-developer`, `fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`) and the skill in `~/.claude/skills/build-or-fix/`. Invoke with `/skill build-or-fix` from any project.
+
 ### Add to your project
 
 ```bash
