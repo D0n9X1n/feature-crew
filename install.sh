@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# feature-crew installer — wires the framework into Claude Code (global)
-# and/or GitHub Copilot (per-project).
+# feature-crew installer — wires the framework into Claude Code globally.
 #
 # Works on macOS, Linux, and Windows via Git Bash / WSL.
-# For native Windows PowerShell, see install.ps1 (a thin wrapper).
+# For native Windows PowerShell, see install.ps1 (mirrored).
 #
 # Usage:
 #   ./install.sh                       # install for Claude Code globally (~/.claude)
-#   ./install.sh --project DIR         # ALSO install into project DIR for Copilot
-#   ./install.sh --project DIR --copilot-only   # skip global Claude install
 #   ./install.sh --force               # overwrite existing files
 #   ./install.sh --dry-run             # print what would happen, change nothing
 #   ./install.sh --uninstall           # remove files this script installs
@@ -20,8 +17,6 @@ FORCE=0
 DRY_RUN=0
 UNINSTALL=0
 PREFIX="${HOME}/.claude"
-PROJECT=""
-COPILOT_ONLY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,10 +24,8 @@ while [ $# -gt 0 ]; do
     --dry-run)       DRY_RUN=1 ;;
     --uninstall)     UNINSTALL=1 ;;
     --prefix)        shift; PREFIX="$1" ;;
-    --project)       shift; PROJECT="$1" ;;
-    --copilot-only)  COPILOT_ONLY=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -209,116 +202,11 @@ main_install() {
   say "Claude Code to delegate to one of the fc-* subagents."
 }
 
-# Per-project install for GitHub Copilot. Copilot has no global config — it
-# only reads files inside the repo (.github/copilot-instructions.md and
-# anything that file links to). So for Copilot we copy the framework into the
-# target project and write a copilot-instructions.md that points at it.
-project_install() {
-  local proj="$1"
-  if [ ! -d "$proj" ]; then
-    say "ERROR: --project path does not exist: $proj" >&2
-    exit 1
-  fi
-  proj="$(cd "$proj" && pwd)"
-  say ""
-  say "feature-crew: installing into project $proj (for Copilot)"
-
-  local proj_root="$proj/.feature-crew"
-  ensure_dir "$proj_root/agents"
-  ensure_dir "$proj_root/.claude/skills"
-  ensure_dir "$proj/.github"
-
-  # Copy raw agent files (no Claude frontmatter — Copilot reads them as docs).
-  for src in "$SRC_AGENTS"/*.md; do
-    [ -e "$src" ] || continue
-    local d="$proj_root/agents/$(basename "$src")"
-    if [ -e "$d" ] && [ "$FORCE" -ne 1 ]; then
-      say "skip (exists): $d  [use --force to overwrite]"; continue
-    fi
-    do_or_echo cp "$src" "$d"
-    [ "$DRY_RUN" -eq 1 ] || say "installed: $d"
-  done
-
-  # Copy skills.
-  if [ -d "$SRC_SKILLS_DIR" ]; then
-    for src in "$SRC_SKILLS_DIR"/*/; do
-      [ -d "$src" ] || continue
-      install_skill "$src" "$proj_root/.claude/skills/$(basename "$src")"
-    done
-  fi
-
-  # Copy AGENTS.md (canonical doc) if present.
-  if [ -f "$SCRIPT_DIR/AGENTS.md" ]; then
-    local d="$proj_root/AGENTS.md"
-    if [ ! -e "$d" ] || [ "$FORCE" -eq 1 ]; then
-      do_or_echo cp "$SCRIPT_DIR/AGENTS.md" "$d"
-      [ "$DRY_RUN" -eq 1 ] || say "installed: $d"
-    else
-      say "skip (exists): $d"
-    fi
-  fi
-
-  # Wire Copilot: write .github/copilot-instructions.md pointing at the bundle.
-  local copilot_md="$proj/.github/copilot-instructions.md"
-  if [ -e "$copilot_md" ] && [ "$FORCE" -ne 1 ]; then
-    say "skip (exists): $copilot_md  [use --force to overwrite]"
-  elif [ "$DRY_RUN" -eq 1 ]; then
-    say "DRY-RUN: write $copilot_md"
-  else
-    cat > "$copilot_md" <<'EOF'
-# Copilot Instructions
-
-This project uses the **feature-crew** agent framework, vendored under `.feature-crew/`.
-
-At session start, read:
-- `.feature-crew/AGENTS.md` — full framework rules
-- `.feature-crew/agents/pm.md` — PM behavior and track selection
-- `.feature-crew/.claude/skills/build-or-fix/SKILL.md` — three pipelines, gates, dispatch rules
-
-On every build/fix/change request:
-1. Act as the **PM** — propose a track (Trivial / Standard / Complex) and confirm with the user.
-2. Follow the matching flow in `.feature-crew/.claude/skills/build-or-fix/SKILL.md`.
-3. Honor every hard gate (track approval, spec approval, plan approval, verification evidence, all tests pass, Tech Lead approval for Complex, cross-family audit on hard gates).
-4. Dispatch role agents from `.feature-crew/agents/`.
-
-For research / investigation requests, use the `/research` flow defined in
-`.feature-crew/.claude/skills/research/SKILL.md` (search → synthesize → validate).
-EOF
-    say "installed: $copilot_md"
-  fi
-
-  say ""
-  say "Done. Project-installed at $proj_root and $copilot_md"
-}
-
-project_uninstall() {
-  local proj="$1"
-  proj="$(cd "$proj" && pwd)"
-  say "feature-crew: uninstalling from project $proj"
-  for p in "$proj/.feature-crew" "$proj/.github/copilot-instructions.md"; do
-    if [ -e "$p" ]; then
-      do_or_echo rm -rf "$p"
-      say "removed: $p"
-    else
-      say "not present: $p"
-    fi
-  done
-}
 
 if [ "$UNINSTALL" -eq 1 ]; then
-  if [ "$COPILOT_ONLY" -ne 1 ]; then
-    say "feature-crew: uninstalling from $PREFIX"
-    uninstall_paths
-  fi
-  if [ -n "$PROJECT" ]; then
-    project_uninstall "$PROJECT"
-  fi
+  say "feature-crew: uninstalling from $PREFIX"
+  uninstall_paths
   exit 0
 fi
 
-if [ "$COPILOT_ONLY" -ne 1 ]; then
-  main_install
-fi
-if [ -n "$PROJECT" ]; then
-  project_install "$PROJECT"
-fi
+main_install

@@ -1,6 +1,8 @@
 # Feature-Crew — Agent Instructions
 
-> Single source of truth for AI coding assistants (Claude Code, GitHub Copilot, Cursor, etc.) working in this repository.
+> Single source of truth for **Claude Code** working in this repository.
+>
+> **Scope (2026-05):** Feature-Crew now targets Claude Code only. The previous GitHub Copilot integration is **deprecated and removed** — pin to `v3.1` if you still need it.
 
 This project uses the **Feature-Crew** framework: every build/fix/change request goes through a track-based pipeline (Trivial / Standard / Complex) with mandatory hard gates and cross-family model audits.
 
@@ -24,29 +26,28 @@ Every model-authored hard-gate artifact (spec, plan, tests-as-spec, implementati
 - **YAGNI** — don't build what wasn't requested
 - **Cross-platform parity** — any installer / CLI / script that ships in this repo MUST work identically on macOS, Linux, and Windows. When a feature lands in `install.sh` it lands in `install.ps1` the same commit; flags, behavior, and output stay mirrored. Do not let one platform drift ahead of the other.
 
-## Tool-specific entry points
+## Entry points
 
-- **Claude Code**: the `build-or-fix` skill at `.claude/skills/build-or-fix/SKILL.md` auto-triggers on build/fix/change requests; you can also invoke it explicitly with `/skill build-or-fix`.
-- **GitHub Copilot**: see `.github/copilot-instructions.md` (mirrors this file).
-- **Other tools**: read this file plus `.claude/skills/build-or-fix/SKILL.md`.
+- **`build-or-fix` skill** at `.claude/skills/build-or-fix/SKILL.md` — auto-triggers on build/fix/change requests; also invokable as `/build-or-fix`.
+- **`research` skill** at `.claude/skills/research/SKILL.md` — invokable as `/research <topic>` for multi-agent investigations.
+- **fc-* subagents** — `fc-pm`, `fc-architect`, `fc-developer`, `fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`. After running `./install.sh`, these are usable in any project.
 
 ## Canonical sources
 
 | What | Where |
 |------|-------|
 | Track flows, gates, dispatch rules | `.claude/skills/build-or-fix/SKILL.md` |
+| Multi-agent research pipeline | `.claude/skills/research/SKILL.md` |
 | Role prompts | `agents/{pm,architect,developer,qa-spec-reviewer,qa-code-reviewer,tech-lead}.md` |
 | Project overview | `README.md` |
 
 ## Using Feature-Crew in another project
 
-Add as a git submodule, then point your tool at this directory:
+Run the installer once on your machine — agents and skills land globally in `~/.claude/`:
 
 ```bash
-git submodule add <feature-crew-repo-url> feature-crew
+./install.sh         # macOS / Linux / Git Bash / WSL
+.\install.ps1        # native Windows PowerShell
 ```
 
-Then in the consumer project:
-- **Claude Code**: symlink `feature-crew/.claude/skills/build-or-fix` → `.claude/skills/build-or-fix` so the skill is auto-discovered in the consumer project. Optionally symlink `feature-crew/.claude/agents/*` once those exist.
-- **Copilot**: create `.github/copilot-instructions.md` that reads `feature-crew/.github/copilot-instructions.md`.
-- Both tools end up reading the same `.claude/skills/build-or-fix/SKILL.md` and `agents/*.md`.
+After install, every Claude Code session in any project can invoke `/build-or-fix`, `/research`, and the `fc-*` subagents.

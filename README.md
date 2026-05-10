@@ -1,12 +1,14 @@
 # Feature-Crew
 
-An agent team framework for AI-assisted development. Defines 5 specialized agent roles that work as a pipeline to turn ideas into production-ready code.
+An agent team framework for AI-assisted development with **Claude Code**. Defines specialized agent roles that work as a pipeline to turn ideas into production-ready code.
+
+> **Scope note (2026-05):** Feature-Crew now targets **Claude Code only**. The previous GitHub Copilot integration is **deprecated and removed**. If you need the Copilot wiring, pin to a tag ≤ `v3.1`.
 
 ## Quick Start
 
-### Install globally (use in any project)
+### Install globally
 
-Install the role agents and the `build-or-fix` skill into your user-level Claude Code config (`~/.claude`):
+Install the role agents and skills into your user-level Claude Code config (`~/.claude`):
 
 ```bash
 # macOS / Linux / Git Bash / WSL
@@ -18,42 +20,12 @@ Install the role agents and the `build-or-fix` skill into your user-level Claude
 
 Options: `--force` (overwrite), `--dry-run`, `--uninstall`, `--prefix DIR`.
 
-After install, agents live in `~/.claude/agents/feature-crew/` (as `fc-pm`, `fc-architect`, `fc-developer`, `fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`) and the skill in `~/.claude/skills/build-or-fix/`. Invoke with `/skill build-or-fix` from any project.
+After install:
 
-### Install for GitHub Copilot (per-project)
+- Agents land flat at `~/.claude/agents/fc-*.md` (`fc-pm`, `fc-architect`, `fc-developer`, `fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`).
+- Skills land at `~/.claude/skills/<name>/` (`build-or-fix`, `research`).
 
-Copilot has no global config — it only reads files inside the repo. To wire feature-crew into a target project for Copilot:
-
-```bash
-./install.sh --project /path/to/your-project              # also installs Claude globally
-./install.sh --project /path/to/your-project --copilot-only   # Copilot only
-```
-
-This vendors feature-crew under `your-project/.feature-crew/` and writes a `.github/copilot-instructions.md` that points at it. Copilot will pick it up on the next session.
-
-### Add to your project
-
-```bash
-cd your-project
-git submodule add <feature-crew-repo-url> feature-crew
-```
-
-### Wire it up
-
-Create `.github/copilot-instructions.md` in your project root:
-
-```markdown
-This project uses the feature-crew agent framework.
-
-Read `feature-crew/.github/copilot-instructions.md`, `feature-crew/agents/pm.md`, and `feature-crew/.claude/skills/build-or-fix/SKILL.md` at session start.
-
-When the user asks to build, fix, or change anything:
-1. Act as the PM — propose a track (Trivial / Standard / Complex) and confirm with the user
-2. Follow the matching flow in `feature-crew/.claude/skills/build-or-fix/SKILL.md`
-3. Right-size the process to the change — don't apply Complex ceremony to Trivial work
-```
-
-That's it. Start a new Copilot session and describe what you want to build. Claude Code users get the same flow auto-loaded via the `build-or-fix` skill — invoke it explicitly with `/skill build-or-fix` or just describe the change.
+Use them in any project: invoke `/build-or-fix`, `/research`, or ask Claude Code to delegate to one of the `fc-*` subagents. The `build-or-fix` skill also auto-triggers on build/fix/change requests.
 
 ## How It Works
 
@@ -77,6 +49,13 @@ Wrong track = wasted work or missed risk. The PM proposes a track on every reque
 | **Architect** | Complex only | Spec → design + task-by-task plan (≤500 lines). |
 | **Tech Lead** | Complex only | Final integration review before merge. |
 
+### Skills
+
+| Skill | Slash command | Purpose |
+|---|---|---|
+| `build-or-fix` | `/build-or-fix` | Track-based build/fix pipeline (Trivial / Standard / Complex). |
+| `research` | `/research` | Multi-agent search → synthesize → validate pipeline with cross-family validation. |
+
 ### Speed
 
 A Trivial change ships in seconds. A Standard change ships with one dev pass + one QA pass. Within Complex:
@@ -92,10 +71,8 @@ Right-sizing the process is the speed lever — not just parallelism.
 feature-crew/
 ├── .claude/
 │   └── skills/
-│       └── build-or-fix/
-│           └── SKILL.md            ← Full pipeline (auto-loads in Claude Code)
-├── .github/
-│   └── copilot-instructions.md     ← Copilot entry point (mirrors AGENTS.md)
+│       ├── build-or-fix/SKILL.md   ← Track-based pipeline
+│       └── research/SKILL.md       ← Multi-agent research pipeline
 ├── agents/
 │   ├── architect.md                ← Design + planning prompt
 │   ├── developer.md                ← TDD implementation prompt
@@ -104,11 +81,11 @@ feature-crew/
 │   ├── qa-code-reviewer.md         ← "Is code well-built?" prompt
 │   └── tech-lead.md                ← Final review prompt
 ├── docs/
-│   ├── integration-guide.md        ← How to wire feature-crew into a project
 │   ├── specs/                      ← Design specs go here
 │   ├── plans/                      ← Implementation plans go here
 │   └── reviews/                    ← Review records (optional)
-├── AGENTS.md                       ← Vendor-neutral instructions (Cursor, Aider, etc.)
+├── install.sh / install.ps1        ← Cross-platform installer
+├── AGENTS.md                       ← Canonical agent instructions
 ├── CLAUDE.md                       ← Claude Code loader → points at AGENTS.md
 └── README.md
 ```
@@ -122,15 +99,16 @@ These apply to all agents in the team:
 - **Verify before claiming** — Run the command, read the output, then claim the result
 - **Root cause first** — No fixes without investigation. 3+ failed fixes → rethink the approach
 - **YAGNI** — Don't build what isn't requested
+- **Cross-platform parity** — Any installer/script in this repo must work identically on bash and PowerShell; both files updated in the same commit.
 
 ## Updating
 
+Pull the latest and re-run the installer:
+
 ```bash
-cd your-project/feature-crew
+cd feature-crew
 git pull origin main
-cd ..
-git add feature-crew
-git commit -m "chore: update feature-crew"
+./install.sh --force
 ```
 
 ## License

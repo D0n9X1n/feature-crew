@@ -1,4 +1,4 @@
-See [`AGENTS.md`](./AGENTS.md) for the full agent instructions — same content used by GitHub Copilot, Cursor, and any other AI assistant.
+See [`AGENTS.md`](./AGENTS.md) for the full agent instructions.
 
 This file exists so Claude Code auto-loads the framework. The `.claude/skills/build-or-fix/SKILL.md` skill triggers on every build/fix/change request, and you can also invoke it explicitly with `/skill build-or-fix`.
 

@@ -5,8 +5,6 @@
 #
 # Usage:
 #   .\install.ps1                           # install for Claude Code globally (~/.claude)
-#   .\install.ps1 -Project DIR              # ALSO install into project DIR for Copilot
-#   .\install.ps1 -Project DIR -CopilotOnly # skip global Claude install
 #   .\install.ps1 -Force                    # overwrite existing files
 #   .\install.ps1 -DryRun                   # print what would happen, change nothing
 #   .\install.ps1 -Uninstall                # remove files this script installs
@@ -17,9 +15,7 @@ param(
   [switch]$Force,
   [switch]$DryRun,
   [switch]$Uninstall,
-  [string]$Prefix = (Join-Path $HOME ".claude"),
-  [string]$Project = "",
-  [switch]$CopilotOnly
+  [string]$Prefix = (Join-Path $HOME ".claude")
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,8 +29,6 @@ if ($bash) {
   if ($DryRun)       { $args += "--dry-run" }
   if ($Uninstall)    { $args += "--uninstall" }
   if ($Prefix)       { $args += @("--prefix", $Prefix) }
-  if ($Project)      { $args += @("--project", $Project) }
-  if ($CopilotOnly)  { $args += "--copilot-only" }
   & bash (Join-Path $ScriptDir "install.sh") @args
   exit $LASTEXITCODE
 }
@@ -54,26 +48,6 @@ $AgentMeta = @{
   "qa-code-reviewer.md" = @("fc-qa-code", "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).")
   "tech-lead.md"        = @("fc-tech-lead", "Feature-Crew Tech Lead: final cross-family review before merging Complex work.")
 }
-
-$CopilotInstructions = @'
-# Copilot Instructions
-
-This project uses the **feature-crew** agent framework, vendored under `.feature-crew/`.
-
-At session start, read:
-- `.feature-crew/AGENTS.md` — full framework rules
-- `.feature-crew/agents/pm.md` — PM behavior and track selection
-- `.feature-crew/.claude/skills/build-or-fix/SKILL.md` — three pipelines, gates, dispatch rules
-
-On every build/fix/change request:
-1. Act as the **PM** — propose a track (Trivial / Standard / Complex) and confirm with the user.
-2. Follow the matching flow in `.feature-crew/.claude/skills/build-or-fix/SKILL.md`.
-3. Honor every hard gate (track approval, spec approval, plan approval, verification evidence, all tests pass, Tech Lead approval for Complex, cross-family audit on hard gates).
-4. Dispatch role agents from `.feature-crew/agents/`.
-
-For research / investigation requests, use the `/research` flow defined in
-`.feature-crew/.claude/skills/research/SKILL.md` (search → synthesize → validate).
-'@
 
 function Do-Or-Echo($msg, [scriptblock]$action) {
   if ($DryRun) { Write-Host "DRY-RUN: $msg" } else { & $action; Write-Host $msg }
@@ -151,69 +125,6 @@ function Install-ClaudeGlobal {
   Write-Host "Skills:  $DestSkillsDir"
 }
 
-function Install-Project($projPath) {
-  if (-not (Test-Path $projPath)) {
-    Write-Error "--Project path does not exist: $projPath"; exit 1
-  }
-  $proj = (Resolve-Path $projPath).Path
-  Write-Host ""
-  Write-Host "feature-crew: installing into project $proj (for Copilot)"
-
-  $projRoot = Join-Path $proj ".feature-crew"
-  Ensure-Dir (Join-Path $projRoot "agents")
-  Ensure-Dir (Join-Path $projRoot ".claude\skills")
-  Ensure-Dir (Join-Path $proj ".github")
-
-  # Raw agent files (no Claude frontmatter — Copilot reads them as docs).
-  Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
-    $d = Join-Path (Join-Path $projRoot "agents") $_.Name
-    if ((Test-Path $d) -and (-not $Force)) {
-      Write-Host "skip (exists): $d  [use -Force to overwrite]"; return
-    }
-    if ($DryRun) {
-      Write-Host "DRY-RUN: cp $($_.FullName) -> $d"
-    } else {
-      Copy-Item -Path $_.FullName -Destination $d -Force
-      Write-Host "installed: $d"
-    }
-  }
-
-  # Skills.
-  if (Test-Path $SrcSkillsDir) {
-    Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
-      Copy-Tree $_.FullName (Join-Path $projRoot ".claude\skills\$($_.Name)")
-    }
-  }
-
-  # AGENTS.md.
-  $agentsDoc = Join-Path $ScriptDir "AGENTS.md"
-  if (Test-Path $agentsDoc) {
-    $d = Join-Path $projRoot "AGENTS.md"
-    if ((Test-Path $d) -and (-not $Force)) {
-      Write-Host "skip (exists): $d"
-    } elseif ($DryRun) {
-      Write-Host "DRY-RUN: cp $agentsDoc -> $d"
-    } else {
-      Copy-Item -Path $agentsDoc -Destination $d -Force
-      Write-Host "installed: $d"
-    }
-  }
-
-  # Copilot pointer file.
-  $copilotMd = Join-Path $proj ".github\copilot-instructions.md"
-  if ((Test-Path $copilotMd) -and (-not $Force)) {
-    Write-Host "skip (exists): $copilotMd  [use -Force to overwrite]"
-  } elseif ($DryRun) {
-    Write-Host "DRY-RUN: write $copilotMd"
-  } else {
-    Set-Content -Path $copilotMd -Value $CopilotInstructions -NoNewline
-    Write-Host "installed: $copilotMd"
-  }
-
-  Write-Host ""
-  Write-Host "Done. Project-installed at $projRoot and $copilotMd"
-}
-
 function Uninstall-ClaudeGlobal {
   Write-Host "feature-crew: uninstalling from $Prefix"
   # Remove only our fc-* files; leave personal agents in the dir alone.
@@ -240,23 +151,11 @@ function Uninstall-ClaudeGlobal {
   }
 }
 
-function Uninstall-Project($projPath) {
-  $proj = (Resolve-Path $projPath).Path
-  Write-Host "feature-crew: uninstalling from project $proj"
-  foreach ($p in @((Join-Path $proj ".feature-crew"), (Join-Path $proj ".github\copilot-instructions.md"))) {
-    if (Test-Path $p) {
-      Do-Or-Echo "removed: $p" { Remove-Item -Recurse -Force $p }
-    } else { Write-Host "not present: $p" }
-  }
-}
-
 # --- Main dispatch (mirrors install.sh) ---
 
 if ($Uninstall) {
-  if (-not $CopilotOnly) { Uninstall-ClaudeGlobal }
-  if ($Project)          { Uninstall-Project $Project }
+  Uninstall-ClaudeGlobal
   exit 0
 }
 
-if (-not $CopilotOnly) { Install-ClaudeGlobal }
-if ($Project)          { Install-Project $Project }
+Install-ClaudeGlobal

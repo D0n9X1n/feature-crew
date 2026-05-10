@@ -193,8 +193,8 @@ A 1-line change in any of these areas can have outsized blast radius and needs a
 
 ### Numeric caps
 
-- The **orchestration layer** (`agents/pm.md` + `.claude/skills/build-or-fix/SKILL.md` + `.github/copilot-instructions.md`) stays **≤ 600 lines combined**.
-- The **framework total** (orchestration layer + all `agents/*.md` prompt templates + `README.md` + `AGENTS.md` + `CLAUDE.md` + framework-owned `docs/*.md` such as `docs/integration-guide.md` + every `.claude/skills/*/SKILL.md`) stays **≤ 1500 lines combined**. The cap was raised from 1200 to accommodate the Claude Code skill wiring; the +300 covers the SKILL expansion that absorbed the legacy pipeline doc plus headroom for one or two future skills.
+- The **orchestration layer** (`agents/pm.md` + `.claude/skills/build-or-fix/SKILL.md`) stays **≤ 600 lines combined**.
+- The **framework total** (orchestration layer + all `agents/*.md` prompt templates + `README.md` + `AGENTS.md` + `CLAUDE.md` + framework-owned `docs/*.md` + every `.claude/skills/*/SKILL.md`) stays **≤ 1500 lines combined**. The cap was raised from 1200 to accommodate the Claude Code skill wiring; the +300 covers the SKILL expansion that absorbed the legacy pipeline doc plus headroom for one or two future skills.
 
 If a proposed change would push either total over its cap, **decompose**, never "make an exception this one time."
 
@@ -206,7 +206,7 @@ A request is framework-internal — and therefore Track-2-max + subject to the c
 - **Gate semantics** — what hard/soft gates exist, what promotes a soft to a hard
 - **Agent roster** — adding, removing, or renaming agents (e.g., new auditor role, new reviewer role)
 - **Prompt contracts** — what subagents are told to do or how they report
-- **Framework-owned docs** — anything in this repo authored by feature-crew itself: `agents/*.md`, `.claude/skills/*/SKILL.md`, `.github/copilot-instructions.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/integration-guide.md`, and any other top-level `docs/*.md` (excluding the user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/` subdirectories)
+- **Framework-owned docs** — anything in this repo authored by feature-crew itself: `agents/*.md`, `.claude/skills/*/SKILL.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, and any top-level `docs/*.md` (excluding the user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/` subdirectories)
 - **Framework artifacts** — adding new files in any of the directories above, or new top-level framework-owned docs
 
 The literal "multi-auditor voting" case is one instance of this class. **Any** request that changes orchestration, gates, agents, prompts, or framework docs is in the same class and gets the same treatment, regardless of phrasing.
