@@ -22,6 +22,7 @@ Every model-authored hard-gate artifact (spec, plan, tests-as-spec, implementati
 - **Root cause first** — 3 failed fixes → stop and rethink
 - **No guessing** — ask when stuck; bad work is worse than no work
 - **YAGNI** — don't build what wasn't requested
+- **Cross-platform parity** — any installer / CLI / script that ships in this repo MUST work identically on macOS, Linux, and Windows. When a feature lands in `install.sh` it lands in `install.ps1` the same commit; flags, behavior, and output stay mirrored. Do not let one platform drift ahead of the other.
 
 ## Tool-specific entry points
 
