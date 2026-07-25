@@ -72,6 +72,11 @@ jobs:
         }
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The legacy-cleanup step seeds its "ours" fixture from `git show
+          # v4.0:` -- ownership is exact content identity, so the fixture must
+          # be real published content. The default shallow clone has no tags.
+          fetch-depth: 0
 
       - name: Confirm bash masking works
         shell: pwsh
@@ -129,18 +134,50 @@ jobs:
       - name: Legacy cleanup does not destroy a personal skill
         shell: pwsh
         run: |
-          # The PowerShell half of T22. A user's own skills/research must
-          # survive; one we actually shipped must be removed.
+          # The PowerShell half of T22/T27. Ownership is exact content identity
+          # (SHA-256 of what we published), so the "ours" fixture must be REAL
+          # published content -- a hand-written approximation tests the fixture,
+          # not the classifier, and the classifier correctly refuses to delete
+          # something it never shipped.
           Invoke-Expression $env:MASK_BASH
           $prefix = Join-Path $env:RUNNER_TEMP "fc-legacy"
           $mine   = Join-Path $prefix "skills\research"
           $ours   = Join-Path $prefix "skills\build-or-fix"
           New-Item -ItemType Directory -Force -Path $mine, $ours | Out-Null
-          Set-Content (Join-Path $mine "SKILL.md") "---`nname: research`ndescription: My own skill that mentions Feature-Crew.`n---`nPersonal notes."
-          Set-Content (Join-Path $ours "SKILL.md") "---`nname: build-or-fix`ndescription: Build, fix, change, refactor, implement, add, or extend code. TRIGGER whenever the user asks.`n---`n# Feature-Crew Pipeline"
+          # Not ours: shares the opening words of the published description.
+          # Built line-by-line rather than with a here-string -- a bare `---`
+          # inside one is a YAML document separator and splits this workflow.
+          $mineLines = @(
+            '---'
+            'name: research'
+            'description: Multi-agent research pipeline (search my notes, then my bookmarks). Mine.'
+            '---'
+            'Personal notes.'
+          )
+          Set-Content -LiteralPath (Join-Path $mine "SKILL.md") -Value ($mineLines -join "`n")
+          # Ours: byte-for-byte what v4.0 published.
+          git show v4.0:.claude/skills/build-or-fix/SKILL.md |
+            Set-Content -LiteralPath (Join-Path $ours "SKILL.md") -NoNewline
           .\install.ps1 -Prefix $prefix -Force
           if (-not (Test-Path (Join-Path $mine "SKILL.md"))) { throw "DESTROYED a personal skill" }
           if (Test-Path $ours) { throw "kept a legacy skill we shipped" }
+
+      - name: Uninstall keeps files it did not install
+        shell: pwsh
+        run: |
+          # The PowerShell half of T29. Install SKIPS a pre-existing file;
+          # uninstall must not delete it afterwards.
+          Invoke-Expression $env:MASK_BASH
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-uninst"
+          New-Item -ItemType Directory -Force -Path (Join-Path $prefix "skills\fc-review"), (Join-Path $prefix "agents") | Out-Null
+          Set-Content -LiteralPath (Join-Path $prefix "skills\fc-review\SKILL.md") -Value "MY OWN review skill."
+          Set-Content -LiteralPath (Join-Path $prefix "agents\fc-pm.md") -Value "MY OWN pm agent."
+          .\install.ps1 -Prefix $prefix
+          .\install.ps1 -Prefix $prefix -Uninstall
+          $s = Get-Content -Raw -LiteralPath (Join-Path $prefix "skills\fc-review\SKILL.md") -EA SilentlyContinue
+          $a = Get-Content -Raw -LiteralPath (Join-Path $prefix "agents\fc-pm.md") -EA SilentlyContinue
+          if ($s -notmatch "MY OWN") { throw "uninstall DESTROYED a personal skill" }
+          if ($a -notmatch "MY OWN") { throw "uninstall DESTROYED a personal agent" }
 
       - name: Uninstall removes everything it installed
         shell: pwsh
