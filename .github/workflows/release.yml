@@ -37,7 +37,24 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+
+          # Previous tag by VERSION order, not by reachability.
+          #
+          # `git describe --tags --abbrev=0 "${TAG}^"` returns the nearest tag
+          # reachable from the parent commit, which is not the same thing. This
+          # repo's tags are already non-monotonic (v0.0.1, v0.1.0, v3.0, v3.1,
+          # v4.0), and a release cut from a branch off an older line would then
+          # produce notes spanning the wrong range -- silently, in a published
+          # release.
+          #
+          # Walk ascending and take the tag immediately before this one. Sorting
+          # descending and skipping the current tag looks equivalent but is not:
+          # releasing a backport v4.1 while v5.0.0 exists would pick v5.0.0,
+          # which is newer than the tag being released.
+          PREV="$(git tag --list 'v*' --sort=v:refname \
+                  | awk -v t="$TAG" '$0 == t { exit } { p = $0 } END { print p }')"
+
+          echo "tag=${TAG} prev=${PREV:-<none>}"
 
           {
             if [ -n "$PREV" ]; then
@@ -68,6 +85,12 @@ jobs:
               echo "**Full diff:** https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
             fi
           } > release-notes.md
+
+          # An empty body would publish a release that says nothing.
+          if [ ! -s release-notes.md ]; then
+            echo "::error::generated release notes are empty"
+            exit 1
+          fi
 
           echo "--- generated notes ---"
           cat release-notes.md
