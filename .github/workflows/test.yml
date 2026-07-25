@@ -37,35 +37,53 @@ jobs:
     # install.ps1 cannot be executed on the dev machine, so CI is the only place
     # it ever runs. Parity is a repo rule; without this job it is only asserted.
     #
-    # install.ps1 prefers bash when present, and windows-latest ships Git Bash.
-    # Running it as-is therefore tests bash-on-Windows and never touches the
-    # pure-PowerShell fallback -- the encoding fix, Resolve-AbsPath, and the
-    # ownership check all go unexercised while the job reports green. Every
-    # step below strips Git's bin directories from PATH first, so
-    # `Get-Command bash` fails and the fallback is what actually runs.
+    # install.ps1 prefers bash when present, and windows-latest ships several
+    # bash binaries -- Git's, and WSL's under System32. Running it as-is tests
+    # bash-on-Windows and never touches the pure-PowerShell fallback, so the
+    # encoding fix, Resolve-AbsPath, and the ownership check all go unexercised
+    # while the job reports green.
+    #
+    # Masking by directory NAME is not enough (an earlier attempt filtered for
+    # 'Git' and bash still resolved). Instead: ask where bash actually is, drop
+    # that directory, repeat until it stops resolving. That handles every bash
+    # on the box without guessing at any of their paths.
     runs-on: windows-latest
+    env:
+      MASK_BASH: |
+        for ($i = 0; $i -lt 10; $i++) {
+          $b = Get-Command bash -ErrorAction SilentlyContinue
+          if (-not $b) { break }
+          $dir = Split-Path $b.Source -Parent
+          $env:PATH = ($env:PATH -split ';' |
+            Where-Object { $_ -and ($_.TrimEnd('\') -ne $dir.TrimEnd('\')) }) -join ';'
+        }
     steps:
       - uses: actions/checkout@v4
 
       - name: Confirm bash masking works
         shell: pwsh
         run: |
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
-          if (Get-Command bash -ErrorAction SilentlyContinue) {
-            throw "bash still on PATH — the fallback would be skipped and this job would test nothing"
+          Invoke-Expression $env:MASK_BASH
+          $b = Get-Command bash -ErrorAction SilentlyContinue
+          if ($b) {
+            throw "bash still resolves at $($b.Source) — the fallback would be skipped and this job would test nothing"
           }
           Write-Host "bash masked; install.ps1 will use the PowerShell fallback"
 
       - name: Install to a temp prefix
         shell: pwsh
         run: |
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
+          Invoke-Expression $env:MASK_BASH
           $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
           .\install.ps1 -Prefix $prefix -Force
           $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
           $skills = Get-ChildItem (Join-Path $prefix "skills") -Directory
           if ($agents.Count -ne 6) { throw "expected 6 agents, got $($agents.Count)" }
           if ($skills.Count -ne 6) { throw "expected 6 skills, got $($skills.Count)" }
+          # Paths built by Join-Path are backslash-separated throughout. Forward
+          # slashes would mean bash produced them, i.e. the fallback was skipped.
+          $probe = Join-Path $prefix "agents\fc-pm.md"
+          if (-not (Test-Path $probe)) { throw "fc-pm.md not where PowerShell would put it" }
 
       - name: Review agents pinned to sonnet, operate agents inherit
         shell: pwsh
@@ -100,7 +118,7 @@ jobs:
         run: |
           # The PowerShell half of T22. A user's own skills/research must
           # survive; one we actually shipped must be removed.
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
+          Invoke-Expression $env:MASK_BASH
           $prefix = Join-Path $env:RUNNER_TEMP "fc-legacy"
           $mine   = Join-Path $prefix "skills\research"
           $ours   = Join-Path $prefix "skills\build-or-fix"
@@ -114,7 +132,7 @@ jobs:
       - name: Uninstall removes everything it installed
         shell: pwsh
         run: |
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
+          Invoke-Expression $env:MASK_BASH
           $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
           .\install.ps1 -Prefix $prefix -Uninstall
           $left = @(Get-ChildItem (Join-Path $prefix "agents") -Filter *.md -EA SilentlyContinue)
