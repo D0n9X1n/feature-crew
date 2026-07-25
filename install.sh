@@ -206,38 +206,90 @@ remove_legacy_skills() {
   done
 }
 
+# Is the installed file byte-identical to what we would install right now?
+# Compares against a freshly generated copy, frontmatter included, so an agent
+# the user edited is not ours to delete.
+installed_is_ours() {
+  local src="$1" dest="$2" name="$3" desc="$4" model="${5:-}" tmp rc
+  [ -f "$dest" ] || return 1
+  tmp="$(mktemp)"
+  {
+    if ! head -n 1 "$src" | grep -q '^---$'; then
+      printf -- '---\nname: %s\ndescription: "%s"\n' "$name" "$desc"
+      [ -n "$model" ] && printf -- 'model: %s\n' "$model"
+      printf -- '---\n\n'
+    fi
+    cat "$src"
+  } > "$tmp"
+  cmp -s "$tmp" "$dest"; rc=$?
+  rm -f "$tmp"
+  return $rc
+}
+
 uninstall_paths() {
   local removed_any=0
-  # Remove each fc-* agent file we know about. Do not rm -rf $DEST_AGENTS —
-  # users may have personal agents alongside ours.
+  # Remove only files byte-identical to what we install. The fc- prefix makes
+  # a collision unlikely, not impossible -- and install deliberately SKIPS a
+  # pre-existing file ("skip (exists)"), so deleting it here would destroy work
+  # the install path just went out of its way to protect. A user who edited one
+  # of ours keeps it too; once edited it is partly their work.
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base name dest
+    local base meta name desc model dest
     base="$(basename "$src")"
     name="${base%.md}"
+    meta="$(agent_meta "$base")"
+    desc="${meta%%|*}"
+    model="${meta#*|}"
     dest="$DEST_AGENTS/${name}.md"
-    if [ -e "$dest" ]; then
-      do_or_echo rm -f "$dest"
-      say "removed: $dest"
+    if [ ! -e "$dest" ]; then
+      say "not present: $dest"
+    elif installed_is_ours "$src" "$dest" "$name" "$desc" "$model"; then
+      if [ "$DRY_RUN" -eq 1 ]; then
+        say "DRY-RUN: would remove $dest"
+      else
+        rm -f "$dest"
+        say "removed: $dest"
+      fi
       removed_any=1
     else
-      say "not present: $dest"
+      say "kept (yours — differs from what we install): $dest"
     fi
   done
   if [ -d "$SRC_SKILLS_DIR" ]; then
     for src in "$SRC_SKILLS_DIR"/*/; do
       [ -d "$src" ] || continue
-      # Only remove what we would have installed.
+      # Only consider what we would have installed.
       [ -f "${src}SKILL.md" ] || continue
-      local skill_name dest
+      local skill_name dest differs
       skill_name="$(basename "$src")"
       dest="$DEST_SKILLS_DIR/$skill_name"
-      if [ -d "$dest" ]; then
-        do_or_echo rm -rf "$dest"
-        say "removed: $dest"
+      if [ ! -d "$dest" ]; then
+        say "not present: $dest"
+        continue
+      fi
+      # Every file we ship must be present and identical, and the directory
+      # must hold nothing else -- an extra file means the user put it there.
+      differs=0
+      ( cd "$src" && find . -type f -print | sed 's|^\./||' ) | while IFS= read -r rel; do
+        cmp -s "$src/$rel" "$dest/$rel" || exit 1
+      done || differs=1
+      if [ "$differs" -eq 0 ]; then
+        local ours theirs
+        ours=$( ( cd "$src"  && find . -type f | wc -l ) )
+        theirs=$( ( cd "$dest" && find . -type f | wc -l ) )
+        [ "$ours" -eq "$theirs" ] || differs=1
+      fi
+      if [ "$differs" -eq 0 ]; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+          say "DRY-RUN: would remove $dest"
+        else
+          rm -rf "$dest"
+          say "removed: $dest"
+        fi
         removed_any=1
       else
-        say "not present: $dest"
+        say "kept (yours — differs from what we install): $dest"
       fi
     done
   fi

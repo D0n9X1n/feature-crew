@@ -238,12 +238,19 @@ fi
 
 # ---------------------------------------------------------------- T9
 # Description contract: what it does + when to use + when NOT to. This is what
-# keeps 5 sibling skills from fighting over the same triggers.
+# keeps 6 sibling skills from fighting over the same triggers.
+#
+# The extraction must be bounded to the frontmatter block. A `sed` range ending
+# at /^[a-z-]*:/ has no terminating match when `description:` is the LAST
+# frontmatter key, so it ran to EOF and the greps saw the whole file body --
+# vacuous for exactly the 3 skills whose description happens to be last, and
+# coverage silently depended on unrelated key ORDER.
 t9_err=""
 for n in "${SKILL_NAMES[@]}"; do
   f=".claude/skills/$n/SKILL.md"
   if [ ! -f "$f" ]; then t9_err="$t9_err $n:missing"; continue; fi
-  desc=$(sed -n '/^description:/,/^[a-z-]*:/p' "$f")
+  desc=$(awk '/^---$/{c++; if(c==2) exit; next} c==1' "$f" \
+         | awk '/^[a-z][a-z-]*:/{k=($0 ~ /^description:/)} k')
   echo "$desc" | grep -qi 'use when'        || t9_err="$t9_err $n:no-use-when"
   echo "$desc" | grep -qi 'do not use for'  || t9_err="$t9_err $n:no-anti-trigger"
 done
@@ -739,6 +746,59 @@ grep -qE '^- Auth, security, persistence, or config' agents/fc-pm.md \
   && t28_err="$t28_err pm-restates-its-own-list"
 [ -z "$t28_err" ] && ok "T28 escalation list stated once; fc-pm.md points at it" \
                   || bad "T28 escalation list split" "issues:$t28_err"
+
+# ---------------------------------------------------------------- T29
+# Uninstall must not destroy work install protected. Install SKIPS a
+# pre-existing file ("skip (exists)"), then uninstall deleted it anyway -- so a
+# personal skill or agent sharing one of our fc- names was silently lost. The
+# fc- prefix makes that unlikely, not impossible, and this PR widened the
+# surface from 2 names to 12.
+t29_prefix=$(mktemp -d)
+mkdir -p "$t29_prefix/skills/fc-review" "$t29_prefix/agents"
+printf -- '---\nname: fc-review\n---\nMY OWN review skill.\n' > "$t29_prefix/skills/fc-review/SKILL.md"
+printf -- '---\nname: fc-pm\n---\nMY OWN pm agent.\n'         > "$t29_prefix/agents/fc-pm.md"
+t29_err=""
+bash install.sh --prefix "$t29_prefix" >/dev/null 2>&1
+grep -q "MY OWN" "$t29_prefix/skills/fc-review/SKILL.md" 2>/dev/null || t29_err="$t29_err install-clobbered-skill"
+grep -q "MY OWN" "$t29_prefix/agents/fc-pm.md" 2>/dev/null           || t29_err="$t29_err install-clobbered-agent"
+bash install.sh --prefix "$t29_prefix" --uninstall >/dev/null 2>&1
+grep -q "MY OWN" "$t29_prefix/skills/fc-review/SKILL.md" 2>/dev/null || t29_err="$t29_err DESTROYED-skill-on-uninstall"
+grep -q "MY OWN" "$t29_prefix/agents/fc-pm.md" 2>/dev/null           || t29_err="$t29_err DESTROYED-agent-on-uninstall"
+rm -rf "$t29_prefix"
+
+# The other direction: an untouched install must be fully removed, or the
+# check above could pass by never deleting anything.
+t29b=$(mktemp -d)
+bash install.sh --prefix "$t29b" --force >/dev/null 2>&1
+bash install.sh --prefix "$t29b" --uninstall >/dev/null 2>&1
+[ "$(ls "$t29b/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ] || t29_err="$t29_err ours-not-removed"
+[ "$(ls "$t29b/skills" 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ] || t29_err="$t29_err our-skills-not-removed"
+rm -rf "$t29b"
+
+# And a file of ours the user edited is theirs now.
+t29c=$(mktemp -d)
+bash install.sh --prefix "$t29c" --force >/dev/null 2>&1
+printf '\nmy note\n' >> "$t29c/skills/fc-review/SKILL.md"
+bash install.sh --prefix "$t29c" --uninstall >/dev/null 2>&1
+[ -f "$t29c/skills/fc-review/SKILL.md" ] || t29_err="$t29_err DESTROYED-edited-skill"
+rm -rf "$t29c"
+
+[ -z "$t29_err" ] && ok "T29 uninstall removes only untouched files it installed" \
+                  || bad "T29 uninstall data loss" "issues:$t29_err"
+
+# ---------------------------------------------------------------- T30
+# --uninstall --dry-run must not claim removals it does not perform. The
+# install path was fixed for this; the uninstall path still printed "removed:"
+# for all 12 artifacts while deleting none.
+t30_prefix=$(mktemp -d)
+bash install.sh --prefix "$t30_prefix" --force >/dev/null 2>&1
+t30_out=$(bash install.sh --prefix "$t30_prefix" --uninstall --dry-run 2>&1)
+t30_err=""
+echo "$t30_out" | grep -qE '^removed:' && t30_err="$t30_err claims-removed-but-did-not"
+[ "$(ls "$t30_prefix/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 6 ] || t30_err="$t30_err dry-run-actually-deleted"
+[ -z "$t30_err" ] && ok "T30 --uninstall --dry-run claims nothing it did not do" \
+                  || bad "T30 uninstall dry-run lies" "issues:$t30_err"
+rm -rf "$t30_prefix"
 
 echo
 if [ "$SKIP" -gt 0 ]; then

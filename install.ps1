@@ -222,24 +222,69 @@ function Remove-LegacySkills {
   }
 }
 
+# Is the installed file byte-identical to what we would install right now?
+# Mirrors installed_is_ours() in install.sh.
+function Test-InstalledIsOurs($src, $dest, $name, $desc, $model) {
+  if (-not (Test-Path $dest)) { return $false }
+  $body = [IO.File]::ReadAllText((Resolve-AbsPath $src), [Text.Encoding]::UTF8)
+  $needFront = -not ($body -match '^\s*---\s*\r?\n')
+  $front = ""
+  if ($needFront) {
+    $modelLine = if ($model) { "model: $model`n" } else { "" }
+    $front = "---`nname: $name`ndescription: `"$desc`"`n$modelLine---`n`n"
+  }
+  $expected = $front + $body
+  $actual = [IO.File]::ReadAllText((Resolve-AbsPath $dest), [Text.Encoding]::UTF8)
+  return $expected -ceq $actual
+}
+
 function Uninstall-ClaudeGlobal {
   Write-Host "feature-crew: uninstalling from $Prefix"
-  # Remove only our fc-* files; leave personal agents in the dir alone.
+  # Remove only files byte-identical to what we install. The fc- prefix makes a
+  # collision unlikely, not impossible -- and install deliberately SKIPS a
+  # pre-existing file, so deleting it here would destroy work the install path
+  # just protected. Keep in sync with install.sh.
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
+    $meta = $AgentMeta[$_.Name]
+    if (-not $meta) { $meta = @("Feature-Crew agent.", "") }
     $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
     $d = Join-Path $DestAgents ($name + ".md")
-    if (Test-Path $d) {
+    if (-not (Test-Path $d)) {
+      Write-Host "not present: $d"
+    } elseif (Test-InstalledIsOurs $_.FullName $d $name $meta[0] $meta[1]) {
       Do-Or-Echo "removed: $d" { Remove-Item -Force $d }
-    } else { Write-Host "not present: $d" }
+    } else {
+      Write-Host "kept (yours - differs from what we install): $d"
+    }
   }
   if (Test-Path $SrcSkillsDir) {
     Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
-      # Only remove what we would have installed.
+      # Only consider what we would have installed.
       if (-not (Test-Path (Join-Path $_.FullName "SKILL.md"))) { return }
       $d = Join-Path $DestSkillsDir $_.Name
-      if (Test-Path $d) {
+      if (-not (Test-Path $d)) { Write-Host "not present: $d"; return }
+      # Every file we ship must be present and identical, and the directory
+      # must hold nothing else -- an extra file means the user put it there.
+      $ours = @(Get-ChildItem -Recurse -File -Path $_.FullName)
+      $theirs = @(Get-ChildItem -Recurse -File -Path $d)
+      $same = ($ours.Count -eq $theirs.Count)
+      if ($same) {
+        foreach ($f in $ours) {
+          $rel = $f.FullName.Substring($_.FullName.Length).TrimStart('\','/')
+          $t = Join-Path $d $rel
+          if (-not (Test-Path $t)) { $same = $false; break }
+          $a = [IO.File]::ReadAllBytes((Resolve-AbsPath $f.FullName))
+          $b = [IO.File]::ReadAllBytes((Resolve-AbsPath $t))
+          if ($a.Length -ne $b.Length -or (Compare-Object $a $b -SyncWindow 0)) {
+            $same = $false; break
+          }
+        }
+      }
+      if ($same) {
         Do-Or-Echo "removed: $d" { Remove-Item -Recurse -Force $d }
-      } else { Write-Host "not present: $d" }
+      } else {
+        Write-Host "kept (yours - differs from what we install): $d"
+      }
     }
   }
   # Best-effort cleanup of legacy nested folder from older installer versions.
