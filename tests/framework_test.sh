@@ -55,8 +55,6 @@ skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
 framework_files() {
   find agents -name '*.md'
   find .claude/skills -name '*.md'
-  # CHANGELOG.md is release metadata, not prompt material an agent loads, so it
-  # is deliberately outside the cap. README and CLAUDE are inside it.
   printf '%s\n' README.md CLAUDE.md
 }
 
@@ -99,10 +97,10 @@ fi
 # git grep, not grep -r: a bare recursive grep walks into .claude/worktrees/,
 # vendored copies, and stray checkouts, then reports their contents as ours.
 #
-# CHANGELOG.md is excluded for the same reason it sits outside the framework
-# cap: it is a historical record, not prompt material an agent loads. Naming a
-# field the release removed is what a changelog is for.
-stale=$(git grep -lE 'gpt-5\.5|claude-opus-4\.7|degraded \(same-vendor\)' -- '*.md' ':!CHANGELOG.md' 2>/dev/null || true)
+# No pathspec exclusion. There is no CHANGELOG.md -- the GitHub release body is
+# the changelog, so no tracked file legitimately names a removed model string.
+# The exclusion this line used to carry would now be a permanent hiding place.
+stale=$(git grep -lE 'gpt-5\.5|claude-opus-4\.7|degraded \(same-vendor\)' -- '*.md' 2>/dev/null || true)
 if [ -z "$stale" ]; then
   ok "T4 no stale model strings"
 else
@@ -799,6 +797,37 @@ echo "$t30_out" | grep -qE '^removed:' && t30_err="$t30_err claims-removed-but-d
 [ -z "$t30_err" ] && ok "T30 --uninstall --dry-run claims nothing it did not do" \
                   || bad "T30 uninstall dry-run lies" "issues:$t30_err"
 rm -rf "$t30_prefix"
+
+# ---------------------------------------------------------------- T31
+# The GitHub release body is the changelog. A changelog file would be a second
+# record to keep in sync, and the file is always the one that drifts -- the
+# last one went stale inside a single session, claiming 26 assertions when
+# there were 31.
+#
+# This also protects T4: with no such file there is no tracked document that
+# legitimately names a removed model string, so T4 needs no pathspec
+# exclusion. Reintroducing the file would invite reinstating that exclusion,
+# which would be a permanent hiding place for stale strings.
+t31_err=""
+[ -f CHANGELOG.md ] && t31_err="$t31_err file-reintroduced"
+
+# Check T4's actual command line, extracted -- not a pattern match over this
+# file. Any pattern naming the string matches this very assertion, which is a
+# self-reference trap I walked into twice before doing it this way.
+t4_line=$(grep -E '^stale=\$\(git grep' tests/framework_test.sh)
+case "$t4_line" in *CHANGELOG*) t31_err="$t31_err t4-exclusion-back" ;; esac
+
+# Docs must not LINK to a changelog file. Explaining why there isn't one is
+# fine and expected; a markdown link to the path is the failure.
+git grep -qE '\]\(\.?/?CHANGELOG\.md\)' -- '*.md' 2>/dev/null \
+  && t31_err="$t31_err docs-link-to-file"
+
+# The workflow must generate a body rather than defer to a file.
+grep -q 'release-notes.md' .github/workflows/release.yml || t31_err="$t31_err workflow-writes-no-body"
+grep -q 'feature-crew ' .github/workflows/release.yml     || t31_err="$t31_err workflow-missing-heading"
+
+[ -z "$t31_err" ] && ok "T31 release body is the changelog; no changelog file in repo" \
+                  || bad "T31 changelog duplication" "issues:$t31_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then
