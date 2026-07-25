@@ -5,7 +5,26 @@
 # installer. The cross-platform parity rule covers *shipped* artifacts
 # (install.sh / install.ps1); T10 is what enforces it.
 #
+# WHAT THIS SUITE CANNOT DO
+#
+# Assertions over prose (T7a, T7b, T8, T9) check that a rule is PRESENT. They
+# cannot check that it still MEANS what it meant. Mutation audits confirmed
+# this directly: reversing "ask one question at a time" to "never ask one
+# question at a time", or negating a skill's positive trigger, leaves every
+# keyword in place and the suite green.
+#
+# Adding negation patterns loses an arms race with paraphrase -- there is
+# always another way to invert a sentence. Where a rule's meaning is
+# load-bearing AND mechanically checkable, the assertion parses or executes
+# instead of grepping: T5 parses YAML, T16 parses frontmatter, T17 asserts
+# encoding arguments, T18/T22/T27 run the installer, T20/T21 mutate and
+# re-run. Those hold under mutation. The prose checks are regression alarms
+# for accidental deletion, not proof of semantic correctness -- that remains a
+# human review job, and this comment exists so a green run is not mistaken for
+# it.
+#
 # Run: bash tests/framework_test.sh
+#      FC_STRICT=1 bash tests/framework_test.sh   # skips become failures (CI)
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -164,11 +183,17 @@ fi
 # Marker is a phrase only the canonical statement uses -- a passing mention of
 # "different family" in an anti-pattern list is a pointer, not a restatement.
 # Tracked files only; see T4 on why grep -r is wrong here.
-canon=$(git grep -l 'must be audited by a model from a different family' -- '*.md' 2>/dev/null | wc -l | tr -d ' ')
-if [ "$canon" = "1" ]; then
-  ok "T6 cross-family rule stated in exactly 1 file"
+#
+# Count OCCURRENCES, not files. `git grep -l` counts each file once, so a
+# second contradictory copy of the rule inside the same file passed -- found by
+# mutation.
+canon=$(git grep -c 'must be audited by a model from a different family' -- '*.md' 2>/dev/null \
+        | awk -F: '{ n += $NF } END { print n + 0 }')
+canon_files=$(git grep -l 'must be audited by a model from a different family' -- '*.md' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$canon" = "1" ] && [ "$canon_files" = "1" ]; then
+  ok "T6 cross-family rule stated exactly once, in exactly 1 file"
 else
-  bad "T6 cross-family rule duplicated" "canonical statement in ${canon} files, want 1"
+  bad "T6 cross-family rule duplicated" "${canon} occurrences across ${canon_files} files, want 1 and 1"
 fi
 
 # ---------------------------------------------------------------- T7
