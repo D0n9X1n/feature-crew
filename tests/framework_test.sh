@@ -24,7 +24,9 @@ skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
 framework_files() {
   find agents -name '*.md'
   find .claude/skills -name '*.md'
-  printf '%s\n' README.md AGENTS.md CLAUDE.md
+  # CHANGELOG.md is release metadata, not prompt material an agent loads, so it
+  # is deliberately outside the cap. README and CLAUDE are inside it.
+  printf '%s\n' README.md CLAUDE.md
 }
 
 echo "== Feature-Crew framework tests =="
@@ -477,7 +479,7 @@ PROBE
 out=$(bash install.sh --prefix "$t23_prefix" --dry-run 2>&1)
 t23_err=""
 [ -d "$t23_prefix/skills/research" ] || t23_err="$t23_err dry-run-actually-deleted"
-echo "$out" | grep -qE '^removed \(pre-v4\)' && t23_err="$t23_err claims-removed-but-did-not"
+echo "$out" | grep -qE '^removed \(legacy skill\)' && t23_err="$t23_err claims-removed-but-did-not"
 [ -z "$t23_err" ] && ok "T23 --dry-run does not claim deletions it did not make" \
                   || bad "T23 dry-run lies" "issues:$t23_err"
 rm -rf "$t23_prefix"
@@ -531,6 +533,31 @@ else
 fi
 [ -z "$t25_err" ] && ok "T25 agent source names are fc-prefixed and match installed names" \
                   || bad "T25 agent name drift" "issues:$t25_err"
+
+# ---------------------------------------------------------------- T26
+# Every artifact the canonical rule names must have a matching audit step in
+# the flow. The rule named `plan` as must-audit while the Complex flow went
+# architect -> user approval -> implementation with no audit between; five
+# independent reviewers caught it and the tests did not. T6 only counts where
+# the rule is *stated*, never whether the flow obeys it.
+c=.claude/skills/fc-build-or-fix/reference/complex-track.md
+t26_err=""
+if [ -f "$c" ]; then
+  grep -qi 'cross-audit the spec' "$c" || t26_err="$t26_err spec-unaudited"
+  grep -qi 'cross-audit the plan' "$c" || t26_err="$t26_err plan-unaudited"
+  grep -qi 'fc-qa-spec\|fc-qa-code' "$c" || t26_err="$t26_err diff-unaudited"
+  grep -qi 'fc-tech-lead'          "$c" || t26_err="$t26_err final-unaudited"
+  # The plan audit must come BEFORE the user approves it, or it audits nothing.
+  pa=$(grep -n 'Cross-audit the plan' "$c" | cut -d: -f1)
+  ap=$(grep -n 'User approves the plan' "$c" | cut -d: -f1)
+  if [ -n "$pa" ] && [ -n "$ap" ] && [ "$pa" -ge "$ap" ]; then
+    t26_err="$t26_err plan-audit-after-approval"
+  fi
+else
+  t26_err=" complex-track-missing"
+fi
+[ -z "$t26_err" ] && ok "T26 every artifact named in the rule has an audit step in the flow" \
+                  || bad "T26 rule/flow mismatch" "issues:$t26_err"
 
 echo
 echo "== ${PASS} passed, ${FAIL} failed =="

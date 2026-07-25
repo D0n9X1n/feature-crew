@@ -1,6 +1,6 @@
 # Feature-Crew
 
-An agent-team framework for **Claude Code**. Six skills, each for a different thing you're missing, plus role agents that do the work under hard gates and cross-family review.
+**v5.0.0** · An agent-team framework for **Claude Code**. Six skills, each for a different thing you're missing, plus role agents that do the work under hard gates and cross-family review.
 
 ## Install
 
@@ -88,11 +88,23 @@ feature-crew/
 │   └── fc-build-or-fix/
 │       ├── SKILL.md        ← hot path, loaded every build request
 │       └── reference/      ← Complex track + meta-work cap, loaded on demand
-├── agents/                 ← six role prompts
+├── agents/fc-*.md          ← six role prompts
+├── .github/workflows/      ← test on PR, release on tag
 ├── docs/specs|plans|reviews/
 ├── tests/framework_test.sh
+├── CLAUDE.md               ← agent instructions (no AGENTS.md; Claude Code only)
 └── install.sh / install.ps1
 ```
+
+## Releasing
+
+Milestone → issues → PR → merge → tag. CI publishes on tag push; see the release process in [CLAUDE.md](CLAUDE.md).
+
+```bash
+git tag -a v5.0.0 -m "v5.0.0" && git push origin v5.0.0
+```
+
+Release notes are generated from the commits between the previous tag and the new one. Categorized notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## Updating
 
@@ -100,7 +112,7 @@ feature-crew/
 git pull origin main && ./install.sh --force
 ```
 
-The installer removes pre-v4 skill directories so `/build-or-fix` doesn't linger beside `/fc-build-or-fix`.
+The installer removes the legacy unprefixed skill directories so `/build-or-fix` doesn't linger beside `/fc-build-or-fix`.
 
 ## Credits
 

@@ -162,14 +162,14 @@ function Install-ClaudeGlobal {
   Write-Host "/fc-research, /fc-review, /fc-second-opinion - or delegate to an fc-* subagent."
 }
 
-# Skills were renamed to fc-* in v4. Remove the pre-rename directories so an
-# upgrade doesn't leave both installed and /build-or-fix still resolving.
+# Skills gained the fc- prefix in v5.0.0. Remove the unprefixed directories so
+# an upgrade doesn't leave both installed and /build-or-fix still resolving.
 #
 # ONLY remove a directory we can prove we shipped. `research` and `build-or-fix`
 # are plausible names for a user's own skill, and deleting one would destroy
 # work with no prompt and no backup. Each candidate must carry both the exact
-# v3 `name:` field and a Feature-Crew provenance marker; anything else is left
-# alone and reported so the user can decide.
+# legacy `name:` field and a Feature-Crew provenance marker; anything else is
+# left alone and reported so the user can decide.
 # Mirrors remove_legacy_skills() in install.sh.
 function Remove-LegacySkills {
   foreach ($old in @("build-or-fix", "research")) {
@@ -191,10 +191,10 @@ function Remove-LegacySkills {
       continue
     }
     if ($DryRun) {
-      Write-Host "DRY-RUN: would remove (pre-v4): $d"
+      Write-Host "DRY-RUN: would remove (legacy skill): $d"
     } else {
       Remove-Item -Recurse -Force $d
-      Write-Host "removed (pre-v4): $d"
+      Write-Host "removed (legacy skill): $d"
     }
   }
 }

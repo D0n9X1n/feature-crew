@@ -5,7 +5,7 @@ Loaded on demand by `/fc-build-or-fix`. Any change to Feature-Crew itself is **S
 ## Numeric caps
 
 - **Orchestration layer** — `agents/fc-pm.md` + every `.claude/skills/*/SKILL.md` — stays **≤ 600 lines combined**.
-- **Framework total** — orchestration layer + all `agents/*.md` + all skill supporting files + `README.md` + `AGENTS.md` + `CLAUDE.md` — stays **≤ 1500 lines combined**.
+- **Framework total** — orchestration layer + all `agents/*.md` + all skill supporting files + `README.md` + `CLAUDE.md` — stays **≤ 1500 lines combined**. `CHANGELOG.md` is release metadata rather than prompt material, so it sits outside the cap.
 
 Both are asserted by `tests/framework_test.sh`. If a change would push either total over, **decompose**. Never "make an exception this one time."
 
@@ -20,7 +20,7 @@ Anything that modifies:
 - **Agent roster** — adding, removing, or renaming agents
 - **Skill roster** — adding, removing, or renaming skills
 - **Prompt contracts** — what subagents are told to do, or how they report
-- **Framework-owned docs** — `agents/*.md`, `.claude/skills/**`, `README.md`, `AGENTS.md`, `CLAUDE.md`, top-level `docs/*.md` (excluding user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/`)
+- **Framework-owned docs** — `agents/*.md`, `.claude/skills/**`, `README.md`, `CLAUDE.md`, top-level `docs/*.md` (excluding user-authored `docs/specs/`, `docs/plans/`, `docs/reviews/`)
 
 ## Refusal example
 

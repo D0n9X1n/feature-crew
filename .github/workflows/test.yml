@@ -1,0 +1,87 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  framework:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # T4 and T6 use `git grep`, and T22/T23 exercise the installer against
+          # temp prefixes. Full history keeps git-based assertions honest.
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        # T16 parses installed agent frontmatter. Without PyYAML it self-skips,
+        # which would silently drop the assertion in CI.
+        run: python3 -m pip install --user pyyaml
+
+      - name: Run framework tests
+        run: bash tests/framework_test.sh
+
+      - name: Verify installer against a clean prefix
+        run: |
+          set -euo pipefail
+          PREFIX="$(mktemp -d)"
+          bash install.sh --prefix "$PREFIX" --force
+          test "$(ls "$PREFIX/agents" | wc -l)" -eq 6
+          test "$(ls "$PREFIX/skills" | wc -l)" -eq 6
+          bash install.sh --prefix "$PREFIX" --uninstall
+          test "$(ls "$PREFIX/agents" 2>/dev/null | wc -l)" -eq 0
+
+  powershell:
+    # install.ps1 cannot be executed on the dev machine, so CI is the only place
+    # it ever runs. Parity is a repo rule; without this job it is only asserted.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install to a temp prefix
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          .\install.ps1 -Prefix $prefix -Force
+          $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
+          $skills = Get-ChildItem (Join-Path $prefix "skills") -Directory
+          if ($agents.Count -ne 6) { throw "expected 6 agents, got $($agents.Count)" }
+          if ($skills.Count -ne 6) { throw "expected 6 skills, got $($skills.Count)" }
+
+      - name: Review agents pinned to sonnet, operate agents inherit
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          foreach ($n in @("fc-qa-spec","fc-qa-code","fc-tech-lead")) {
+            $t = Get-Content (Join-Path $prefix "agents\$n.md") -Raw
+            if ($t -notmatch "(?m)^model: sonnet`$") { throw "$n missing model: sonnet" }
+          }
+          foreach ($n in @("fc-pm","fc-architect","fc-developer")) {
+            $t = Get-Content (Join-Path $prefix "agents\$n.md") -Raw
+            if ($t -match "(?m)^model:") { throw "$n should inherit the session model" }
+          }
+
+      - name: Agent bodies survive the round-trip byte-for-byte
+        shell: pwsh
+        run: |
+          # The bug this catches: PowerShell 5.1 defaults to the system ANSI
+          # code page, which mangles the en-dashes, arrows and U+2264 in the
+          # agent bodies. Compare against the source to prove it did not.
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          foreach ($src in Get-ChildItem agents -Filter *.md) {
+            $installed = [IO.File]::ReadAllText(
+              (Join-Path $prefix "agents\$($src.Name)"), [Text.Encoding]::UTF8)
+            $original  = [IO.File]::ReadAllText($src.FullName, [Text.Encoding]::UTF8)
+            $body = $installed -replace '(?s)^---\r?\n.*?\r?\n---\r?\n\r?\n', ''
+            if ($body -ne $original) { throw "$($src.Name) body altered on install" }
+          }
+
+      - name: Uninstall removes everything it installed
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          .\install.ps1 -Prefix $prefix -Uninstall
+          $left = @(Get-ChildItem (Join-Path $prefix "agents") -Filter *.md -EA SilentlyContinue)
+          if ($left.Count -ne 0) { throw "uninstall left $($left.Count) agent(s)" }
