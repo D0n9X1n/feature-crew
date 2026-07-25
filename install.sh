@@ -130,13 +130,38 @@ install_skill() {
 
 # Skills were renamed to fc-* in v4. Remove the pre-rename directories so an
 # upgrade doesn't leave both installed and /build-or-fix still resolving.
+#
+# ONLY remove a directory we can prove we shipped. `research` and `build-or-fix`
+# are plausible names for a user's own skill, and deleting one would destroy
+# work with no prompt and no backup. Each candidate must carry both the exact
+# v3 `name:` field and a Feature-Crew provenance marker; anything else is left
+# alone and reported so the user can decide.
 # Mirrors Remove-LegacySkills in install.ps1.
 remove_legacy_skills() {
-  local old d
+  local old d f
   for old in build-or-fix research; do
     d="$DEST_SKILLS_DIR/$old"
-    if [ -d "$d" ]; then
-      do_or_echo rm -rf "$d"
+    f="$d/SKILL.md"
+    [ -d "$d" ] || continue
+    if [ ! -f "$f" ]; then
+      say "kept (not ours — no SKILL.md): $d"
+      continue
+    fi
+    if ! grep -q "^name: ${old}$" "$f"; then
+      say "kept (not ours — name mismatch): $d"
+      continue
+    fi
+    # Provenance: v3 build-or-fix says "Feature-Crew Pipeline"; v3 research
+    # carries the audit-pair telemetry field. A user's own skill won't.
+    if ! grep -qi 'feature-crew\|audit-pair' "$f"; then
+      say "kept (not ours — no Feature-Crew marker): $d"
+      say "  if this was v3 Feature-Crew, remove it by hand: rm -rf $d"
+      continue
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+      say "DRY-RUN: would remove (pre-v4): $d"
+    else
+      rm -rf "$d"
       say "removed (pre-v4): $d"
     fi
   done

@@ -76,7 +76,12 @@ fi
 # Review agents carry `model: sonnet` in INSTALLED frontmatter; operate agents
 # inherit the session model (no model: key at all).
 tmp_prefix="$(mktemp -d)"
-trap 'rm -rf "$tmp_prefix"' EXIT
+# The T15 probe lives inside the repo, so it must be cleaned up even if an
+# assertion between here and there exits early -- otherwise a failed run leaves
+# the working tree dirty.
+T15_PROBE=".claude/skills/t15-probe-$$"
+T21_SCRIPT="./t21-noguard-$$.sh"
+trap 'rm -rf "$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT"' EXIT
 if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   t5_err=""
   for a in "${REVIEW_AGENTS[@]}"; do
@@ -242,10 +247,14 @@ fi
 # ---------------------------------------------------------------- T15
 # A directory with no SKILL.md is not a skill. The installer globs, so without
 # this guard any scratch dir under .claude/skills/ gets shipped to users.
-scratch="$tmp_prefix/../fc-scratch-$$"
-mkdir -p ".claude/skills/.t15-probe"
+#
+# The probe must NOT be dot-prefixed: `for src in "$SRC_SKILLS_DIR"/*/` never
+# enumerates dot dirs, so a hidden probe means the guard under test is never
+# executed -- both guards could be deleted and this still reported ok. T21
+# proves the current probe actually exercises them.
+mkdir -p "$T15_PROBE"
 if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  if [ -d "$tmp_prefix/skills/.t15-probe" ]; then
+  if [ -d "$tmp_prefix/skills/$(basename "$T15_PROBE")" ]; then
     bad "T15 scratch dir shipped" "a directory without SKILL.md was installed"
   else
     ok "T15 directories without SKILL.md are not installed"
@@ -253,8 +262,7 @@ if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
 else
   bad "T15 scratch dir guard" "install.sh failed"
 fi
-rmdir ".claude/skills/.t15-probe" 2>/dev/null
-rm -rf "$scratch" 2>/dev/null
+rmdir "$T15_PROBE" 2>/dev/null
 
 # ---------------------------------------------------------------- T14
 # Supporting files must be reachable: if SKILL.md points at reference/x.md,
@@ -389,6 +397,89 @@ sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
 rm -rf "$mut"
 [ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (3 mutations + 2 controls)" \
                   || bad "T20 mutation test" "issues:$t20_err"
+
+# ---------------------------------------------------------------- T21
+# Mutation test: prove T15's probe actually exercises the guard.
+#
+# The original probe was dot-prefixed, which the installer's `*/` glob never
+# enumerates -- so both SKILL.md guards could be deleted and T15 still reported
+# ok. Here the guards are stripped from a copy; the probe MUST then be
+# installed. If it isn't, the probe is invisible to the glob and T15 is vacuous.
+mut2=$(mktemp -d)
+t21_err=""
+# The mutated copy must live in the repo root: install.sh resolves SCRIPT_DIR
+# from its own location, and from /tmp it cannot find agents/.
+sed 's#^\([[:space:]]*\)\[ -f "${src}SKILL.md" \] || continue$#\1true#' install.sh > "$T21_SCRIPT"
+if ! grep -qF '[ -f "${src}SKILL.md" ] || continue' "$T21_SCRIPT"; then
+  mkdir -p "$T15_PROBE"
+  if bash "$T21_SCRIPT" --prefix "$mut2/out" --force >/dev/null 2>&1; then
+    if [ -d "$mut2/out/skills/$(basename "$T15_PROBE")" ]; then
+      ok "T21 T15's probe is glob-visible (guard removal is detectable)"
+    else
+      t21_err="probe-invisible-to-glob"
+    fi
+  else
+    t21_err="mutated-installer-failed"
+  fi
+  rmdir "$T15_PROBE" 2>/dev/null
+else
+  t21_err="mutation-not-applied"
+fi
+[ -n "$t21_err" ] && bad "T21 T15 is vacuous" "$t21_err"
+rm -rf "$mut2" "$T21_SCRIPT"
+
+# ---------------------------------------------------------------- T22
+# Data loss. `research` and `build-or-fix` are plausible names for a user's own
+# skill. An unconditional rm -rf of those paths destroys hand-written work with
+# no prompt and no backup -- which is exactly what the first version of
+# remove_legacy_skills did. Deletion now requires proof of ownership.
+t22_prefix=$(mktemp -d)
+mkdir -p "$t22_prefix/skills/research" "$t22_prefix/skills/build-or-fix"
+cat > "$t22_prefix/skills/research/SKILL.md" <<'PROBE'
+---
+name: research
+description: A user's own research skill. Nothing to do with this framework.
+---
+Years of personal notes.
+PROBE
+# Ours: correct name AND a provenance marker.
+cat > "$t22_prefix/skills/build-or-fix/SKILL.md" <<'PROBE'
+---
+name: build-or-fix
+description: Runs the request through the Feature-Crew pipeline.
+---
+# build-or-fix — Feature-Crew Pipeline (Three Tracks)
+PROBE
+if bash install.sh --prefix "$t22_prefix" --force >/dev/null 2>&1; then
+  t22_err=""
+  [ -f "$t22_prefix/skills/research/SKILL.md" ] || t22_err="$t22_err DESTROYED-user-skill"
+  [ -d "$t22_prefix/skills/build-or-fix" ]      && t22_err="$t22_err kept-our-own-v3-skill"
+  [ -z "$t22_err" ] && ok "T22 legacy cleanup removes only skills we shipped" \
+                    || bad "T22 legacy cleanup" "issues:$t22_err"
+else
+  bad "T22 legacy cleanup" "install.sh failed"
+fi
+rm -rf "$t22_prefix"
+
+# ---------------------------------------------------------------- T23
+# --dry-run must not claim a deletion it did not perform. A user auditing a
+# dry run before upgrading would otherwise read "removed" and believe their v3
+# skills were already gone.
+t23_prefix=$(mktemp -d)
+mkdir -p "$t23_prefix/skills/research"
+cat > "$t23_prefix/skills/research/SKILL.md" <<'PROBE'
+---
+name: research
+description: Multi-agent research pipeline. audit-pair: degraded
+---
+PROBE
+out=$(bash install.sh --prefix "$t23_prefix" --dry-run 2>&1)
+t23_err=""
+[ -d "$t23_prefix/skills/research" ] || t23_err="$t23_err dry-run-actually-deleted"
+echo "$out" | grep -qE '^removed \(pre-v4\)' && t23_err="$t23_err claims-removed-but-did-not"
+[ -z "$t23_err" ] && ok "T23 --dry-run does not claim deletions it did not make" \
+                  || bad "T23 dry-run lies" "issues:$t23_err"
+rm -rf "$t23_prefix"
 
 echo
 echo "== ${PASS} passed, ${FAIL} failed =="

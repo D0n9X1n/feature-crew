@@ -162,12 +162,37 @@ function Install-ClaudeGlobal {
 
 # Skills were renamed to fc-* in v4. Remove the pre-rename directories so an
 # upgrade doesn't leave both installed and /build-or-fix still resolving.
+#
+# ONLY remove a directory we can prove we shipped. `research` and `build-or-fix`
+# are plausible names for a user's own skill, and deleting one would destroy
+# work with no prompt and no backup. Each candidate must carry both the exact
+# v3 `name:` field and a Feature-Crew provenance marker; anything else is left
+# alone and reported so the user can decide.
 # Mirrors remove_legacy_skills() in install.sh.
 function Remove-LegacySkills {
   foreach ($old in @("build-or-fix", "research")) {
     $d = Join-Path $DestSkillsDir $old
-    if (Test-Path $d) {
-      Do-Or-Echo "removed (pre-v4): $d" { Remove-Item -Recurse -Force $d }
+    if (-not (Test-Path $d)) { continue }
+    $f = Join-Path $d "SKILL.md"
+    if (-not (Test-Path $f)) {
+      Write-Host "kept (not ours - no SKILL.md): $d"; continue
+    }
+    $body = [IO.File]::ReadAllText((Resolve-AbsPath $f), [Text.Encoding]::UTF8)
+    if ($body -notmatch "(?m)^name: $([regex]::Escape($old))`$") {
+      Write-Host "kept (not ours - name mismatch): $d"; continue
+    }
+    # Provenance: v3 build-or-fix says "Feature-Crew Pipeline"; v3 research
+    # carries the audit-pair telemetry field. A user's own skill won't.
+    if ($body -notmatch '(?i)feature-crew|audit-pair') {
+      Write-Host "kept (not ours - no Feature-Crew marker): $d"
+      Write-Host "  if this was v3 Feature-Crew, remove it by hand: $d"
+      continue
+    }
+    if ($DryRun) {
+      Write-Host "DRY-RUN: would remove (pre-v4): $d"
+    } else {
+      Remove-Item -Recurse -Force $d
+      Write-Host "removed (pre-v4): $d"
     }
   }
 }
