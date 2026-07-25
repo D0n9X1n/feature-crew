@@ -183,11 +183,17 @@ function Remove-LegacySkills {
     if ($body -notmatch "(?m)^name: $([regex]::Escape($old))`$") {
       Write-Host "kept (not ours - name mismatch): $d"; continue
     }
-    # Provenance: v3 build-or-fix says "Feature-Crew Pipeline"; v3 research
-    # carries the audit-pair telemetry field. A user's own skill won't.
-    if ($body -notmatch '(?i)feature-crew|audit-pair') {
-      Write-Host "kept (not ours - no Feature-Crew marker): $d"
-      Write-Host "  if this was v3 Feature-Crew, remove it by hand: $d"
+    # Provenance: match the exact description WE shipped, anchored to the
+    # description line. An earlier version searched the whole file for
+    # "feature-crew", which destroyed a personal skill whose description merely
+    # mentioned Feature-Crew. Keep in sync with install.sh.
+    $want = switch ($old) {
+      "build-or-fix" { '(?m)^description: Build, fix, change, refactor, implement, add, or extend code\.' }
+      "research"     { '(?m)^description: Multi-agent research pipeline \(search' }
+    }
+    if ($body -notmatch $want) {
+      Write-Host "kept (not ours - description does not match any shipped version): $d"
+      Write-Host "  if this was an older Feature-Crew, remove it by hand: $d"
       continue
     }
     if ($DryRun) {

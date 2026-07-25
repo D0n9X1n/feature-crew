@@ -136,8 +136,8 @@ jobs:
           $mine   = Join-Path $prefix "skills\research"
           $ours   = Join-Path $prefix "skills\build-or-fix"
           New-Item -ItemType Directory -Force -Path $mine, $ours | Out-Null
-          Set-Content (Join-Path $mine "SKILL.md") "---`nname: research`ndescription: My own skill.`n---`nPersonal notes."
-          Set-Content (Join-Path $ours "SKILL.md") "---`nname: build-or-fix`ndescription: Runs the Feature-Crew pipeline.`n---`n# Feature-Crew Pipeline"
+          Set-Content (Join-Path $mine "SKILL.md") "---`nname: research`ndescription: My own skill that mentions Feature-Crew.`n---`nPersonal notes."
+          Set-Content (Join-Path $ours "SKILL.md") "---`nname: build-or-fix`ndescription: Build, fix, change, refactor, implement, add, or extend code. TRIGGER whenever the user asks.`n---`n# Feature-Crew Pipeline"
           .\install.ps1 -Prefix $prefix -Force
           if (-not (Test-Path (Join-Path $mine "SKILL.md"))) { throw "DESTROYED a personal skill" }
           if (Test-Path $ours) { throw "kept a legacy skill we shipped" }

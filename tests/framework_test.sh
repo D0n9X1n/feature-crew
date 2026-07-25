@@ -203,6 +203,18 @@ ps1_operative_ok() {
   grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$'   "$f" || return 1
   grep -qE '^[[:space:]]*Copy-Tree[[:space:]]+\$'       "$f" || return 1
   grep -qE '^Install-ClaudeGlobal[[:space:]]*$'         "$f" || return 1
+  # Presence is not reachability. An unconditional `throw`/`exit` at column 0
+  # before the dispatch leaves every token in place while the installer does
+  # nothing -- a reviewer demonstrated exactly that and the suite stayed green.
+  #
+  # Column 0 specifically: install.ps1 legitimately exits from inside `if`
+  # blocks (bash delegation, --uninstall), and those are indented. Only an
+  # unindented terminator runs unconditionally. Static analysis cannot prove
+  # reachability in general; the Windows CI job proves the rest by executing.
+  local disp
+  disp=$(grep -n '^Install-ClaudeGlobal[[:space:]]*$' "$f" | head -1 | cut -d: -f1)
+  [ -n "$disp" ] || return 1
+  head -n "$disp" "$f" | grep -qE '^(throw|exit)([[:space:]]|$)' && return 1
   return 0
 }
 sh_operative_ok() {
@@ -409,12 +421,22 @@ else
   t20_err="$t20_err attack3-not-applied"
 fi
 
+# Attack 4 (reviewer): unconditional `throw` before the top-level dispatch.
+# Every token stays, the call site stays present and uncommented, and the
+# installer still does nothing. This one survived until a reviewer found it.
+sed 's/^Install-ClaudeGlobal[[:space:]]*$/throw "stop"\nInstall-ClaudeGlobal/' install.ps1 > "$mut/d.ps1"
+if grep -qE '^[[:space:]]*throw "stop"' "$mut/d.ps1"; then
+  ps1_operative_ok "$mut/d.ps1" && t20_err="$t20_err attack4-undetected"
+else
+  t20_err="$t20_err attack4-not-applied"
+fi
+
 # Control: the real installers must still pass, or the check is just broken.
 ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
 sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
 
 rm -rf "$mut"
-[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (3 mutations + 2 controls)" \
+[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (4 mutations + 2 controls)" \
                   || bad "T20 mutation test" "issues:$t20_err"
 
 # ---------------------------------------------------------------- T21
@@ -461,11 +483,12 @@ description: A user's own research skill. Nothing to do with this framework.
 ---
 Years of personal notes.
 PROBE
-# Ours: correct name AND a provenance marker.
+# Ours: correct name AND the exact description we shipped. Ownership is proven
+# by matching what we published, not by the file mentioning us somewhere.
 cat > "$t22_prefix/skills/build-or-fix/SKILL.md" <<'PROBE'
 ---
 name: build-or-fix
-description: Runs the request through the Feature-Crew pipeline.
+description: Build, fix, change, refactor, implement, add, or extend code. TRIGGER whenever the user asks for any code change.
 ---
 # build-or-fix — Feature-Crew Pipeline (Three Tracks)
 PROBE
@@ -562,7 +585,12 @@ if [ -f "$c" ]; then
   grep -qi 'cross-audit the spec' "$c" || t26_err="$t26_err spec-unaudited"
   grep -qi 'cross-audit the plan' "$c" || t26_err="$t26_err plan-unaudited"
   grep -qi 'fc-qa-spec\|fc-qa-code' "$c" || t26_err="$t26_err diff-unaudited"
-  grep -qi 'fc-tech-lead'          "$c" || t26_err="$t26_err final-unaudited"
+  # Require the tech lead to be DISPATCHED, not merely named. A reviewer
+  # replaced the step with "Do not dispatch fc-tech-lead; merge directly" and
+  # this stayed green on the bare token.
+  grep -qiE 'dispatch `?fc-tech-lead' "$c" || t26_err="$t26_err final-not-dispatched"
+  grep -qiE '(do not|don.t|no need to) dispatch.*fc-tech-lead|merge directly' "$c" \
+    && t26_err="$t26_err final-audit-negated"
   # The plan audit must come BEFORE the user approves it, or it audits nothing.
   pa=$(grep -n 'Cross-audit the plan' "$c" | cut -d: -f1)
   ap=$(grep -n 'User approves the plan' "$c" | cut -d: -f1)
@@ -574,6 +602,34 @@ else
 fi
 [ -z "$t26_err" ] && ok "T26 every artifact named in the rule has an audit step in the flow" \
                   || bad "T26 rule/flow mismatch" "issues:$t26_err"
+
+echo
+# ---------------------------------------------------------------- T27
+# Provenance false-positive. The first ownership check grepped the whole file
+# for "feature-crew", so a personal skill whose DESCRIPTION merely mentioned
+# Feature-Crew was destroyed -- precisely the user most likely to have this
+# repo installed. Ownership must match what we shipped, not what mentions us.
+t27_prefix=$(mktemp -d)
+mkdir -p "$t27_prefix/skills/research"
+cat > "$t27_prefix/skills/research/SKILL.md" <<'PROBE'
+---
+name: research
+description: My own research skill. I use it to look into Feature-Crew integrations at work.
+---
+Years of my own notes. Also mentions audit-pair because I read the docs.
+PROBE
+t27_err=""
+if bash install.sh --prefix "$t27_prefix" >/dev/null 2>&1; then
+  [ -f "$t27_prefix/skills/research/SKILL.md" ] || t27_err="$t27_err DESTROYED-on-install"
+else
+  t27_err="$t27_err install-failed"
+fi
+if bash install.sh --prefix "$t27_prefix" --uninstall >/dev/null 2>&1; then
+  [ -f "$t27_prefix/skills/research/SKILL.md" ] || t27_err="$t27_err DESTROYED-on-uninstall"
+fi
+[ -z "$t27_err" ] && ok "T27 a personal skill that merely mentions Feature-Crew survives" \
+                  || bad "T27 provenance false-positive" "issues:$t27_err"
+rm -rf "$t27_prefix"
 
 echo
 if [ "$SKIP" -gt 0 ]; then

@@ -139,7 +139,7 @@ install_skill() {
 # left alone and reported so the user can decide.
 # Mirrors Remove-LegacySkills in install.ps1.
 remove_legacy_skills() {
-  local old d f
+  local old d f want
   for old in build-or-fix research; do
     d="$DEST_SKILLS_DIR/$old"
     f="$d/SKILL.md"
@@ -152,11 +152,17 @@ remove_legacy_skills() {
       say "kept (not ours — name mismatch): $d"
       continue
     fi
-    # Provenance: the legacy build-or-fix says "Feature-Crew Pipeline"; the
-    # legacy research carries the audit-pair telemetry field. A user's own
-    # skill won't.
-    if ! grep -qi 'feature-crew\|audit-pair' "$f"; then
-      say "kept (not ours — no Feature-Crew marker): $d"
+    # Provenance: match the exact description WE shipped, anchored to the
+    # description line. An earlier version grepped the whole file for
+    # "feature-crew", which destroyed a personal skill whose description merely
+    # mentioned Feature-Crew -- precisely the user most likely to have this
+    # installed. These strings are stable across v3.0/v3.1.
+    case "$old" in
+      build-or-fix) want='^description: Build, fix, change, refactor, implement, add, or extend code\.' ;;
+      research)     want='^description: Multi-agent research pipeline (search' ;;
+    esac
+    if ! grep -q "$want" "$f"; then
+      say "kept (not ours — description does not match any shipped version): $d"
       say "  if this was an older Feature-Crew, remove it by hand: rm -rf $d"
       continue
     fi
