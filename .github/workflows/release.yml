@@ -68,45 +68,52 @@ jobs:
 
           echo "tag=${TAG} prev=${PREV:-<none>}"
 
-          {
-            if [ -n "$PREV" ]; then
-              echo "## Changes since ${PREV}"
-              echo
-              RANGE="${PREV}..${TAG}"
-            else
-              echo "## Changes"
-              echo
-              RANGE="${TAG}"
-            fi
+          if [ -n "$PREV" ]; then
+            RANGE="${PREV}..${TAG}"
+          else
+            RANGE="${TAG}"
+          fi
 
-            # Commit subjects, newest first, with short SHAs.
-            git log --no-merges --format='- %s (%h)' "$RANGE"
-
-            echo
-            echo "## Contributors"
-            echo
-            git log --format='- %an' "$RANGE" | sort -u
-
-            if [ -f CHANGELOG.md ]; then
-              echo
-              echo "See [CHANGELOG.md](CHANGELOG.md) for the categorized version of this release."
-            fi
-
-            if [ -n "$PREV" ]; then
-              echo
-              echo "**Full diff:** https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${TAG}"
-            fi
-          } > release-notes.md
-
-          # Refuse to publish a release with no commits in it. Testing the file
-          # for emptiness cannot work -- the headers are written unconditionally,
-          # so it is ~43 bytes even when the range is empty (verified by
-          # re-tagging the same SHA). Count the commits instead.
+          # Refuse to publish a release with no commits. Checked before the body
+          # is built, so an empty range fails loudly instead of publishing a
+          # release whose Commits section is blank.
           COMMITS="$(git log --no-merges --oneline "$RANGE" | wc -l | tr -d ' ')"
           if [ "$COMMITS" -eq 0 ]; then
             echo "::error::no commits between ${PREV:-<start>} and ${TAG} — nothing to release"
             exit 1
           fi
+
+          COMMIT_LIST="$(git log --no-merges --format='- %s' "$RANGE")"
+          AGENTS="$(ls agents/*.md | wc -l | tr -d ' ')"
+          SKILLS="$(find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')"
+
+          # The release body IS the changelog. There is no CHANGELOG.md to keep
+          # in sync -- one record, generated from the commits that actually
+          # shipped, so it cannot drift from the tag it describes.
+          {
+            printf '## feature-crew %s\n\n' "$TAG"
+            printf 'Automated release for %s.\n\n' "$TAG"
+            printf '### Commits\n%s\n\n' "$COMMIT_LIST"
+            printf '### Contents\n'
+            printf -- '- %s skills (`~/.claude/skills/fc-*/`)\n' "$SKILLS"
+            printf -- '- %s role agents (`~/.claude/agents/fc-*.md`), review roles pinned to `model: sonnet`\n' "$AGENTS"
+            printf -- '- Cross-platform installer (`install.sh` / `install.ps1`)\n\n'
+            printf '### Validation\n'
+            printf -- '- Framework self-test, strict mode (skips count as failures)\n'
+            printf -- '- PowerShell fallback executed on Windows with bash masked\n'
+            printf -- '- Bash-delegation path executed on Windows\n'
+            printf -- '- Installer round-trip: install, verify, uninstall\n\n'
+            printf '### Install\n'
+            printf '```bash\n'
+            printf 'git clone https://github.com/%s.git\n' "$GITHUB_REPOSITORY"
+            printf 'cd feature-crew && ./install.sh\n'
+            printf '```\n\n'
+            printf 'Already installed? Run `/fc-update`.\n'
+            if [ -n "$PREV" ]; then
+              printf '\n**Full diff:** https://github.com/%s/compare/%s...%s\n' \
+                "$GITHUB_REPOSITORY" "$PREV" "$TAG"
+            fi
+          } > release-notes.md
 
           echo "--- generated notes (${COMMITS} commits) ---"
           cat release-notes.md

@@ -1,6 +1,6 @@
 # Feature-Crew
 
-**v5.0.0** · An agent-team framework for **Claude Code**. Six skills, each for a different thing you're missing, plus role agents that do the work under hard gates and cross-family review.
+**v5.0.1** · An agent-team framework for **Claude Code**. Seven skills, each for a different thing you're missing, plus role agents that do the work under hard gates and cross-family review.
 
 ## Install
 
@@ -102,10 +102,10 @@ feature-crew/
 Milestone → issues → PR → merge → tag. CI publishes on tag push; see the release process in [CLAUDE.md](CLAUDE.md).
 
 ```bash
-git tag -a v5.0.0 -m "v5.0.0" && git push origin v5.0.0
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-Release notes are generated from the commits between the previous tag and the new one. Categorized notes live in [CHANGELOG.md](CHANGELOG.md).
+**The GitHub release body is the changelog.** There is no changelog file — one record, generated per tag from the commits that actually shipped, so it cannot drift from the tag it describes. See [releases](https://github.com/D0n9X1n/feature-crew/releases).
 
 ## Updating
 

@@ -48,7 +48,11 @@ Releases are cut by CI on tag push. Follow this order — the tag is last, becau
 3. **PR.** The PR is assigned to the same milestone and closes its issues with `Closes #N` lines, so merging resolves them.
 4. **Merge to `main`.** The suite must be green; `.github/workflows/test.yml` gates this.
 5. **Tag `main`** with `vMAJOR.MINOR.PATCH` — three numbers, always. Never tag an unmerged branch.
-6. **CI releases.** `.github/workflows/release.yml` fires on `v*`, re-runs the suite, and publishes a GitHub Release whose notes list every commit between the previous tag and this one.
+6. **CI publishes.** `.github/workflows/release.yml` fires on `v*`, re-runs the suite, and writes the release body.
+
+**No changelog file.** The GitHub release body is the changelog, generated per tag from the commits between it and the previous one. A file would be a second record to keep in sync, and the one that drifts is always the file. Write commit subjects worth publishing — they are the release notes.
+
+This is the convention for any GitHub-hosted project, not a quirk of this repo: the release page is where users look, it is versioned by tag automatically, and it cannot fall out of step with what shipped. Body structure — `## <project> <tag>`, then `### Commits`, `### Contents`, `### Validation`, `### Install`.
 
 Versioning is semver: breaking changes to skill names, agent names, gate semantics, or installer behavior are MAJOR.
 
