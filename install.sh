@@ -94,7 +94,11 @@ install_agent() {
   {
     # Only add frontmatter if the source file doesn't start with '---'
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      printf -- '---\nname: %s\ndescription: %s\n' "$name" "$desc"
+      # Quote the description: role descriptions contain ": " (e.g. "Feature-Crew
+      # Architect: turns an approved spec into..."), and a plain YAML scalar may
+      # not. Claude Code 2.1.220 tolerates the unquoted form, but that tolerance
+      # is undocumented. Keep in sync with install.ps1.
+      printf -- '---\nname: %s\ndescription: "%s"\n' "$name" "$desc"
       [ -n "$model" ] && printf -- 'model: %s\n' "$model"
       printf -- '---\n\n'
     fi

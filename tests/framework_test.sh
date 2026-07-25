@@ -168,6 +168,27 @@ done
 
 # ---------------------------------------------------------------- T10
 # Cross-platform parity: the two installers stay feature-mirrored.
+#
+# Token presence alone is NOT enough. Two independent audits demonstrated that
+# replacing the top-level `Install-ClaudeGlobal` with `exit 0`, or commenting
+# out the Install-Agent / Copy-Tree calls, leaves every token in place while
+# native Windows installs silently install nothing. So the operative call sites
+# must also be present, uncommented, and reachable. Factored into functions so
+# T20 can replay those exact mutations against them.
+ps1_operative_ok() {
+  local f="$1"
+  grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$'   "$f" || return 1
+  grep -qE '^[[:space:]]*Copy-Tree[[:space:]]+\$'       "$f" || return 1
+  grep -qE '^Install-ClaudeGlobal[[:space:]]*$'         "$f" || return 1
+  return 0
+}
+sh_operative_ok() {
+  local f="$1"
+  grep -qE '^[[:space:]]*install_agent[[:space:]]+"'    "$f" || return 1
+  grep -qE '^[[:space:]]*install_skill[[:space:]]+"'    "$f" || return 1
+  return 0
+}
+
 t10_err=""
 for token in fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead sonnet; do
   grep -q -- "$token" install.sh  || t10_err="$t10_err sh:$token"
@@ -177,7 +198,9 @@ for flag in force dry-run uninstall prefix; do
   grep -qi -- "$flag" install.sh  || t10_err="$t10_err sh:--$flag"
   grep -qi -- "$flag" install.ps1 || t10_err="$t10_err ps1:--$flag"
 done
-[ -z "$t10_err" ] && ok "T10 install.sh / install.ps1 feature parity" \
+ps1_operative_ok install.ps1 || t10_err="$t10_err ps1:operative-calls-unreachable"
+sh_operative_ok  install.sh  || t10_err="$t10_err sh:operative-calls-unreachable"
+[ -z "$t10_err" ] && ok "T10 install.sh / install.ps1 parity + operative calls live" \
                   || bad "T10 installer parity drift" "missing:$t10_err"
 
 # ---------------------------------------------------------------- T11
@@ -245,6 +268,127 @@ while IFS= read -r f; do
 done < <(skill_files)
 [ -z "$t14_err" ] && ok "T14 all referenced supporting files exist" \
                   || bad "T14 dangling reference" "missing:$t14_err"
+
+# ---------------------------------------------------------------- T16
+# Installed agent frontmatter must be valid YAML. Role descriptions contain
+# ": " (e.g. "Feature-Crew Architect: turns an approved spec into..."), which a
+# plain YAML scalar may not -- so the generated description has to be quoted.
+# Claude Code 2.1.220 tolerates the unquoted form, but that tolerance is
+# undocumented and nothing would warn us when it stops.
+if ! command -v python3 >/dev/null 2>&1; then
+  ok "T16 SKIPPED (python3 unavailable) -- YAML validity unverified"
+elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  ok "T16 SKIPPED (PyYAML unavailable) -- YAML validity unverified"
+elif bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
+  if python3 - "$tmp_prefix" <<'PY' >/dev/null 2>&1
+import sys, glob, re, yaml
+for f in glob.glob(sys.argv[1] + '/agents/*.md'):
+    m = re.match(r'^---\n(.*?)\n---\n', open(f, encoding='utf-8').read(), re.S)
+    assert m, f
+    yaml.safe_load(m.group(1))
+PY
+  then
+    ok "T16 installed agent frontmatter is valid YAML"
+  else
+    bad "T16 invalid agent frontmatter" "at least one installed agent fails YAML parse"
+  fi
+else
+  bad "T16 invalid agent frontmatter" "install.sh failed"
+fi
+
+# ---------------------------------------------------------------- T17
+# install.sh copies agent bodies with cat -- byte-exact, always. PowerShell 5.1
+# defaults Get-Content/Set-Content to the system ANSI code page, which silently
+# mangles the en-dashes, em-dashes, arrows, and U+2264 in every agent body on a
+# CJK code page. Without explicit UTF-8 the two installers disagree, violating
+# the cross-platform parity rule -- and the corruption is silent.
+t17_err=""
+grep -q 'ReadAllText' install.ps1  || t17_err="$t17_err no-explicit-read"
+grep -q 'WriteAllText' install.ps1 || t17_err="$t17_err no-explicit-write"
+grep -q 'UTF8Encoding' install.ps1 || t17_err="$t17_err no-utf8-nobom"
+# A bare Get-/Set-Content on the agent body would reintroduce the bug.
+grep -qE '\$body = Get-Content' install.ps1 && t17_err="$t17_err bare-get-content"
+[ -z "$t17_err" ] && ok "T17 install.ps1 reads/writes agent bodies as explicit UTF-8" \
+                  || bad "T17 PowerShell encoding drift" "issues:$t17_err"
+
+# ---------------------------------------------------------------- T18
+# The bash half of the same property, actually executed: an installed agent's
+# body must be byte-identical to its source. T17 can only check ps1 statically
+# (no pwsh on this machine), so this is the half we can prove.
+if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
+  t18_err=""
+  for pair in pm.md:fc-pm architect.md:fc-architect developer.md:fc-developer \
+              qa-spec-reviewer.md:fc-qa-spec qa-code-reviewer.md:fc-qa-code \
+              tech-lead.md:fc-tech-lead; do
+    src="agents/${pair%%:*}"
+    dst="$tmp_prefix/agents/${pair#*:}.md"
+    if [ ! -f "$dst" ]; then t18_err="$t18_err ${pair#*:}:missing"; continue; fi
+    # Strip the generated frontmatter block plus its trailing blank line.
+    awk 'f{print} /^---$/{c++; if(c==2){f=1; getline}}' "$dst" > "$tmp_prefix/.body"
+    cmp -s "$tmp_prefix/.body" "$src" || t18_err="$t18_err ${pair#*:}:body-differs"
+  done
+  [ -z "$t18_err" ] && ok "T18 installed agent bodies are byte-identical to source" \
+                    || bad "T18 agent body corrupted on install" "issues:$t18_err"
+else
+  bad "T18 agent body check" "install.sh failed"
+fi
+
+# ---------------------------------------------------------------- T19
+# Gate integrity. The user may waive their OWN approvals (track, spec, plan);
+# they cannot waive the gates that stop an agent claiming done falsely. Without
+# this, "just do it -- comply" reads as permission to skip verification too,
+# and no other assertion would notice the difference.
+t19_err=""
+ov=$(sed -n '/^## User override/,$p' agents/pm.md)
+echo "$ov" | grep -qi 'may not waive\|cannot waive'   || t19_err="$t19_err no-nonwaivable-clause"
+echo "$ov" | grep -qi 'verification evidence'         || t19_err="$t19_err evidence-not-protected"
+echo "$ov" | grep -qi 'spec compliance'               || t19_err="$t19_err spec-compliance-not-protected"
+grep -qi 'full suite' agents/developer.md             || t19_err="$t19_err dev-allows-task-local-only"
+[ -z "$t19_err" ] && ok "T19 non-waivable gates named in override + full-suite required" \
+                  || bad "T19 gate language weakened" "issues:$t19_err"
+
+# ---------------------------------------------------------------- T20
+# Mutation test: prove T10 actually catches a gutted installer.
+#
+# Two independent audits gutted install.ps1 and watched the whole suite stay
+# green. Both mutations are replayed here against T10's own check. If T10 is
+# ever weakened back to token-presence, this fails -- a parity test that can't
+# detect an installer which installs nothing is not a parity test.
+mut=$(mktemp -d)
+t20_err=""
+
+# Attack 1 (audit A): top-level dispatch replaced with `exit 0`.
+sed 's/^Install-ClaudeGlobal[[:space:]]*$/exit 0/' install.ps1 > "$mut/a.ps1"
+if ! grep -qE '^Install-ClaudeGlobal[[:space:]]*$' "$mut/a.ps1"; then
+  ps1_operative_ok "$mut/a.ps1" && t20_err="$t20_err attack1-undetected"
+else
+  t20_err="$t20_err attack1-not-applied"
+fi
+
+# Attack 2 (audit B): operative calls commented out, tokens left intact.
+sed -e 's/^\([[:space:]]*\)\(Install-Agent \$\)/\1# \2/' \
+    -e 's/^\([[:space:]]*\)\(Copy-Tree \$\)/\1# \2/' install.ps1 > "$mut/b.ps1"
+if ! grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$' "$mut/b.ps1"; then
+  ps1_operative_ok "$mut/b.ps1" && t20_err="$t20_err attack2-undetected"
+else
+  t20_err="$t20_err attack2-not-applied"
+fi
+
+# Attack 3: same shape against the bash installer.
+sed 's/^\([[:space:]]*\)\(install_agent "\)/\1# \2/' install.sh > "$mut/c.sh"
+if ! grep -qE '^[[:space:]]*install_agent[[:space:]]+"' "$mut/c.sh"; then
+  sh_operative_ok "$mut/c.sh" && t20_err="$t20_err attack3-undetected"
+else
+  t20_err="$t20_err attack3-not-applied"
+fi
+
+# Control: the real installers must still pass, or the check is just broken.
+ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
+sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
+
+rm -rf "$mut"
+[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (3 mutations + 2 controls)" \
+                  || bad "T20 mutation test" "issues:$t20_err"
 
 echo
 echo "== ${PASS} passed, ${FAIL} failed =="

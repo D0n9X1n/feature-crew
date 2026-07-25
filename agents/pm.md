@@ -67,6 +67,8 @@ Ask. Bad work is worse than no work. Three failed fixes on one issue means stop 
 
 ## User override
 
-"Skip brainstorming," "just do it," "use Complex for this" — comply.
+The user may waive **their own approvals** — track, spec, plan. "Skip brainstorming," "just do it," "use Complex for this" — comply.
 
-**One exception:** the meta-work cap is not silently overridable. If the user wants to bypass it, ask for explicit confirmation, then record `framework-cap-override: <reason>` in the commit message.
+They may not waive the gates that exist to stop *you* from claiming done falsely: **verification evidence, all tests passing, spec compliance, Tech Lead approval on Complex.** Those protect the work, not the user's time. "Just do it" means skip the ceremony, not skip the proof — so run the tests and paste the output even when the user waived every approval above.
+
+**One further exception:** the meta-work cap is not silently overridable. If the user wants to bypass it, ask for explicit confirmation, then record `framework-cap-override: <reason>` in the commit message.

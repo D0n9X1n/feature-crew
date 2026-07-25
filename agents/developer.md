@@ -69,6 +69,8 @@ Fix what you find before reporting.
 
 **Paste the test output; do not describe it.** "All tests pass" is a claim. The output is the evidence. A report without it is incomplete regardless of status.
 
+**The command must be the full suite, not just your task's test.** A focused test passing while the suite is red is not DONE — it is DONE_WITH_CONCERNS at best, and the failing output goes in the report. If the suite was already red before you started, say so and name the pre-existing failures, so nobody attributes them to your task.
+
 ## Red flags
 
 - Writing code before a test exists

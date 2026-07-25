@@ -66,6 +66,14 @@ function Ensure-Dir($p) {
   }
 }
 
+# [IO.File] resolves relative paths against the *process* working directory,
+# which is not necessarily PowerShell's current location. Resolve to absolute
+# first so a relative --prefix writes where the user expects.
+function Resolve-AbsPath($p) {
+  if ([IO.Path]::IsPathRooted($p)) { return $p }
+  return (Join-Path (Get-Location).ProviderPath $p)
+}
+
 function Install-Agent($src, $dest, $name, $desc, $model) {
   if ((Test-Path $dest) -and (-not $Force)) {
     Write-Host "skip (exists): $dest  [use -Force to overwrite]"; return
@@ -74,14 +82,21 @@ function Install-Agent($src, $dest, $name, $desc, $model) {
     $m = if ($model) { ", model: $model" } else { "" }
     Write-Host "DRY-RUN: install $src -> $dest  (name: $name$m)"; return
   }
-  $body = Get-Content -Raw -Path $src
+  # Explicit UTF-8, no BOM. PowerShell 5.1 defaults Get-Content/Set-Content to
+  # the system ANSI code page, which silently mangles the en-dashes, em-dashes,
+  # arrows, and U+2264 in the agent bodies on CJK code pages. install.sh copies
+  # byte-for-byte via cat, so without this the two installers disagree -- and
+  # the corruption is silent, producing agents that install "successfully".
+  $body = [IO.File]::ReadAllText((Resolve-AbsPath $src), [Text.Encoding]::UTF8)
   $needFront = -not ($body -match '^\s*---\s*\r?\n')
   $front = ""
   if ($needFront) {
     $modelLine = if ($model) { "model: $model`n" } else { "" }
-    $front = "---`nname: $name`ndescription: $desc`n$modelLine---`n`n"
+    # Description is quoted: role descriptions contain ": ", which a plain YAML
+    # scalar may not. Keep in sync with install.sh.
+    $front = "---`nname: $name`ndescription: `"$desc`"`n$modelLine---`n`n"
   }
-  Set-Content -Path $dest -Value ($front + $body) -NoNewline
+  [IO.File]::WriteAllText((Resolve-AbsPath $dest), ($front + $body), (New-Object System.Text.UTF8Encoding($false)))
   $m = if ($model) { "  (model: $model)" } else { "" }
   Write-Host "installed: $dest$m"
 }
