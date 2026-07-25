@@ -481,6 +481,28 @@ echo "$out" | grep -qE '^removed \(pre-v4\)' && t23_err="$t23_err claims-removed
                   || bad "T23 dry-run lies" "issues:$t23_err"
 rm -rf "$t23_prefix"
 
+# ---------------------------------------------------------------- T24
+# Two logic holes both reviewers found in the audit rule.
+#
+# (a) Family collision. Operate = session default, review = sonnet. If the
+#     session model IS Sonnet, Sonnet writes and Sonnet reviews, and the gate
+#     is satisfied in appearance only. The rule must tell the PM to detect
+#     that and record the gate unsatisfied rather than met.
+# (b) Standard step 3 skips the spec audit, while the rule says EVERY
+#     model-authored hard-gate artifact is audited. Whichever way that is
+#     resolved, the exemption has to be stated in the rule -- otherwise a
+#     reader who trusts the rule is misled by the flow, and vice versa.
+b=.claude/skills/fc-build-or-fix/SKILL.md
+t24_err=""
+rule=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
+echo "$rule" | grep -qi 'collision\|same family'   || t24_err="$t24_err no-collision-check"
+echo "$rule" | grep -qi 'unsatisfied'              || t24_err="$t24_err collision-not-recorded"
+echo "$rule" | grep -qi 'exempt'                   || t24_err="$t24_err exemption-unstated"
+# The flow must point at the exemption rather than silently contradicting it.
+grep -qi 'one of the two exemptions\|exemption' "$b" || t24_err="$t24_err flow-does-not-cite-exemption"
+[ -z "$t24_err" ] && ok "T24 audit rule handles family collision + names its exemptions" \
+                  || bad "T24 audit rule has a logic hole" "issues:$t24_err"
+
 echo
 echo "== ${PASS} passed, ${FAIL} failed =="
 [ "$FAIL" -eq 0 ]

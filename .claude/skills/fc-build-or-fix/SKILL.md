@@ -37,7 +37,7 @@ No spec, no subagent, no QA pass.
 1. User approves track.
 2. Write a bullet spec in chat: purpose (1 sentence) · files touched · behavior (3–8 bullets) · must-pass test command · non-goals.
    Look facts up yourself — paths, existing patterns, test commands. Ask the user only about decisions.
-3. **Cross-audit the spec only if** the change touches the escalation list above. Otherwise skip.
+3. **Cross-audit the spec** when the change touches the escalation list above. Otherwise skip — this is one of the two exemptions named in the audit rule below, not an oversight.
 4. User approves spec.
 5. Implement TDD: failing test → verify it fails → minimal code → verify it passes.
 6. Run the must-pass command, paste the output.
@@ -73,11 +73,13 @@ Every model-authored hard-gate artifact — spec, plan, tests-as-spec, implement
 - **Operate** (PM, `fc-architect`, `fc-developer`): session default model.
 - **Review** (`fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`, spec cross-audits, `/fc-review`, `/fc-second-opinion`): `model: sonnet`.
 
+**Check for family collision before relying on that split.** The review pin only produces a different family when the session model is a different family. If the session is itself Sonnet, Sonnet writes and Sonnet reviews, and the gate is satisfied in appearance only. When operate and review resolve to the same family: say so, tell the user the audit is degraded, and either switch the session to another family or proceed with the gate recorded as **unsatisfied**. Do not record it as met.
+
 Whoever wrote the must-pass tests counts as the spec author for audit purposes — bad tests poison every gate downstream.
 
 If no second family is reachable, run **fewer reviewers rather than two from the same family**. A smaller panel is honest; a same-family pair only looks like coverage.
 
-Trivial produces no model-authored artifact, so no cross-audit applies.
+**Two exemptions, both explicit.** Trivial produces no model-authored artifact. A Standard spec that touches nothing on the escalation list is exempt too — it is a bullet list the user reads and approves inline, and the combined QA pass checks compliance against it afterwards. Every other artifact in the list is audited without exception, and a Standard spec that *does* touch the escalation list is audited like any other.
 
 ## Dispatch rules
 
