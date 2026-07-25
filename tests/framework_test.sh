@@ -67,7 +67,11 @@ fi
 # ---------------------------------------------------------------- T4
 # git grep, not grep -r: a bare recursive grep walks into .claude/worktrees/,
 # vendored copies, and stray checkouts, then reports their contents as ours.
-stale=$(git grep -lE 'gpt-5\.5|claude-opus-4\.7|degraded \(same-vendor\)' -- '*.md' 2>/dev/null || true)
+#
+# CHANGELOG.md is excluded for the same reason it sits outside the framework
+# cap: it is a historical record, not prompt material an agent loads. Naming a
+# field the release removed is what a changelog is for.
+stale=$(git grep -lE 'gpt-5\.5|claude-opus-4\.7|degraded \(same-vendor\)' -- '*.md' ':!CHANGELOG.md' 2>/dev/null || true)
 if [ -z "$stale" ]; then
   ok "T4 no stale model strings"
 else
