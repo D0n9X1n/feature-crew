@@ -16,11 +16,24 @@ jobs:
           fetch-depth: 0
 
       - name: Install PyYAML
-        # T16 parses installed agent frontmatter. Without PyYAML it self-skips,
-        # which would silently drop the assertion in CI.
-        run: python3 -m pip install --user pyyaml
+        # T16 parses installed agent frontmatter. Without PyYAML it skips, and
+        # under FC_STRICT=1 a skip is a failure -- so this install must not be
+        # allowed to silently no-op. PEP 668 makes plain `pip install --user`
+        # fail on newer Ubuntu images (externally-managed-environment), so fall
+        # back to --break-system-packages, then verify the import actually works.
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user pyyaml \
+            || python3 -m pip install --user --break-system-packages pyyaml \
+            || python3 -m pip install --break-system-packages pyyaml
+          python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
 
       - name: Run framework tests
+        # FC_STRICT turns any skipped assertion into a failure. A suite that
+        # reports green while an assertion silently did not run is the exact
+        # bug T10 and T15 had.
+        env:
+          FC_STRICT: "1"
         run: bash tests/framework_test.sh
 
       - name: Verify installer against a clean prefix

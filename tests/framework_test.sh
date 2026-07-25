@@ -12,8 +12,20 @@ cd "$(dirname "$0")/.."
 
 PASS=0
 FAIL=0
-ok()  { printf '  ok    %s\n' "$1"; PASS=$((PASS + 1)); }
-bad() { printf '  FAIL  %s\n' "$1"; printf '        %s\n' "$2"; FAIL=$((FAIL + 1)); }
+SKIP=0
+ok()   { printf '  ok    %s\n' "$1"; PASS=$((PASS + 1)); }
+bad()  { printf '  FAIL  %s\n' "$1"; printf '        %s\n' "$2"; FAIL=$((FAIL + 1)); }
+# A skipped assertion is not a passing one. Counting it as ok means the suite
+# reports green while the thing it claims to check never ran -- the same shape
+# as the vacuous T10/T15 bugs. FC_STRICT=1 (set in CI) turns skips into
+# failures, so a missing dependency cannot silently drop coverage.
+skip() {
+  if [ "${FC_STRICT:-0}" = "1" ]; then
+    printf '  FAIL  %s\n' "$1"; printf '        skipped under FC_STRICT=1\n'; FAIL=$((FAIL + 1))
+  else
+    printf '  skip  %s\n' "$1"; SKIP=$((SKIP + 1))
+  fi
+}
 
 SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-build-or-fix fc-review fc-second-opinion)
 REVIEW_AGENTS=(fc-qa-spec fc-qa-code fc-tech-lead)
@@ -290,9 +302,9 @@ done < <(skill_files)
 # Claude Code 2.1.220 tolerates the unquoted form, but that tolerance is
 # undocumented and nothing would warn us when it stops.
 if ! command -v python3 >/dev/null 2>&1; then
-  ok "T16 SKIPPED (python3 unavailable) -- YAML validity unverified"
+  skip "T16 python3 unavailable — YAML validity unverified"
 elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
-  ok "T16 SKIPPED (PyYAML unavailable) -- YAML validity unverified"
+  skip "T16 PyYAML unavailable — YAML validity unverified"
 elif bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   if python3 - "$tmp_prefix" <<'PY' >/dev/null 2>&1
 import sys, glob, re, yaml
@@ -564,5 +576,9 @@ fi
                   || bad "T26 rule/flow mismatch" "issues:$t26_err"
 
 echo
-echo "== ${PASS} passed, ${FAIL} failed =="
+if [ "$SKIP" -gt 0 ]; then
+  echo "== ${PASS} passed, ${FAIL} failed, ${SKIP} SKIPPED (coverage incomplete) =="
+else
+  echo "== ${PASS} passed, ${FAIL} failed =="
+fi
 [ "$FAIL" -eq 0 ]
