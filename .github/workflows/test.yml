@@ -36,13 +36,30 @@ jobs:
   powershell:
     # install.ps1 cannot be executed on the dev machine, so CI is the only place
     # it ever runs. Parity is a repo rule; without this job it is only asserted.
+    #
+    # install.ps1 prefers bash when present, and windows-latest ships Git Bash.
+    # Running it as-is therefore tests bash-on-Windows and never touches the
+    # pure-PowerShell fallback -- the encoding fix, Resolve-AbsPath, and the
+    # ownership check all go unexercised while the job reports green. Every
+    # step below strips Git's bin directories from PATH first, so
+    # `Get-Command bash` fails and the fallback is what actually runs.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Confirm bash masking works
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
+          if (Get-Command bash -ErrorAction SilentlyContinue) {
+            throw "bash still on PATH — the fallback would be skipped and this job would test nothing"
+          }
+          Write-Host "bash masked; install.ps1 will use the PowerShell fallback"
+
       - name: Install to a temp prefix
         shell: pwsh
         run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
           $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
           .\install.ps1 -Prefix $prefix -Force
           $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
@@ -78,10 +95,45 @@ jobs:
             if ($body -ne $original) { throw "$($src.Name) body altered on install" }
           }
 
+      - name: Legacy cleanup does not destroy a personal skill
+        shell: pwsh
+        run: |
+          # The PowerShell half of T22. A user's own skills/research must
+          # survive; one we actually shipped must be removed.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-legacy"
+          $mine   = Join-Path $prefix "skills\research"
+          $ours   = Join-Path $prefix "skills\build-or-fix"
+          New-Item -ItemType Directory -Force -Path $mine, $ours | Out-Null
+          Set-Content (Join-Path $mine "SKILL.md") "---`nname: research`ndescription: My own skill.`n---`nPersonal notes."
+          Set-Content (Join-Path $ours "SKILL.md") "---`nname: build-or-fix`ndescription: Runs the Feature-Crew pipeline.`n---`n# Feature-Crew Pipeline"
+          .\install.ps1 -Prefix $prefix -Force
+          if (-not (Test-Path (Join-Path $mine "SKILL.md"))) { throw "DESTROYED a personal skill" }
+          if (Test-Path $ours) { throw "kept a legacy skill we shipped" }
+
       - name: Uninstall removes everything it installed
         shell: pwsh
         run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Git' }) -join ';'
           $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
           .\install.ps1 -Prefix $prefix -Uninstall
           $left = @(Get-ChildItem (Join-Path $prefix "agents") -Filter *.md -EA SilentlyContinue)
           if ($left.Count -ne 0) { throw "uninstall left $($left.Count) agent(s)" }
+
+  powershell-delegation:
+    # The other half: with bash present, install.ps1 must delegate to it. That
+    # is the path most Windows users with Git installed actually take.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delegates to bash when bash is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+            throw "no bash on windows-latest — this job cannot test delegation"
+          }
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-delegated"
+          .\install.ps1 -Prefix $prefix -Force
+          $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
+          if ($agents.Count -ne 6) { throw "expected 6 agents, got $($agents.Count)" }
