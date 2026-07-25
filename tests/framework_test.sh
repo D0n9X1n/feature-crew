@@ -93,6 +93,11 @@ fi
 # ---------------------------------------------------------------- T5
 # Review agents carry `model: sonnet` in INSTALLED frontmatter; operate agents
 # inherit the session model (no model: key at all).
+#
+# Grepping for the LINE is not enough: YAML resolves duplicate keys to the
+# LAST one, so `model: sonnet` on line 4 and `model: haiku` on line 5 leaves a
+# line-grep green while the agent runs on haiku. Parse the frontmatter and
+# assert the RESOLVED value, and reject duplicate keys outright.
 tmp_prefix="$(mktemp -d)"
 # The T15 probe lives inside the repo, so it must be cleaned up even if an
 # assertion between here and there exits early -- otherwise a failed run leaves
@@ -102,20 +107,51 @@ T21_SCRIPT="./t21-noguard-$$.sh"
 trap 'rm -rf "$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT"' EXIT
 if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   t5_err=""
-  for a in "${REVIEW_AGENTS[@]}"; do
-    f="$tmp_prefix/agents/$a.md"
-    if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
-    elif ! head -12 "$f" | grep -q '^model: sonnet$'; then t5_err="$t5_err $a:no-model-sonnet"
-    fi
-  done
-  for a in "${OPERATE_AGENTS[@]}"; do
-    f="$tmp_prefix/agents/$a.md"
-    if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
-    elif head -12 "$f" | grep -q '^model:'; then t5_err="$t5_err $a:should-inherit"
-    fi
-  done
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+    t5_out=$(python3 - "$tmp_prefix" <<'PY'
+import sys, re, glob, os, yaml
+review  = {"fc-qa-spec", "fc-qa-code", "fc-tech-lead"}
+operate = {"fc-pm", "fc-architect", "fc-developer"}
+errs = []
+for f in sorted(glob.glob(sys.argv[1] + "/agents/*.md")):
+    name = os.path.basename(f)[:-3]
+    txt = open(f, encoding="utf-8").read()
+    m = re.match(r"^---\n(.*?)\n---\n", txt, re.S)
+    if not m:
+        errs.append(f"{name}:no-frontmatter"); continue
+    block = m.group(1)
+    # Duplicate keys parse silently and the last wins -- reject them.
+    keys = [ln.split(":", 1)[0] for ln in block.splitlines() if re.match(r"^[a-z-]+:", ln)]
+    if len(keys) != len(set(keys)):
+        errs.append(f"{name}:duplicate-keys"); continue
+    d = yaml.safe_load(block) or {}
+    got = d.get("model")
+    if name in review and got != "sonnet":
+        errs.append(f"{name}:model={got!r}-want-sonnet")
+    if name in operate and got is not None:
+        errs.append(f"{name}:model={got!r}-should-inherit")
+print(" ".join(errs))
+PY
+)
+    [ -n "$t5_out" ] && t5_err="$t5_err$t5_out"
+  else
+    # No parser available: fall back to the line check and say so.
+    for a in "${REVIEW_AGENTS[@]}"; do
+      f="$tmp_prefix/agents/$a.md"
+      if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
+      elif ! head -12 "$f" | grep -q '^model: sonnet$'; then t5_err="$t5_err $a:no-model-sonnet"
+      fi
+    done
+    for a in "${OPERATE_AGENTS[@]}"; do
+      f="$tmp_prefix/agents/$a.md"
+      if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
+      elif head -12 "$f" | grep -q '^model:'; then t5_err="$t5_err $a:should-inherit"
+      fi
+    done
+    skip "T5 no YAML parser — duplicate-key override unverified"
+  fi
   if [ -z "$t5_err" ]; then
-    ok "T5 review agents pinned to sonnet; operate agents inherit"
+    ok "T5 review agents resolve to sonnet; operate agents inherit"
   else
     bad "T5 installed agent model frontmatter" "issues:$t5_err"
   fi
@@ -340,13 +376,21 @@ fi
 # mangles the en-dashes, em-dashes, arrows, and U+2264 in every agent body on a
 # CJK code page. Without explicit UTF-8 the two installers disagree, violating
 # the cross-platform parity rule -- and the corruption is silent.
+#
+# Assert the ARGUMENTS on the specific lines, not that the function names
+# appear somewhere. Checking for "ReadAllText" left `[Text.Encoding]::ASCII`
+# green (it corrupts every non-ASCII character), and checking for
+# "UTF8Encoding" left `UTF8Encoding($true)` green (it emits a BOM, which breaks
+# the ^\s*--- frontmatter detection). Both were found by mutation.
 t17_err=""
-grep -q 'ReadAllText' install.ps1  || t17_err="$t17_err no-explicit-read"
-grep -q 'WriteAllText' install.ps1 || t17_err="$t17_err no-explicit-write"
-grep -q 'UTF8Encoding' install.ps1 || t17_err="$t17_err no-utf8-nobom"
+grep -qE 'ReadAllText\(.*\[Text\.Encoding\]::UTF8\)'   install.ps1 || t17_err="$t17_err read-not-utf8"
+grep -qE 'WriteAllText\(.*UTF8Encoding\(\$false\)\)'   install.ps1 || t17_err="$t17_err write-not-utf8-nobom"
+grep -qE '\[Text\.Encoding\]::(ASCII|Default|Unicode|UTF7|UTF32)' install.ps1 \
+  && t17_err="$t17_err wrong-encoding-present"
+grep -qE 'UTF8Encoding\(\$true\)' install.ps1 && t17_err="$t17_err bom-emitted"
 # A bare Get-/Set-Content on the agent body would reintroduce the bug.
 grep -qE '\$body = Get-Content' install.ps1 && t17_err="$t17_err bare-get-content"
-[ -z "$t17_err" ] && ok "T17 install.ps1 reads/writes agent bodies as explicit UTF-8" \
+[ -z "$t17_err" ] && ok "T17 install.ps1 reads/writes agent bodies as explicit UTF-8, no BOM" \
                   || bad "T17 PowerShell encoding drift" "issues:$t17_err"
 
 # ---------------------------------------------------------------- T18
@@ -382,7 +426,13 @@ ov=$(sed -n '/^## User override/,$p' agents/fc-pm.md)
 echo "$ov" | grep -qi 'may not waive\|cannot waive'   || t19_err="$t19_err no-nonwaivable-clause"
 echo "$ov" | grep -qi 'verification evidence'         || t19_err="$t19_err evidence-not-protected"
 echo "$ov" | grep -qi 'spec compliance'               || t19_err="$t19_err spec-compliance-not-protected"
-grep -qi 'full suite' agents/fc-developer.md             || t19_err="$t19_err dev-allows-task-local-only"
+# Assert the REQUIREMENT, not the phrase. "need not be the full suite" still
+# contains "full suite" -- found by mutation: the meaning inverted while the
+# token survived, and T19 stayed green.
+grep -qiE '(must|has to) be the full suite' agents/fc-developer.md \
+  || t19_err="$t19_err dev-does-not-require-full-suite"
+grep -qiE '(need not|does not have to|no need to) be the full suite' agents/fc-developer.md \
+  && t19_err="$t19_err dev-full-suite-negated"
 [ -z "$t19_err" ] && ok "T19 non-waivable gates named in override + full-suite required" \
                   || bad "T19 gate language weakened" "issues:$t19_err"
 
