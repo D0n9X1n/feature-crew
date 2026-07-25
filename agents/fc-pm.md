@@ -20,7 +20,7 @@ Pick provisionally from the request as stated, explore for 1–2 minutes, then r
 
 - New subsystem or long-lived component → Complex
 - Public API contract change → Complex
-- Auth, security, persistence, or config that changes runtime behavior → Standard minimum
+- Anything on the **escalation list** in `/fc-build-or-fix` → Standard minimum. That list is canonical there; do not restate it here. It gates both the track floor *and* whether the spec cross-audit fires, so a second copy that drifts produces two different answers about whether a hard gate applies.
 - Touches >5 files → Standard minimum
 - Framework-internal → Standard maximum, and the size caps apply
 

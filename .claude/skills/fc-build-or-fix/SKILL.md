@@ -12,12 +12,14 @@ You are the PM. Pick a track, confirm it, run the matching flow.
 | Track | When | Spec | Dispatches |
 |---|---|---|---|
 | **Trivial** | ≤30 min, 1 file, no design choice | one sentence in chat | 0 |
-| **Standard** | 1–5 files, one coherent feature, no new architecture | bullet list in chat | 1 |
+| **Standard** | 1–5 files, one coherent feature, no new architecture | bullet list in chat | 1–2 |
 | **Complex** | multi-module, new subsystem, security or data-integrity central, public API change | doc, ≤1000 words | 5+ |
 
 Ask: "Proposing **<track>** because <reason>. OK?" The user may override.
 
-**Trivial never applies** — escalate to Standard minimum — when the change touches runtime behavior, config, auth, secrets, persistence, public API contract, or deploy behavior. A wrong one-line value in those areas reaches production.
+**Trivial never applies** — escalate to Standard minimum — when the change touches the **escalation list**: runtime behavior, config, auth, secrets, persistence, public API contract, or deploy behavior. A wrong one-line value in those areas reaches production.
+
+This list is canonical here. It sets the track floor *and* decides whether the Standard spec cross-audit fires (step 3), so a second copy elsewhere would produce two different answers about whether a hard gate applies. Other docs point at it; they do not restate it.
 
 **Framework-internal changes are Standard maximum.** See [reference/meta-work-cap.md](reference/meta-work-cap.md).
 

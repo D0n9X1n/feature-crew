@@ -55,14 +55,14 @@ jobs:
           # `git describe --tags --abbrev=0 "${TAG}^"` returns the nearest tag
           # reachable from the parent commit, which is not the same thing. This
           # repo's tags are already non-monotonic (v0.0.1, v0.1.0, v3.0, v3.1,
-          # v4.0), and a release cut from a branch off an older line would then
-          # produce notes spanning the wrong range -- silently, in a published
-          # release.
+          # v4.0), so on main alone the two answers differ and the notes would
+          # span the wrong range -- silently, in a published release.
           #
-          # Walk ascending and take the tag immediately before this one. Sorting
-          # descending and skipping the current tag looks equivalent but is not:
-          # releasing a backport v4.1 while v5.0.0 exists would pick v5.0.0,
-          # which is newer than the tag being released.
+          # Walk ascending and take the tag immediately before this one.
+          # Sorting descending and skipping the current tag is not equivalent:
+          # it yields the newest tag rather than the predecessor. (A backport
+          # release would show that most starkly, though the ancestor gate
+          # above rejects those before this step runs.)
           PREV="$(git tag --list 'v*' --sort=v:refname \
                   | awk -v t="$TAG" '$0 == t { exit } { p = $0 } END { print p }')"
 
@@ -98,13 +98,17 @@ jobs:
             fi
           } > release-notes.md
 
-          # An empty body would publish a release that says nothing.
-          if [ ! -s release-notes.md ]; then
-            echo "::error::generated release notes are empty"
+          # Refuse to publish a release with no commits in it. Testing the file
+          # for emptiness cannot work -- the headers are written unconditionally,
+          # so it is ~43 bytes even when the range is empty (verified by
+          # re-tagging the same SHA). Count the commits instead.
+          COMMITS="$(git log --no-merges --oneline "$RANGE" | wc -l | tr -d ' ')"
+          if [ "$COMMITS" -eq 0 ]; then
+            echo "::error::no commits between ${PREV:-<start>} and ${TAG} — nothing to release"
             exit 1
           fi
 
-          echo "--- generated notes ---"
+          echo "--- generated notes (${COMMITS} commits) ---"
           cat release-notes.md
 
       - name: Publish GitHub Release

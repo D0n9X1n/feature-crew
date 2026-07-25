@@ -540,8 +540,11 @@ rule=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
 echo "$rule" | grep -qi 'collision\|same family'   || t24_err="$t24_err no-collision-check"
 echo "$rule" | grep -qi 'unsatisfied'              || t24_err="$t24_err collision-not-recorded"
 echo "$rule" | grep -qi 'exempt'                   || t24_err="$t24_err exemption-unstated"
-# The flow must point at the exemption rather than silently contradicting it.
-grep -qi 'one of the two exemptions\|exemption' "$b" || t24_err="$t24_err flow-does-not-cite-exemption"
+# The FLOW must cite the exemption, not merely contain the word somewhere. A
+# loose 'exemption' alternative here was satisfied by the rule itself and by
+# "Trivial is exempt" -- neither of which is step 3 -- so stripping step 3's
+# clause left this green. Match the exact phrase step 3 uses.
+grep -qF 'one of the two exemptions' "$b" || t24_err="$t24_err flow-does-not-cite-exemption"
 [ -z "$t24_err" ] && ok "T24 audit rule handles family collision + names its exemptions" \
                   || bad "T24 audit rule has a logic hole" "issues:$t24_err"
 
@@ -592,9 +595,14 @@ if [ -f "$c" ]; then
   grep -qiE '(do not|don.t|no need to) dispatch.*fc-tech-lead|merge directly' "$c" \
     && t26_err="$t26_err final-audit-negated"
   # The plan audit must come BEFORE the user approves it, or it audits nothing.
-  pa=$(grep -n 'Cross-audit the plan' "$c" | cut -d: -f1)
-  ap=$(grep -n 'User approves the plan' "$c" | cut -d: -f1)
-  if [ -n "$pa" ] && [ -n "$ap" ] && [ "$pa" -ge "$ap" ]; then
+  # Case-insensitive to match the presence checks above: a case-only edit would
+  # otherwise leave pa empty, and the [ -n "$pa" ] guard would skip this
+  # silently while presence still matched.
+  pa=$(grep -ni 'cross-audit the plan' "$c" | cut -d: -f1 | head -1)
+  ap=$(grep -ni 'user approves the plan' "$c" | cut -d: -f1 | head -1)
+  if [ -z "$pa" ] || [ -z "$ap" ]; then
+    t26_err="$t26_err plan-audit-or-approval-missing"
+  elif [ "$pa" -ge "$ap" ]; then
     t26_err="$t26_err plan-audit-after-approval"
   fi
 else
@@ -630,6 +638,20 @@ fi
 [ -z "$t27_err" ] && ok "T27 a personal skill that merely mentions Feature-Crew survives" \
                   || bad "T27 provenance false-positive" "issues:$t27_err"
 rm -rf "$t27_prefix"
+
+# ---------------------------------------------------------------- T28
+# The escalation list is stated ONCE. It sets the track floor and decides
+# whether the Standard spec cross-audit fires, so two copies that drift give
+# two different answers about whether a hard gate applies -- which is what
+# happened: SKILL.md listed secrets and deploy behavior, fc-pm.md did not.
+t28_err=""
+listers=$(git grep -l 'secrets, persistence, public API contract' -- '*.md' 2>/dev/null | wc -l | tr -d ' ')
+[ "$listers" = "1" ] || t28_err="$t28_err stated-in-${listers}-files"
+grep -q 'escalation list' agents/fc-pm.md || t28_err="$t28_err pm-does-not-point-at-it"
+grep -qE '^- Auth, security, persistence, or config' agents/fc-pm.md \
+  && t28_err="$t28_err pm-restates-its-own-list"
+[ -z "$t28_err" ] && ok "T28 escalation list stated once; fc-pm.md points at it" \
+                  || bad "T28 escalation list split" "issues:$t28_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then
