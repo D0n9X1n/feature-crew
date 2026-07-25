@@ -33,7 +33,7 @@ echo "== Feature-Crew framework tests =="
 # Orchestration cap, redefined: pm.md + EVERY SKILL.md (not just build-or-fix).
 # The old wording named only two files, so new skills could add orchestration
 # text without ever touching the cap.
-orch=$( { echo agents/pm.md; skill_files; } | xargs wc -l | tail -1 | awk '{print $1}')
+orch=$( { echo agents/fc-pm.md; skill_files; } | xargs wc -l | tail -1 | awk '{print $1}')
 if [ "${orch:-99999}" -le 600 ]; then
   ok "T1 orchestration (pm.md + all SKILL.md) = ${orch} <= 600"
 else
@@ -323,17 +323,18 @@ grep -qE '\$body = Get-Content' install.ps1 && t17_err="$t17_err bare-get-conten
 # The bash half of the same property, actually executed: an installed agent's
 # body must be byte-identical to its source. T17 can only check ps1 statically
 # (no pwsh on this machine), so this is the half we can prove.
+#
+# Iterates agents/*.md directly -- since the rename, source basename IS the
+# installed name, so there is no pair table here to fall out of date.
 if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   t18_err=""
-  for pair in pm.md:fc-pm architect.md:fc-architect developer.md:fc-developer \
-              qa-spec-reviewer.md:fc-qa-spec qa-code-reviewer.md:fc-qa-code \
-              tech-lead.md:fc-tech-lead; do
-    src="agents/${pair%%:*}"
-    dst="$tmp_prefix/agents/${pair#*:}.md"
-    if [ ! -f "$dst" ]; then t18_err="$t18_err ${pair#*:}:missing"; continue; fi
+  for src in agents/*.md; do
+    name=$(basename "$src" .md)
+    dst="$tmp_prefix/agents/${name}.md"
+    if [ ! -f "$dst" ]; then t18_err="$t18_err ${name}:missing"; continue; fi
     # Strip the generated frontmatter block plus its trailing blank line.
     awk 'f{print} /^---$/{c++; if(c==2){f=1; getline}}' "$dst" > "$tmp_prefix/.body"
-    cmp -s "$tmp_prefix/.body" "$src" || t18_err="$t18_err ${pair#*:}:body-differs"
+    cmp -s "$tmp_prefix/.body" "$src" || t18_err="$t18_err ${name}:body-differs"
   done
   [ -z "$t18_err" ] && ok "T18 installed agent bodies are byte-identical to source" \
                     || bad "T18 agent body corrupted on install" "issues:$t18_err"
@@ -347,11 +348,11 @@ fi
 # this, "just do it -- comply" reads as permission to skip verification too,
 # and no other assertion would notice the difference.
 t19_err=""
-ov=$(sed -n '/^## User override/,$p' agents/pm.md)
+ov=$(sed -n '/^## User override/,$p' agents/fc-pm.md)
 echo "$ov" | grep -qi 'may not waive\|cannot waive'   || t19_err="$t19_err no-nonwaivable-clause"
 echo "$ov" | grep -qi 'verification evidence'         || t19_err="$t19_err evidence-not-protected"
 echo "$ov" | grep -qi 'spec compliance'               || t19_err="$t19_err spec-compliance-not-protected"
-grep -qi 'full suite' agents/developer.md             || t19_err="$t19_err dev-allows-task-local-only"
+grep -qi 'full suite' agents/fc-developer.md             || t19_err="$t19_err dev-allows-task-local-only"
 [ -z "$t19_err" ] && ok "T19 non-waivable gates named in override + full-suite required" \
                   || bad "T19 gate language weakened" "issues:$t19_err"
 
@@ -502,6 +503,34 @@ echo "$rule" | grep -qi 'exempt'                   || t24_err="$t24_err exemptio
 grep -qi 'one of the two exemptions\|exemption' "$b" || t24_err="$t24_err flow-does-not-cite-exemption"
 [ -z "$t24_err" ] && ok "T24 audit rule handles family collision + names its exemptions" \
                   || bad "T24 audit rule has a logic hole" "issues:$t24_err"
+
+# ---------------------------------------------------------------- T25
+# Agent source filenames are fc-prefixed, and the installed subagent name is
+# exactly the source basename. Previously the installer carried a
+# filename -> name mapping table (pm.md -> fc-pm), which is a second place for
+# the two to disagree; renaming the sources deleted that class of bug. This
+# asserts the property rather than the table.
+t25_err=""
+while IFS= read -r f; do
+  base=$(basename "$f")
+  case "$base" in fc-*) ;; *) t25_err="$t25_err src:$base" ;; esac
+done < <(find agents -maxdepth 1 -name '*.md')
+
+if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
+  for f in agents/*.md; do
+    base=$(basename "$f" .md)
+    inst="$tmp_prefix/agents/${base}.md"
+    if [ ! -f "$inst" ]; then
+      t25_err="$t25_err notinstalled:$base"
+    elif ! head -3 "$inst" | grep -q "^name: ${base}$"; then
+      t25_err="$t25_err namemismatch:$base"
+    fi
+  done
+else
+  t25_err="$t25_err install-failed"
+fi
+[ -z "$t25_err" ] && ok "T25 agent source names are fc-prefixed and match installed names" \
+                  || bad "T25 agent name drift" "issues:$t25_err"
 
 echo
 echo "== ${PASS} passed, ${FAIL} failed =="

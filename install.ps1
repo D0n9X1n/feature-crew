@@ -40,7 +40,9 @@ $SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
 $DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
 
-# Map agent filename -> (name, description, model).
+# Map agent filename -> (description, model). The subagent NAME is the filename
+# without .md -- source files are fc-prefixed, so there is no mapping to keep in
+# sync and no way for source and installed names to drift apart.
 #
 # The model field is what makes cross-family review structural rather than a
 # rule the PM has to remember at dispatch time:
@@ -48,12 +50,12 @@ $DestSkillsDir = Join-Path $Prefix "skills"
 #   review roles  (qa-spec, qa-code, tech-lead) -> sonnet, a different family
 # Keep in sync with agent_meta() in install.sh.
 $AgentMeta = @{
-  "pm.md"               = @("fc-pm", "Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.", "")
-  "architect.md"        = @("fc-architect", "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).", "")
-  "developer.md"        = @("fc-developer", "Feature-Crew Developer: implements one task TDD-style against an approved plan.", "")
-  "qa-spec-reviewer.md" = @("fc-qa-spec", "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).", "sonnet")
-  "qa-code-reviewer.md" = @("fc-qa-code", "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).", "sonnet")
-  "tech-lead.md"        = @("fc-tech-lead", "Feature-Crew Tech Lead: final cross-family review before merging Complex work.", "sonnet")
+  "fc-pm.md"        = @("Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.", "")
+  "fc-architect.md" = @("Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).", "")
+  "fc-developer.md" = @("Feature-Crew Developer: implements one task TDD-style against an approved plan.", "")
+  "fc-qa-spec.md"   = @("Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).", "sonnet")
+  "fc-qa-code.md"   = @("Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).", "sonnet")
+  "fc-tech-lead.md" = @("Feature-Crew Tech Lead: final cross-family review before merging Complex work.", "sonnet")
 }
 
 function Do-Or-Echo($msg, [scriptblock]$action) {
@@ -131,11 +133,11 @@ function Install-ClaudeGlobal {
   $count = 0
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.", "") }
-    # Install flat under ~/.claude/agents/ with the fc-* name so they don't
-    # collide with personal agents.
-    $destFile = Join-Path $DestAgents ($meta[0] + ".md")
-    Install-Agent $_.FullName $destFile $meta[0] $meta[1] $meta[2]
+    if (-not $meta) { $meta = @("Feature-Crew agent.", "") }
+    $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
+    # Flat under ~/.claude/agents/ so they don't collide with personal agents.
+    $destFile = Join-Path $DestAgents ($name + ".md")
+    Install-Agent $_.FullName $destFile $name $meta[0] $meta[1]
     $count++
   }
 
@@ -201,9 +203,8 @@ function Uninstall-ClaudeGlobal {
   Write-Host "feature-crew: uninstalling from $Prefix"
   # Remove only our fc-* files; leave personal agents in the dir alone.
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
-    $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.", "") }
-    $d = Join-Path $DestAgents ($meta[0] + ".md")
+    $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
+    $d = Join-Path $DestAgents ($name + ".md")
     if (Test-Path $d) {
       Do-Or-Echo "removed: $d" { Remove-Item -Force $d }
     } else { Write-Host "not present: $d" }

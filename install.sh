@@ -41,8 +41,9 @@ SRC_SKILLS_DIR="${SCRIPT_DIR}/.claude/skills"
 DEST_AGENTS="${PREFIX}/agents"
 DEST_SKILLS_DIR="${PREFIX}/skills"
 
-# Map agent filename -> Claude Code subagent (name, description, model).
-# Written as YAML frontmatter so Claude Code recognizes them.
+# Map agent filename -> (description, model). The subagent NAME is the filename
+# without .md -- source files are fc-prefixed, so there is no mapping to keep in
+# sync and no way for source and installed names to drift apart.
 #
 # The model field is what makes cross-family review structural rather than a
 # rule the PM has to remember at dispatch time:
@@ -51,13 +52,13 @@ DEST_SKILLS_DIR="${PREFIX}/skills"
 # Keep in sync with $AgentMeta in install.ps1.
 agent_meta() {
   case "$1" in
-    pm.md)               echo "fc-pm|Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.|" ;;
-    architect.md)        echo "fc-architect|Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).|" ;;
-    developer.md)        echo "fc-developer|Feature-Crew Developer: implements one task TDD-style against an approved plan.|" ;;
-    qa-spec-reviewer.md) echo "fc-qa-spec|Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).|sonnet" ;;
-    qa-code-reviewer.md) echo "fc-qa-code|Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).|sonnet" ;;
-    tech-lead.md)        echo "fc-tech-lead|Feature-Crew Tech Lead: final cross-family review before merging Complex work.|sonnet" ;;
-    *)                   echo "fc-$(basename "$1" .md)|Feature-Crew agent.|" ;;
+    fc-pm.md)         echo "Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.|" ;;
+    fc-architect.md)  echo "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).|" ;;
+    fc-developer.md)  echo "Feature-Crew Developer: implements one task TDD-style against an approved plan.|" ;;
+    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).|sonnet" ;;
+    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).|sonnet" ;;
+    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review before merging Complex work.|sonnet" ;;
+    *)                echo "Feature-Crew agent.|" ;;
   esac
 }
 
@@ -173,10 +174,9 @@ uninstall_paths() {
   # users may have personal agents alongside ours.
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base meta name dest
+    local base name dest
     base="$(basename "$src")"
-    meta="$(agent_meta "$base")"
-    name="${meta%%|*}"
+    name="${base%.md}"
     dest="$DEST_AGENTS/${name}.md"
     if [ -e "$dest" ]; then
       do_or_echo rm -f "$dest"
@@ -224,15 +224,13 @@ main_install() {
   local count=0
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base meta name desc model rest dest
+    local base meta name desc model dest
     base="$(basename "$src")"
+    name="${base%.md}"
     meta="$(agent_meta "$base")"
-    name="${meta%%|*}"
-    rest="${meta#*|}"
-    desc="${rest%%|*}"
-    model="${rest#*|}"
-    # Install flat under ~/.claude/agents/ with the fc-* name so they don't
-    # collide with personal agents.
+    desc="${meta%%|*}"
+    model="${meta#*|}"
+    # Flat under ~/.claude/agents/ so they don't collide with personal agents.
     dest="$DEST_AGENTS/${name}.md"
     install_agent "$src" "$dest" "$name" "$desc" "$model"
     count=$((count + 1))

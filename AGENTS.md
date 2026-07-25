@@ -40,7 +40,7 @@ The cross-family audit rule is canonical in `.claude/skills/fc-build-or-fix/SKIL
 
 ## Framework caps
 
-Feature-Crew changes are **Standard track maximum**. Orchestration (`agents/pm.md` + every `SKILL.md`) stays ≤600 lines; the framework total stays ≤1500. Both are asserted by `tests/framework_test.sh` — run it before committing framework changes.
+Feature-Crew changes are **Standard track maximum**. Orchestration (`agents/fc-pm.md` + every `SKILL.md`) stays ≤600 lines; the framework total stays ≤1500. Both are asserted by `tests/framework_test.sh` — run it before committing framework changes.
 
 ## Layout
 

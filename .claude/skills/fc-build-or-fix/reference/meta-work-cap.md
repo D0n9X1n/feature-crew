@@ -4,7 +4,7 @@ Loaded on demand by `/fc-build-or-fix`. Any change to Feature-Crew itself is **S
 
 ## Numeric caps
 
-- **Orchestration layer** — `agents/pm.md` + every `.claude/skills/*/SKILL.md` — stays **≤ 600 lines combined**.
+- **Orchestration layer** — `agents/fc-pm.md` + every `.claude/skills/*/SKILL.md` — stays **≤ 600 lines combined**.
 - **Framework total** — orchestration layer + all `agents/*.md` + all skill supporting files + `README.md` + `AGENTS.md` + `CLAUDE.md` — stays **≤ 1500 lines combined**.
 
 Both are asserted by `tests/framework_test.sh`. If a change would push either total over, **decompose**. Never "make an exception this one time."

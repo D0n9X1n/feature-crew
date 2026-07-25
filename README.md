@@ -70,7 +70,7 @@ Everything else is advisory: reported, then judged.
 
 ## Framework caps
 
-Changes to Feature-Crew itself are Standard-track maximum. Orchestration (`agents/pm.md` + every `SKILL.md`) stays ≤600 lines; the total stays ≤1500. Enforced by:
+Changes to Feature-Crew itself are Standard-track maximum. Orchestration (`agents/fc-pm.md` + every `SKILL.md`) stays ≤600 lines; the total stays ≤1500. Enforced by:
 
 ```bash
 bash tests/framework_test.sh
