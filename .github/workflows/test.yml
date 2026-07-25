@@ -41,10 +41,14 @@ jobs:
           set -euo pipefail
           PREFIX="$(mktemp -d)"
           bash install.sh --prefix "$PREFIX" --force
-          test "$(ls "$PREFIX/agents" | wc -l)" -eq 6
-          test "$(ls "$PREFIX/skills" | wc -l)" -eq 6
+          # Counts derive from the source, so adding a skill does not require
+          # editing CI. A literal 6 here went stale the moment fc-update landed.
+          WANT_AGENTS=$(ls agents/*.md | wc -l | tr -d ' ')
+          WANT_SKILLS=$(find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
+          test "$(ls "$PREFIX/agents" | wc -l | tr -d ' ')" -eq "$WANT_AGENTS"
+          test "$(ls "$PREFIX/skills" | wc -l | tr -d ' ')" -eq "$WANT_SKILLS"
           bash install.sh --prefix "$PREFIX" --uninstall
-          test "$(ls "$PREFIX/agents" 2>/dev/null | wc -l)" -eq 0
+          test "$(ls "$PREFIX/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 0
 
   powershell:
     # install.ps1 cannot be executed on the dev machine, so CI is the only place
@@ -96,8 +100,14 @@ jobs:
           .\install.ps1 -Prefix $prefix -Force
           $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
           $skills = Get-ChildItem (Join-Path $prefix "skills") -Directory
-          if ($agents.Count -ne 6) { throw "expected 6 agents, got $($agents.Count)" }
-          if ($skills.Count -ne 6) { throw "expected 6 skills, got $($skills.Count)" }
+          # Counts come from the SOURCE, not a literal -- adding a skill should
+          # not require editing CI, and a hardcoded 6 silently became wrong the
+          # moment fc-update landed.
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          $wantSkills = @(Get-ChildItem .claude\skills -Directory |
+                          Where-Object { Test-Path (Join-Path $_.FullName "SKILL.md") }).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+          if ($skills.Count -ne $wantSkills) { throw "expected $wantSkills skills, got $($skills.Count)" }
           # Paths built by Join-Path are backslash-separated throughout. Forward
           # slashes would mean bash produced them, i.e. the fallback was skipped.
           $probe = Join-Path $prefix "agents\fc-pm.md"
@@ -156,8 +166,18 @@ jobs:
           )
           Set-Content -LiteralPath (Join-Path $mine "SKILL.md") -Value ($mineLines -join "`n")
           # Ours: byte-for-byte what v4.0 published.
-          git show v4.0:.claude/skills/build-or-fix/SKILL.md |
-            Set-Content -LiteralPath (Join-Path $ours "SKILL.md") -NoNewline
+          #
+          # NOT `git show ... | Set-Content -NoNewline`: PowerShell hands the
+          # pipeline an ARRAY OF LINES, and -NoNewline then joins them with
+          # nothing at all, collapsing the file into one unbroken string. The
+          # hash then does not match and the classifier correctly refuses to
+          # delete it -- which is how the previous attempt at this fixture
+          # failed. Join explicitly with LF and restore the trailing newline.
+          $lines = git show v4.0:.claude/skills/build-or-fix/SKILL.md
+          [IO.File]::WriteAllText(
+            (Join-Path $ours "SKILL.md"),
+            (($lines -join "`n") + "`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
           .\install.ps1 -Prefix $prefix -Force
           if (-not (Test-Path (Join-Path $mine "SKILL.md"))) { throw "DESTROYED a personal skill" }
           if (Test-Path $ours) { throw "kept a legacy skill we shipped" }
@@ -204,4 +224,5 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP "fc-delegated"
           .\install.ps1 -Prefix $prefix -Force
           $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
-          if ($agents.Count -ne 6) { throw "expected 6 agents, got $($agents.Count)" }
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }

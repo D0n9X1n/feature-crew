@@ -346,8 +346,8 @@ main_install() {
   say "Agents:  $DEST_AGENTS"
   say "Skills:  $DEST_SKILLS_DIR"
   say ""
-  say "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me,"
-  say "/fc-research, /fc-review, /fc-second-opinion — or delegate to an fc-* subagent."
+  say "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
+  say "/fc-review, /fc-second-opinion, /fc-update — or delegate to an fc-* subagent."
 }
 
 

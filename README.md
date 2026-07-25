@@ -13,7 +13,7 @@ Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`.
 
 Agents install to `~/.claude/agents/fc-*.md`, skills to `~/.claude/skills/fc-*/`. Both work in every project afterwards.
 
-## The six skills
+## The seven skills
 
 | Skill | Use when you lack | What it does |
 |---|---|---|
@@ -23,8 +23,9 @@ Agents install to `~/.claude/agents/fc-*.md`, skills to `~/.claude/skills/fc-*/`
 | `/fc-build-or-fix` | **the code** | Right-sized track (Trivial / Standard / Complex) with gates and TDD |
 | `/fc-review` | **confidence in an artifact** | Reviews a diff, PR, spec, or plan. Read-only by construction |
 | `/fc-second-opinion` | **confidence in a decision** | Adversarial refuters, majority verdict |
+| `/fc-update` | **the current version** | Pulls, warns about files you edited, reinstalls |
 
-Each skill's description says what it does, when to use it, and when to use a sibling instead — so six skills don't fight over the same request. Skills offer each other; they never chain automatically.
+Each skill's description says what it does, when to use it, and when to use a sibling instead — so seven skills don't fight over the same request. Skills offer each other; they never chain automatically.
 
 ## Tracks
 
@@ -109,10 +110,16 @@ Release notes are generated from the commits between the previous tag and the ne
 ## Updating
 
 ```bash
+/fc-update
+```
+
+Pulls, tells you which installed files you have edited **before** overwriting them, reports skills that are installed but no longer shipped, and reinstalls. Or by hand:
+
+```bash
 git pull origin main && ./install.sh --force
 ```
 
-The installer removes the legacy unprefixed skill directories so `/build-or-fix` doesn't linger beside `/fc-build-or-fix`.
+The installer removes the legacy unprefixed skill directories so `/build-or-fix` doesn't linger beside `/fc-build-or-fix` — but only ones whose content hash matches something this project actually published. Uninstall is the same: it removes only files byte-identical to what it installed, so anything you edited or added alongside is left alone.
 
 ## Credits
 

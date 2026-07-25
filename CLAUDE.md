@@ -2,7 +2,7 @@
 
 > Single source of truth for **Claude Code** working in this repository. This repo targets Claude Code only; there is no `AGENTS.md` — everything lives here.
 
-Every request routes to one of six skills. Each maps to something the user is missing.
+Every request routes to one of seven skills. Each maps to something the user is missing.
 
 | The user lacks | Skill | Produces |
 |---|---|---|
@@ -12,6 +12,7 @@ Every request routes to one of six skills. Each maps to something the user is mi
 | the code | `/fc-build-or-fix` | tested implementation |
 | confidence in an artifact | `/fc-review` | ranked findings |
 | confidence in a decision | `/fc-second-opinion` | survives / refuted |
+| the current version installed | `/fc-update` | refreshed `~/.claude` |
 
 Offer the next skill; never chain automatically.
 

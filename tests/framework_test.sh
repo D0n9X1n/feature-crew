@@ -46,7 +46,7 @@ skip() {
   fi
 }
 
-SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-build-or-fix fc-review fc-second-opinion)
+SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-build-or-fix fc-review fc-second-opinion fc-update)
 REVIEW_AGENTS=(fc-qa-spec fc-qa-code fc-tech-lead)
 OPERATE_AGENTS=(fc-pm fc-architect fc-developer)
 

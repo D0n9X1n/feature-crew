@@ -158,8 +158,8 @@ function Install-ClaudeGlobal {
   Write-Host "Agents:  $DestAgents"
   Write-Host "Skills:  $DestSkillsDir"
   Write-Host ""
-  Write-Host "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me,"
-  Write-Host "/fc-research, /fc-review, /fc-second-opinion - or delegate to an fc-* subagent."
+  Write-Host "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
+  Write-Host "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
 }
 
 # Skills gained the fc- prefix in v5.0.0. Remove the unprefixed directories so
