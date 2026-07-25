@@ -1,0 +1,228 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  framework:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # T4 and T6 use `git grep`, and T22/T23 exercise the installer against
+          # temp prefixes. Full history keeps git-based assertions honest.
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        # T16 parses installed agent frontmatter. Without PyYAML it skips, and
+        # under FC_STRICT=1 a skip is a failure -- so this install must not be
+        # allowed to silently no-op. PEP 668 makes plain `pip install --user`
+        # fail on newer Ubuntu images (externally-managed-environment), so fall
+        # back to --break-system-packages, then verify the import actually works.
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user pyyaml \
+            || python3 -m pip install --user --break-system-packages pyyaml \
+            || python3 -m pip install --break-system-packages pyyaml
+          python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
+
+      - name: Run framework tests
+        # FC_STRICT turns any skipped assertion into a failure. A suite that
+        # reports green while an assertion silently did not run is the exact
+        # bug T10 and T15 had.
+        env:
+          FC_STRICT: "1"
+        run: bash tests/framework_test.sh
+
+      - name: Verify installer against a clean prefix
+        run: |
+          set -euo pipefail
+          PREFIX="$(mktemp -d)"
+          bash install.sh --prefix "$PREFIX" --force
+          # Counts derive from the source, so adding a skill does not require
+          # editing CI. A literal 6 here went stale the moment fc-update landed.
+          WANT_AGENTS=$(ls agents/*.md | wc -l | tr -d ' ')
+          WANT_SKILLS=$(find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
+          test "$(ls "$PREFIX/agents" | wc -l | tr -d ' ')" -eq "$WANT_AGENTS"
+          test "$(ls "$PREFIX/skills" | wc -l | tr -d ' ')" -eq "$WANT_SKILLS"
+          bash install.sh --prefix "$PREFIX" --uninstall
+          test "$(ls "$PREFIX/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 0
+
+  powershell:
+    # install.ps1 cannot be executed on the dev machine, so CI is the only place
+    # it ever runs. Parity is a repo rule; without this job it is only asserted.
+    #
+    # install.ps1 prefers bash when present, and windows-latest ships several
+    # bash binaries -- Git's, and WSL's under System32. Running it as-is tests
+    # bash-on-Windows and never touches the pure-PowerShell fallback, so the
+    # encoding fix, Resolve-AbsPath, and the ownership check all go unexercised
+    # while the job reports green.
+    #
+    # Masking by directory NAME is not enough (an earlier attempt filtered for
+    # 'Git' and bash still resolved). Instead: ask where bash actually is, drop
+    # that directory, repeat until it stops resolving. That handles every bash
+    # on the box without guessing at any of their paths.
+    runs-on: windows-latest
+    env:
+      MASK_BASH: |
+        for ($i = 0; $i -lt 10; $i++) {
+          $b = Get-Command bash -ErrorAction SilentlyContinue
+          if (-not $b) { break }
+          $dir = Split-Path $b.Source -Parent
+          $env:PATH = ($env:PATH -split ';' |
+            Where-Object { $_ -and ($_.TrimEnd('\') -ne $dir.TrimEnd('\')) }) -join ';'
+        }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The legacy-cleanup step seeds its "ours" fixture from `git show
+          # v4.0:` -- ownership is exact content identity, so the fixture must
+          # be real published content. The default shallow clone has no tags.
+          fetch-depth: 0
+
+      - name: Confirm bash masking works
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          $b = Get-Command bash -ErrorAction SilentlyContinue
+          if ($b) {
+            throw "bash still resolves at $($b.Source) — the fallback would be skipped and this job would test nothing"
+          }
+          Write-Host "bash masked; install.ps1 will use the PowerShell fallback"
+
+      - name: Install to a temp prefix
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          .\install.ps1 -Prefix $prefix -Force
+          $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
+          $skills = Get-ChildItem (Join-Path $prefix "skills") -Directory
+          # Counts come from the SOURCE, not a literal -- adding a skill should
+          # not require editing CI, and a hardcoded 6 silently became wrong the
+          # moment fc-update landed.
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          $wantSkills = @(Get-ChildItem .claude\skills -Directory |
+                          Where-Object { Test-Path (Join-Path $_.FullName "SKILL.md") }).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+          if ($skills.Count -ne $wantSkills) { throw "expected $wantSkills skills, got $($skills.Count)" }
+          # Paths built by Join-Path are backslash-separated throughout. Forward
+          # slashes would mean bash produced them, i.e. the fallback was skipped.
+          $probe = Join-Path $prefix "agents\fc-pm.md"
+          if (-not (Test-Path $probe)) { throw "fc-pm.md not where PowerShell would put it" }
+
+      - name: Review agents pinned to sonnet, operate agents inherit
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          foreach ($n in @("fc-qa-spec","fc-qa-code","fc-tech-lead")) {
+            $t = Get-Content (Join-Path $prefix "agents\$n.md") -Raw
+            if ($t -notmatch "(?m)^model: sonnet`$") { throw "$n missing model: sonnet" }
+          }
+          foreach ($n in @("fc-pm","fc-architect","fc-developer")) {
+            $t = Get-Content (Join-Path $prefix "agents\$n.md") -Raw
+            if ($t -match "(?m)^model:") { throw "$n should inherit the session model" }
+          }
+
+      - name: Agent bodies survive the round-trip byte-for-byte
+        shell: pwsh
+        run: |
+          # The bug this catches: PowerShell 5.1 defaults to the system ANSI
+          # code page, which mangles the en-dashes, arrows and U+2264 in the
+          # agent bodies. Compare against the source to prove it did not.
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          foreach ($src in Get-ChildItem agents -Filter *.md) {
+            $installed = [IO.File]::ReadAllText(
+              (Join-Path $prefix "agents\$($src.Name)"), [Text.Encoding]::UTF8)
+            $original  = [IO.File]::ReadAllText($src.FullName, [Text.Encoding]::UTF8)
+            $body = $installed -replace '(?s)^---\r?\n.*?\r?\n---\r?\n\r?\n', ''
+            if ($body -ne $original) { throw "$($src.Name) body altered on install" }
+          }
+
+      - name: Legacy cleanup does not destroy a personal skill
+        shell: pwsh
+        run: |
+          # The PowerShell half of T22/T27. Ownership is exact content identity
+          # (SHA-256 of what we published), so the "ours" fixture must be REAL
+          # published content -- a hand-written approximation tests the fixture,
+          # not the classifier, and the classifier correctly refuses to delete
+          # something it never shipped.
+          Invoke-Expression $env:MASK_BASH
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-legacy"
+          $mine   = Join-Path $prefix "skills\research"
+          $ours   = Join-Path $prefix "skills\build-or-fix"
+          New-Item -ItemType Directory -Force -Path $mine, $ours | Out-Null
+          # Not ours: shares the opening words of the published description.
+          # Built line-by-line rather than with a here-string -- a bare `---`
+          # inside one is a YAML document separator and splits this workflow.
+          $mineLines = @(
+            '---'
+            'name: research'
+            'description: Multi-agent research pipeline (search my notes, then my bookmarks). Mine.'
+            '---'
+            'Personal notes.'
+          )
+          Set-Content -LiteralPath (Join-Path $mine "SKILL.md") -Value ($mineLines -join "`n")
+          # Ours: byte-for-byte what v4.0 published.
+          #
+          # NOT `git show ... | Set-Content -NoNewline`: PowerShell hands the
+          # pipeline an ARRAY OF LINES, and -NoNewline then joins them with
+          # nothing at all, collapsing the file into one unbroken string. The
+          # hash then does not match and the classifier correctly refuses to
+          # delete it -- which is how the previous attempt at this fixture
+          # failed. Join explicitly with LF and restore the trailing newline.
+          $lines = git show v4.0:.claude/skills/build-or-fix/SKILL.md
+          [IO.File]::WriteAllText(
+            (Join-Path $ours "SKILL.md"),
+            (($lines -join "`n") + "`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
+          .\install.ps1 -Prefix $prefix -Force
+          if (-not (Test-Path (Join-Path $mine "SKILL.md"))) { throw "DESTROYED a personal skill" }
+          if (Test-Path $ours) { throw "kept a legacy skill we shipped" }
+
+      - name: Uninstall keeps files it did not install
+        shell: pwsh
+        run: |
+          # The PowerShell half of T29. Install SKIPS a pre-existing file;
+          # uninstall must not delete it afterwards.
+          Invoke-Expression $env:MASK_BASH
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-uninst"
+          New-Item -ItemType Directory -Force -Path (Join-Path $prefix "skills\fc-review"), (Join-Path $prefix "agents") | Out-Null
+          Set-Content -LiteralPath (Join-Path $prefix "skills\fc-review\SKILL.md") -Value "MY OWN review skill."
+          Set-Content -LiteralPath (Join-Path $prefix "agents\fc-pm.md") -Value "MY OWN pm agent."
+          .\install.ps1 -Prefix $prefix
+          .\install.ps1 -Prefix $prefix -Uninstall
+          $s = Get-Content -Raw -LiteralPath (Join-Path $prefix "skills\fc-review\SKILL.md") -EA SilentlyContinue
+          $a = Get-Content -Raw -LiteralPath (Join-Path $prefix "agents\fc-pm.md") -EA SilentlyContinue
+          if ($s -notmatch "MY OWN") { throw "uninstall DESTROYED a personal skill" }
+          if ($a -notmatch "MY OWN") { throw "uninstall DESTROYED a personal agent" }
+
+      - name: Uninstall removes everything it installed
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
+          .\install.ps1 -Prefix $prefix -Uninstall
+          $left = @(Get-ChildItem (Join-Path $prefix "agents") -Filter *.md -EA SilentlyContinue)
+          if ($left.Count -ne 0) { throw "uninstall left $($left.Count) agent(s)" }
+
+  powershell-delegation:
+    # The other half: with bash present, install.ps1 must delegate to it. That
+    # is the path most Windows users with Git installed actually take.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delegates to bash when bash is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+            throw "no bash on windows-latest — this job cannot test delegation"
+          }
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-delegated"
+          .\install.ps1 -Prefix $prefix -Force
+          $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
