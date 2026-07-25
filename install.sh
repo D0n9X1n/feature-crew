@@ -138,8 +138,51 @@ install_skill() {
 # legacy `name:` field and a Feature-Crew provenance marker; anything else is
 # left alone and reported so the user can decide.
 # Mirrors Remove-LegacySkills in install.ps1.
+# SHA-256 of every SKILL.md this project has ever published under the legacy
+# unprefixed names, hashed after normalizing CRLF to LF.
+#
+# Exact content identity, not a description prefix. Three prior attempts at
+# this check each destroyed user data a different way: no ownership check at
+# all, then a whole-file grep for "feature-crew" (killed a skill that merely
+# mentioned us), then a description prefix (killed one that merely started the
+# same way). Prefix matching cannot answer "did we write this file"; a hash
+# can.
+#
+# A user who hand-edited a genuine legacy skill will not match, so it is kept
+# and reported. That is the safe direction -- once they have edited it, it is
+# partly their work.
+#
+# Regenerate with:
+#   for t in v3.0 v3.1 v4.0; do for s in build-or-fix research; do
+#     git show "$t:.claude/skills/$s/SKILL.md" 2>/dev/null | tr -d '\r' | shasum -a 256
+#   done; done
+# Note: research/SKILL.md did not exist at v3.0, so that lookup yields the
+# empty-string hash (e3b0c442...). It is deliberately NOT listed -- including
+# it would treat any zero-byte SKILL.md as ours.
+legacy_hashes() {
+  case "$1" in
+    build-or-fix)
+      echo "f11a81aff11703559827198e66f2d237d2bdab263ad43199e82972ec52d9cf72"  # v3.0, v3.1
+      echo "13cd94d534d0ed87d2b8d4edbf9bc904761a92ef826780ed9d7138f7258cd808"  # v4.0
+      ;;
+    research)
+      echo "e119bc4fe7ab4d528fd1fc2394a33e1aff6a7821be2182ae2903e1ecb925b94a"  # v3.1, v4.0
+      ;;
+  esac
+}
+
+# Hash a file with CRLF normalized to LF, so a Windows checkout of a genuine
+# legacy skill still matches. Portable across sha256sum and shasum.
+sha256_lf() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    tr -d '\r' < "$1" | sha256sum | cut -d' ' -f1
+  else
+    tr -d '\r' < "$1" | shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
 remove_legacy_skills() {
-  local old d f want
+  local old d f got
   for old in build-or-fix research; do
     d="$DEST_SKILLS_DIR/$old"
     f="$d/SKILL.md"
@@ -148,22 +191,10 @@ remove_legacy_skills() {
       say "kept (not ours — no SKILL.md): $d"
       continue
     fi
-    if ! grep -q "^name: ${old}$" "$f"; then
-      say "kept (not ours — name mismatch): $d"
-      continue
-    fi
-    # Provenance: match the exact description WE shipped, anchored to the
-    # description line. An earlier version grepped the whole file for
-    # "feature-crew", which destroyed a personal skill whose description merely
-    # mentioned Feature-Crew -- precisely the user most likely to have this
-    # installed. These strings are stable across v3.0/v3.1.
-    case "$old" in
-      build-or-fix) want='^description: Build, fix, change, refactor, implement, add, or extend code\.' ;;
-      research)     want='^description: Multi-agent research pipeline (search' ;;
-    esac
-    if ! grep -q "$want" "$f"; then
-      say "kept (not ours — description does not match any shipped version): $d"
-      say "  if this was an older Feature-Crew, remove it by hand: rm -rf $d"
+    got="$(sha256_lf "$f")"
+    if ! legacy_hashes "$old" | grep -qx "$got"; then
+      say "kept (not ours — content does not match any published version): $d"
+      say "  if this was an older Feature-Crew you edited, remove it by hand: rm -rf $d"
       continue
     fi
     if [ "$DRY_RUN" -eq 1 ]; then

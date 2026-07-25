@@ -171,6 +171,34 @@ function Install-ClaudeGlobal {
 # legacy `name:` field and a Feature-Crew provenance marker; anything else is
 # left alone and reported so the user can decide.
 # Mirrors remove_legacy_skills() in install.sh.
+# SHA-256 of every SKILL.md this project has ever published under the legacy
+# unprefixed names, hashed after normalizing CRLF to LF. Keep in sync with
+# legacy_hashes() in install.sh.
+#
+# Exact content identity, not a description prefix. Three prior attempts each
+# destroyed user data a different way: no check at all, a whole-file grep for
+# "feature-crew", then a description prefix. Prefix matching cannot answer
+# "did we write this file"; a hash can.
+$LegacyHashes = @{
+  "build-or-fix" = @(
+    "f11a81aff11703559827198e66f2d237d2bdab263ad43199e82972ec52d9cf72"  # v3.0, v3.1
+    "13cd94d534d0ed87d2b8d4edbf9bc904761a92ef826780ed9d7138f7258cd808"  # v4.0
+  )
+  "research" = @(
+    "e119bc4fe7ab4d528fd1fc2394a33e1aff6a7821be2182ae2903e1ecb925b94a"  # v3.1, v4.0
+  )
+}
+
+function Get-Sha256Lf($path) {
+  $bytes = [IO.File]::ReadAllBytes((Resolve-AbsPath $path))
+  # Strip CR so a Windows checkout of a genuine legacy skill still matches.
+  $lf = [byte[]]($bytes | Where-Object { $_ -ne 13 })
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    ($sha.ComputeHash($lf) | ForEach-Object { $_.ToString("x2") }) -join ""
+  } finally { $sha.Dispose() }
+}
+
 function Remove-LegacySkills {
   foreach ($old in @("build-or-fix", "research")) {
     $d = Join-Path $DestSkillsDir $old
@@ -179,21 +207,10 @@ function Remove-LegacySkills {
     if (-not (Test-Path $f)) {
       Write-Host "kept (not ours - no SKILL.md): $d"; continue
     }
-    $body = [IO.File]::ReadAllText((Resolve-AbsPath $f), [Text.Encoding]::UTF8)
-    if ($body -notmatch "(?m)^name: $([regex]::Escape($old))`$") {
-      Write-Host "kept (not ours - name mismatch): $d"; continue
-    }
-    # Provenance: match the exact description WE shipped, anchored to the
-    # description line. An earlier version searched the whole file for
-    # "feature-crew", which destroyed a personal skill whose description merely
-    # mentioned Feature-Crew. Keep in sync with install.sh.
-    $want = switch ($old) {
-      "build-or-fix" { '(?m)^description: Build, fix, change, refactor, implement, add, or extend code\.' }
-      "research"     { '(?m)^description: Multi-agent research pipeline \(search' }
-    }
-    if ($body -notmatch $want) {
-      Write-Host "kept (not ours - description does not match any shipped version): $d"
-      Write-Host "  if this was an older Feature-Crew, remove it by hand: $d"
+    $got = Get-Sha256Lf $f
+    if ($LegacyHashes[$old] -notcontains $got) {
+      Write-Host "kept (not ours - content does not match any published version): $d"
+      Write-Host "  if this was an older Feature-Crew you edited, remove it by hand: $d"
       continue
     }
     if ($DryRun) {

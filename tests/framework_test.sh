@@ -546,32 +546,30 @@ rm -rf "$mut2" "$T21_SCRIPT"
 
 # ---------------------------------------------------------------- T22
 # Data loss. `research` and `build-or-fix` are plausible names for a user's own
-# skill. An unconditional rm -rf of those paths destroys hand-written work with
-# no prompt and no backup -- which is exactly what the first version of
-# remove_legacy_skills did. Deletion now requires proof of ownership.
+# skill. Three prior versions of the ownership check each destroyed user data a
+# different way -- no check, a whole-file grep, then a description prefix.
+#
+# Probes use REAL published content from git rather than hand-written
+# fixtures. A fixture that only approximates what we shipped tests the fixture,
+# not the classifier -- which is how the prefix-collision bug survived two
+# rounds of this test passing.
 t22_prefix=$(mktemp -d)
 mkdir -p "$t22_prefix/skills/research" "$t22_prefix/skills/build-or-fix"
+# Not ours: shares the opening words of our description, differs after.
 cat > "$t22_prefix/skills/research/SKILL.md" <<'PROBE'
 ---
 name: research
-description: A user's own research skill. Nothing to do with this framework.
+description: Multi-agent research pipeline (search my notes, then my bookmarks). Mine, not this framework's.
 ---
 Years of personal notes.
 PROBE
-# Ours: correct name AND the exact description we shipped. Ownership is proven
-# by matching what we published, not by the file mentioning us somewhere.
-cat > "$t22_prefix/skills/build-or-fix/SKILL.md" <<'PROBE'
----
-name: build-or-fix
-description: Build, fix, change, refactor, implement, add, or extend code. TRIGGER whenever the user asks for any code change.
----
-# build-or-fix — Feature-Crew Pipeline (Three Tracks)
-PROBE
+# Ours: byte-for-byte what v4.0 published.
+git show v4.0:.claude/skills/build-or-fix/SKILL.md > "$t22_prefix/skills/build-or-fix/SKILL.md" 2>/dev/null
 if bash install.sh --prefix "$t22_prefix" --force >/dev/null 2>&1; then
   t22_err=""
   [ -f "$t22_prefix/skills/research/SKILL.md" ] || t22_err="$t22_err DESTROYED-user-skill"
-  [ -d "$t22_prefix/skills/build-or-fix" ]      && t22_err="$t22_err kept-our-own-v3-skill"
-  [ -z "$t22_err" ] && ok "T22 legacy cleanup removes only skills we shipped" \
+  [ -d "$t22_prefix/skills/build-or-fix" ]      && t22_err="$t22_err kept-our-own-legacy-skill"
+  [ -z "$t22_err" ] && ok "T22 legacy cleanup removes only skills we published" \
                     || bad "T22 legacy cleanup" "issues:$t22_err"
 else
   bad "T22 legacy cleanup" "install.sh failed"
@@ -688,31 +686,45 @@ fi
 
 echo
 # ---------------------------------------------------------------- T27
-# Provenance false-positive. The first ownership check grepped the whole file
-# for "feature-crew", so a personal skill whose DESCRIPTION merely mentioned
-# Feature-Crew was destroyed -- precisely the user most likely to have this
-# repo installed. Ownership must match what we shipped, not what mentions us.
-t27_prefix=$(mktemp -d)
-mkdir -p "$t27_prefix/skills/research"
-cat > "$t27_prefix/skills/research/SKILL.md" <<'PROBE'
----
-name: research
-description: My own research skill. I use it to look into Feature-Crew integrations at work.
----
-Years of my own notes. Also mentions audit-pair because I read the docs.
-PROBE
+# The provenance classifier's real boundaries, both directions. Each case here
+# is a bug that actually shipped or a false negative a reviewer demonstrated.
+#
+# The classifier must delete a file we published and keep everything else. Two
+# earlier versions passed a version of this test while still destroying user
+# data, because the probes avoided the exact shapes that trigger the bug.
 t27_err=""
-if bash install.sh --prefix "$t27_prefix" >/dev/null 2>&1; then
-  [ -f "$t27_prefix/skills/research/SKILL.md" ] || t27_err="$t27_err DESTROYED-on-install"
-else
-  t27_err="$t27_err install-failed"
-fi
-if bash install.sh --prefix "$t27_prefix" --uninstall >/dev/null 2>&1; then
-  [ -f "$t27_prefix/skills/research/SKILL.md" ] || t27_err="$t27_err DESTROYED-on-uninstall"
-fi
-[ -z "$t27_err" ] && ok "T27 a personal skill that merely mentions Feature-Crew survives" \
-                  || bad "T27 provenance false-positive" "issues:$t27_err"
-rm -rf "$t27_prefix"
+t27_case() { # name, expect(survive|removed), file-producer
+  local label="$1" expect="$2" p; p=$(mktemp -d)
+  mkdir -p "$p/skills/research"
+  eval "$3" > "$p/skills/research/SKILL.md"
+  bash install.sh --prefix "$p" >/dev/null 2>&1
+  if [ "$expect" = "survive" ] && [ ! -f "$p/skills/research/SKILL.md" ]; then
+    t27_err="$t27_err ${label}:DESTROYED"
+  elif [ "$expect" = "removed" ] && [ -d "$p/skills/research" ]; then
+    t27_err="$t27_err ${label}:kept"
+  fi
+  # Uninstall shares the same classifier and is equally destructive.
+  if [ "$expect" = "survive" ] && [ -f "$p/skills/research/SKILL.md" ]; then
+    bash install.sh --prefix "$p" --uninstall >/dev/null 2>&1
+    [ -f "$p/skills/research/SKILL.md" ] || t27_err="$t27_err ${label}:DESTROYED-on-uninstall"
+  fi
+  rm -rf "$p"
+}
+
+# Must survive: personal skills that merely resemble ours.
+t27_case mentions-us survive "printf '%s\n' '---' 'name: research' \
+  'description: My own skill, loosely inspired by Feature-Crew.' '---' 'Notes. audit-pair too.'"
+t27_case shares-prefix survive "printf '%s\n' '---' 'name: research' \
+  'description: Multi-agent research pipeline (search my notes, then my bookmarks). Mine.' '---' 'Notes.'"
+t27_case edited-legacy survive "git show v3.1:.claude/skills/research/SKILL.md | sed '\$a\\
+My own additions.'"
+
+# Must be removed: content we actually published, LF and CRLF alike.
+t27_case published-lf   removed "git show v3.1:.claude/skills/research/SKILL.md"
+t27_case published-crlf removed "git show v3.1:.claude/skills/research/SKILL.md | sed 's/\$/\r/'"
+
+[ -z "$t27_err" ] && ok "T27 provenance classifier correct on 5 boundary cases" \
+                  || bad "T27 provenance boundary" "issues:$t27_err"
 
 # ---------------------------------------------------------------- T28
 # The escalation list is stated ONCE. It sets the track floor and decides
