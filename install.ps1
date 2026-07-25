@@ -40,13 +40,20 @@ $SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
 $DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
 
+# Map agent filename -> (name, description, model).
+#
+# The model field is what makes cross-family review structural rather than a
+# rule the PM has to remember at dispatch time:
+#   operate roles (pm, architect, developer) -> "", inherit the session model
+#   review roles  (qa-spec, qa-code, tech-lead) -> sonnet, a different family
+# Keep in sync with agent_meta() in install.sh.
 $AgentMeta = @{
-  "pm.md"               = @("fc-pm", "Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.")
-  "architect.md"        = @("fc-architect", "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).")
-  "developer.md"        = @("fc-developer", "Feature-Crew Developer: implements one task TDD-style against an approved plan.")
-  "qa-spec-reviewer.md" = @("fc-qa-spec", "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).")
-  "qa-code-reviewer.md" = @("fc-qa-code", "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).")
-  "tech-lead.md"        = @("fc-tech-lead", "Feature-Crew Tech Lead: final cross-family review before merging Complex work.")
+  "pm.md"               = @("fc-pm", "Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.", "")
+  "architect.md"        = @("fc-architect", "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).", "")
+  "developer.md"        = @("fc-developer", "Feature-Crew Developer: implements one task TDD-style against an approved plan.", "")
+  "qa-spec-reviewer.md" = @("fc-qa-spec", "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).", "sonnet")
+  "qa-code-reviewer.md" = @("fc-qa-code", "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).", "sonnet")
+  "tech-lead.md"        = @("fc-tech-lead", "Feature-Crew Tech Lead: final cross-family review before merging Complex work.", "sonnet")
 }
 
 function Do-Or-Echo($msg, [scriptblock]$action) {
@@ -59,18 +66,24 @@ function Ensure-Dir($p) {
   }
 }
 
-function Install-Agent($src, $dest, $name, $desc) {
+function Install-Agent($src, $dest, $name, $desc, $model) {
   if ((Test-Path $dest) -and (-not $Force)) {
     Write-Host "skip (exists): $dest  [use -Force to overwrite]"; return
   }
   if ($DryRun) {
-    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return
+    $m = if ($model) { ", model: $model" } else { "" }
+    Write-Host "DRY-RUN: install $src -> $dest  (name: $name$m)"; return
   }
   $body = Get-Content -Raw -Path $src
   $needFront = -not ($body -match '^\s*---\s*\r?\n')
-  $front = if ($needFront) { "---`nname: $name`ndescription: $desc`n---`n`n" } else { "" }
+  $front = ""
+  if ($needFront) {
+    $modelLine = if ($model) { "model: $model`n" } else { "" }
+    $front = "---`nname: $name`ndescription: $desc`n$modelLine---`n`n"
+  }
   Set-Content -Path $dest -Value ($front + $body) -NoNewline
-  Write-Host "installed: $dest"
+  $m = if ($model) { "  (model: $model)" } else { "" }
+  Write-Host "installed: $dest$m"
 }
 
 # Copy a directory tree, file-by-file, honoring -Force / -DryRun.
@@ -103,26 +116,45 @@ function Install-ClaudeGlobal {
   $count = 0
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.") }
+    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.", "") }
     # Install flat under ~/.claude/agents/ with the fc-* name so they don't
     # collide with personal agents.
     $destFile = Join-Path $DestAgents ($meta[0] + ".md")
-    Install-Agent $_.FullName $destFile $meta[0] $meta[1]
+    Install-Agent $_.FullName $destFile $meta[0] $meta[1] $meta[2]
     $count++
   }
 
   $skillCount = 0
   if (Test-Path $SrcSkillsDir) {
     Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
+      # A directory without SKILL.md is not a skill -- skip scratch dirs
+      # rather than shipping them. Mirrored in install.sh.
+      if (-not (Test-Path (Join-Path $_.FullName "SKILL.md"))) { return }
       Copy-Tree $_.FullName (Join-Path $DestSkillsDir $_.Name)
       $skillCount++
     }
   }
+  Remove-LegacySkills
 
   Write-Host ""
   Write-Host "Done. Installed $count agent file(s) and $skillCount skill(s)."
   Write-Host "Agents:  $DestAgents"
   Write-Host "Skills:  $DestSkillsDir"
+  Write-Host ""
+  Write-Host "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me,"
+  Write-Host "/fc-research, /fc-review, /fc-second-opinion - or delegate to an fc-* subagent."
+}
+
+# Skills were renamed to fc-* in v4. Remove the pre-rename directories so an
+# upgrade doesn't leave both installed and /build-or-fix still resolving.
+# Mirrors remove_legacy_skills() in install.sh.
+function Remove-LegacySkills {
+  foreach ($old in @("build-or-fix", "research")) {
+    $d = Join-Path $DestSkillsDir $old
+    if (Test-Path $d) {
+      Do-Or-Echo "removed (pre-v4): $d" { Remove-Item -Recurse -Force $d }
+    }
+  }
 }
 
 function Uninstall-ClaudeGlobal {
@@ -130,7 +162,7 @@ function Uninstall-ClaudeGlobal {
   # Remove only our fc-* files; leave personal agents in the dir alone.
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.") }
+    if (-not $meta) { $meta = @("fc-" + [IO.Path]::GetFileNameWithoutExtension($_.Name), "Feature-Crew agent.", "") }
     $d = Join-Path $DestAgents ($meta[0] + ".md")
     if (Test-Path $d) {
       Do-Or-Echo "removed: $d" { Remove-Item -Force $d }
@@ -138,6 +170,8 @@ function Uninstall-ClaudeGlobal {
   }
   if (Test-Path $SrcSkillsDir) {
     Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
+      # Only remove what we would have installed.
+      if (-not (Test-Path (Join-Path $_.FullName "SKILL.md"))) { return }
       $d = Join-Path $DestSkillsDir $_.Name
       if (Test-Path $d) {
         Do-Or-Echo "removed: $d" { Remove-Item -Recurse -Force $d }
@@ -149,6 +183,7 @@ function Uninstall-ClaudeGlobal {
   if (Test-Path $legacy) {
     Do-Or-Echo "removed (legacy): $legacy" { Remove-Item -Recurse -Force $legacy }
   }
+  Remove-LegacySkills
 }
 
 # --- Main dispatch (mirrors install.sh) ---

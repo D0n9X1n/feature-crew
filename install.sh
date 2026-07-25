@@ -41,17 +41,23 @@ SRC_SKILLS_DIR="${SCRIPT_DIR}/.claude/skills"
 DEST_AGENTS="${PREFIX}/agents"
 DEST_SKILLS_DIR="${PREFIX}/skills"
 
-# Map agent filename -> Claude Code subagent (name, one-line description).
-# These are written as YAML frontmatter so Claude Code recognizes them.
+# Map agent filename -> Claude Code subagent (name, description, model).
+# Written as YAML frontmatter so Claude Code recognizes them.
+#
+# The model field is what makes cross-family review structural rather than a
+# rule the PM has to remember at dispatch time:
+#   operate roles (pm, architect, developer) -> empty, inherit the session model
+#   review roles  (qa-spec, qa-code, tech-lead) -> sonnet, a different family
+# Keep in sync with $AgentMeta in install.ps1.
 agent_meta() {
   case "$1" in
-    pm.md)               echo "fc-pm|Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline." ;;
-    architect.md)        echo "fc-architect|Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines)." ;;
-    developer.md)        echo "fc-developer|Feature-Crew Developer: implements one task TDD-style against an approved plan." ;;
-    qa-spec-reviewer.md) echo "fc-qa-spec|Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode)." ;;
-    qa-code-reviewer.md) echo "fc-qa-code|Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode)." ;;
-    tech-lead.md)        echo "fc-tech-lead|Feature-Crew Tech Lead: final cross-family review before merging Complex work." ;;
-    *)                   echo "fc-$(basename "$1" .md)|Feature-Crew agent." ;;
+    pm.md)               echo "fc-pm|Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.|" ;;
+    architect.md)        echo "fc-architect|Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).|" ;;
+    developer.md)        echo "fc-developer|Feature-Crew Developer: implements one task TDD-style against an approved plan.|" ;;
+    qa-spec-reviewer.md) echo "fc-qa-spec|Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).|sonnet" ;;
+    qa-code-reviewer.md) echo "fc-qa-code|Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).|sonnet" ;;
+    tech-lead.md)        echo "fc-tech-lead|Feature-Crew Tech Lead: final cross-family review before merging Complex work.|sonnet" ;;
+    *)                   echo "fc-$(basename "$1" .md)|Feature-Crew agent.|" ;;
   esac
 }
 
@@ -76,23 +82,25 @@ ensure_dir() {
 # Install one agent file: prepend YAML frontmatter (name, description) if the
 # source doesn't already have one, then write to dest.
 install_agent() {
-  local src="$1" dest="$2" name="$3" desc="$4"
+  local src="$1" dest="$2" name="$3" desc="$4" model="${5:-}"
   if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
     say "skip (exists): $dest  [use --force to overwrite]"
     return 0
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "DRY-RUN: install $src -> $dest  (name: $name)"
+    say "DRY-RUN: install $src -> $dest  (name: $name${model:+, model: $model})"
     return 0
   fi
   {
     # Only add frontmatter if the source file doesn't start with '---'
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      printf -- '---\nname: %s\ndescription: %s\n---\n\n' "$name" "$desc"
+      printf -- '---\nname: %s\ndescription: %s\n' "$name" "$desc"
+      [ -n "$model" ] && printf -- 'model: %s\n' "$model"
+      printf -- '---\n\n'
     fi
     cat "$src"
   } > "$dest"
-  say "installed: $dest"
+  say "installed: $dest${model:+  (model: $model)}"
 }
 
 install_skill() {
@@ -104,7 +112,7 @@ install_skill() {
     exit 1
   fi
   # Use find to portably handle subdirectories.
-  ( cd "$src_dir" && find . -type f -print ) | while IFS= read -r rel; do
+  ( cd "$src_dir" && find . -type f -print | sed 's|^\./||' ) | while IFS= read -r rel; do
     local s="$src_dir/$rel" d="$dest_dir/$rel"
     if [ -e "$d" ] && [ "$FORCE" -ne 1 ]; then
       say "skip (exists): $d  [use --force to overwrite]"
@@ -113,6 +121,20 @@ install_skill() {
     do_or_echo mkdir -p "$(dirname "$d")"
     do_or_echo cp "$s" "$d"
     [ "$DRY_RUN" -eq 1 ] || say "installed: $d"
+  done
+}
+
+# Skills were renamed to fc-* in v4. Remove the pre-rename directories so an
+# upgrade doesn't leave both installed and /build-or-fix still resolving.
+# Mirrors Remove-LegacySkills in install.ps1.
+remove_legacy_skills() {
+  local old d
+  for old in build-or-fix research; do
+    d="$DEST_SKILLS_DIR/$old"
+    if [ -d "$d" ]; then
+      do_or_echo rm -rf "$d"
+      say "removed (pre-v4): $d"
+    fi
   done
 }
 
@@ -138,6 +160,8 @@ uninstall_paths() {
   if [ -d "$SRC_SKILLS_DIR" ]; then
     for src in "$SRC_SKILLS_DIR"/*/; do
       [ -d "$src" ] || continue
+      # Only remove what we would have installed.
+      [ -f "${src}SKILL.md" ] || continue
       local skill_name dest
       skill_name="$(basename "$src")"
       dest="$DEST_SKILLS_DIR/$skill_name"
@@ -156,6 +180,7 @@ uninstall_paths() {
     do_or_echo rm -rf "$DEST_AGENTS/feature-crew"
     say "removed (legacy): $DEST_AGENTS/feature-crew"
   fi
+  remove_legacy_skills
 }
 
 main_install() {
@@ -170,15 +195,17 @@ main_install() {
   local count=0
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base meta name desc dest
+    local base meta name desc model rest dest
     base="$(basename "$src")"
     meta="$(agent_meta "$base")"
     name="${meta%%|*}"
-    desc="${meta#*|}"
+    rest="${meta#*|}"
+    desc="${rest%%|*}"
+    model="${rest#*|}"
     # Install flat under ~/.claude/agents/ with the fc-* name so they don't
     # collide with personal agents.
     dest="$DEST_AGENTS/${name}.md"
-    install_agent "$src" "$dest" "$name" "$desc"
+    install_agent "$src" "$dest" "$name" "$desc" "$model"
     count=$((count + 1))
   done
 
@@ -187,19 +214,23 @@ main_install() {
   if [ -d "$SRC_SKILLS_DIR" ]; then
     for src in "$SRC_SKILLS_DIR"/*/; do
       [ -d "$src" ] || continue
+      # A directory without SKILL.md is not a skill -- skip scratch dirs
+      # rather than shipping them. Mirrored in install.ps1.
+      [ -f "${src}SKILL.md" ] || continue
       local name="$(basename "$src")"
       install_skill "$src" "$DEST_SKILLS_DIR/$name"
       skill_count=$((skill_count + 1))
     done
   fi
+  remove_legacy_skills
 
   say ""
   say "Done. Installed $count agent file(s) and $skill_count skill(s)."
   say "Agents:  $DEST_AGENTS"
   say "Skills:  $DEST_SKILLS_DIR"
   say ""
-  say "Use in any project by invoking '/skill build-or-fix' or by asking"
-  say "Claude Code to delegate to one of the fc-* subagents."
+  say "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me,"
+  say "/fc-research, /fc-review, /fc-second-opinion — or delegate to an fc-* subagent."
 }
 
 

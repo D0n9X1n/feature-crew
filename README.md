@@ -1,115 +1,110 @@
 # Feature-Crew
 
-An agent team framework for AI-assisted development with **Claude Code**. Defines specialized agent roles that work as a pipeline to turn ideas into production-ready code.
+An agent-team framework for **Claude Code**. Six skills, each for a different thing you're missing, plus role agents that do the work under hard gates and cross-family review.
 
-> **Scope note (2026-05):** Feature-Crew now targets **Claude Code only**. The previous GitHub Copilot integration is **deprecated and removed**. If you need the Copilot wiring, pin to a tag ≤ `v3.1`.
-
-## Quick Start
-
-### Install globally
-
-Install the role agents and skills into your user-level Claude Code config (`~/.claude`):
+## Install
 
 ```bash
-# macOS / Linux / Git Bash / WSL
-./install.sh
-
-# Native Windows PowerShell
-.\install.ps1
+./install.sh         # macOS / Linux / Git Bash / WSL
+.\install.ps1        # native Windows PowerShell
 ```
 
-Options: `--force` (overwrite), `--dry-run`, `--uninstall`, `--prefix DIR`.
+Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`.
 
-After install:
+Agents install to `~/.claude/agents/fc-*.md`, skills to `~/.claude/skills/fc-*/`. Both work in every project afterwards.
 
-- Agents land flat at `~/.claude/agents/fc-*.md` (`fc-pm`, `fc-architect`, `fc-developer`, `fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`).
-- Skills land at `~/.claude/skills/<name>/` (`build-or-fix`, `research`).
+## The six skills
 
-Use them in any project: invoke `/build-or-fix`, `/research`, or ask Claude Code to delegate to one of the `fc-*` subagents. The `build-or-fix` skill also auto-triggers on build/fix/change requests.
-
-## How It Works
-
-Every request starts with the PM picking a **track**:
-
-```
-Trivial   →  PM does it directly + verifies + commits           (1 file, no design)
-Standard  →  bullet-spec + light build + one QA pass            (1–5 files, small feature)
-Complex   →  brainstorm → spec → architect → devs → QA → tech lead   (multi-module, new arch)
-```
-
-Wrong track = wasted work or missed risk. The PM proposes a track on every request; the user can override. See `.claude/skills/build-or-fix/SKILL.md` for full flows + worked examples.
-
-### The Team
-
-| Role | Used in | What It Does |
-|------|---------|--------------|
-| **PM** | All tracks | Picks track, brainstorms, orchestrates. Implements directly on Trivial / light Standard. (`agents/pm.md`) |
-| **Developer** | Standard, Complex | Implements one task with TDD. Fresh agent per task. |
-| **QA Reviewer** | Standard, Complex | One-clue feedback: single most important finding, or PASS. |
-| **Architect** | Complex only | Spec → design + task-by-task plan (≤500 lines). |
-| **Tech Lead** | Complex only | Final integration review before merge. |
-
-### Skills
-
-| Skill | Slash command | Purpose |
+| Skill | Use when you lack | What it does |
 |---|---|---|
-| `build-or-fix` | `/build-or-fix` | Track-based build/fix pipeline (Trivial / Standard / Complex). |
-| `research` | `/research` | Multi-agent search → synthesize → validate pipeline with cross-family validation. |
+| `/fc-research` | **facts** | Parallel search across distinct angles → synthesize → validate against sources |
+| `/fc-grill-me` | **decisions** | Interviews you one question at a time, each with a recommended answer |
+| `/fc-brainstorm` | **an approach** | Three subagents with opposing stances → diversity check → one opinionated recommendation |
+| `/fc-build-or-fix` | **the code** | Right-sized track (Trivial / Standard / Complex) with gates and TDD |
+| `/fc-review` | **confidence in an artifact** | Reviews a diff, PR, spec, or plan. Read-only by construction |
+| `/fc-second-opinion` | **confidence in a decision** | Adversarial refuters, majority verdict |
 
-### Speed
+Each skill's description says what it does, when to use it, and when to use a sibling instead — so six skills don't fight over the same request. Skills offer each other; they never chain automatically.
 
-A Trivial change ships in seconds. A Standard change ships with one dev pass + one QA pass. Within Complex:
-- Independent tasks (≥3) run in parallel
-- QA starts the moment each developer finishes
-- Fix loops on one task don't block the rest
+## Tracks
 
-Right-sizing the process is the speed lever — not just parallelism.
+```
+Trivial   →  do it + verify + commit                          (1 file, no design choice)
+Standard  →  bullet spec + TDD + one QA pass                  (1–5 files, small feature)
+Complex   →  spec → architect → devs → QA → tech lead         (multi-module, new architecture)
+```
 
-## Project Structure
+The PM proposes a track on every request; you can override. Right-sizing is the speed lever — a typo fix does not pay for the Complex track's ceremony, because that track lives in a reference file loaded only when it's used.
+
+## The team
+
+| Role | Used in | Model |
+|---|---|---|
+| **PM** | all tracks | session default |
+| **Architect** | Complex | session default |
+| **Developer** | Standard, Complex | session default |
+| **QA spec / QA code** | Standard, Complex | `sonnet` |
+| **Tech Lead** | Complex | `sonnet` |
+
+Operate roles and review roles run on different model families. The installer writes `model:` into review agents' frontmatter, so cross-family review is structural rather than something the PM has to remember. If a second family isn't reachable, run fewer reviewers rather than two from the same family.
+
+## Hard gates
+
+1. User approves the track
+2. User approves the spec (Standard, Complex)
+3. User approves the plan (Complex)
+4. Verification evidence for every "done" claim — command output in the message making the claim
+5. Implementation matches the approved spec
+6. Tech Lead approval before merging Complex work
+
+Everything else is advisory: reported, then judged.
+
+## Non-negotiables
+
+- **TDD** — no production code without a failing test first
+- **Verify before claiming** — paste the output, don't describe it
+- **Root cause first** — 3 failed fixes means rethink
+- **No guessing** — look facts up, ask about decisions
+- **YAGNI** — don't build what wasn't requested
+- **Cross-platform parity** — `install.sh` and `install.ps1` change in the same commit
+
+## Framework caps
+
+Changes to Feature-Crew itself are Standard-track maximum. Orchestration (`agents/pm.md` + every `SKILL.md`) stays ≤600 lines; the total stays ≤1500. Enforced by:
+
+```bash
+bash tests/framework_test.sh
+```
+
+The framework must not become heavier than the work it serves.
+
+## Layout
 
 ```
 feature-crew/
-├── .claude/
-│   └── skills/
-│       ├── build-or-fix/SKILL.md   ← Track-based pipeline
-│       └── research/SKILL.md       ← Multi-agent research pipeline
-├── agents/
-│   ├── architect.md                ← Design + planning prompt
-│   ├── developer.md                ← TDD implementation prompt
-│   ├── pm.md                       ← PM behavior + orchestration
-│   ├── qa-spec-reviewer.md         ← "Does code match spec?" prompt
-│   ├── qa-code-reviewer.md         ← "Is code well-built?" prompt
-│   └── tech-lead.md                ← Final review prompt
-├── docs/
-│   ├── specs/                      ← Design specs go here
-│   ├── plans/                      ← Implementation plans go here
-│   └── reviews/                    ← Review records (optional)
-├── install.sh / install.ps1        ← Cross-platform installer
-├── AGENTS.md                       ← Canonical agent instructions
-├── CLAUDE.md                       ← Claude Code loader → points at AGENTS.md
-└── README.md
+├── .claude/skills/
+│   ├── fc-research/        fc-grill-me/       fc-brainstorm/
+│   ├── fc-review/          fc-second-opinion/
+│   └── fc-build-or-fix/
+│       ├── SKILL.md        ← hot path, loaded every build request
+│       └── reference/      ← Complex track + meta-work cap, loaded on demand
+├── agents/                 ← six role prompts
+├── docs/specs|plans|reviews/
+├── tests/framework_test.sh
+└── install.sh / install.ps1
 ```
-
-## Non-Negotiable Rules
-
-These apply to all agents in the team:
-
-- **TDD** — No production code without a failing test first
-- **No guessing** — Ask when stuck. Bad work is worse than no work.
-- **Verify before claiming** — Run the command, read the output, then claim the result
-- **Root cause first** — No fixes without investigation. 3+ failed fixes → rethink the approach
-- **YAGNI** — Don't build what isn't requested
-- **Cross-platform parity** — Any installer/script in this repo must work identically on bash and PowerShell; both files updated in the same commit.
 
 ## Updating
 
-Pull the latest and re-run the installer:
-
 ```bash
-cd feature-crew
-git pull origin main
-./install.sh --force
+git pull origin main && ./install.sh --force
 ```
+
+The installer removes pre-v4 skill directories so `/build-or-fix` doesn't linger beside `/fc-build-or-fix`.
+
+## Credits
+
+`/fc-grill-me` adapts the grilling mechanic from [mattpocock/skills](https://github.com/mattpocock/skills). The evidence-in-message rule is from [obra/superpowers](https://github.com/obra/superpowers). The description contract — what it does, when to use it, when not to — follows [tech-leads-club/agent-skills](https://github.com/tech-leads-club/agent-skills).
 
 ## License
 
