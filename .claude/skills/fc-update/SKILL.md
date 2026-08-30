@@ -59,10 +59,10 @@ Counts come from the source, so this does not rot when a skill is added:
 ```bash
 ls ~/.claude/agents/fc-*.md | wc -l      # must equal: ls agents/*.md | wc -l
 ls -d ~/.claude/skills/fc-*/ | wc -l     # must equal: ls -d .claude/skills/*/ | wc -l
-grep -c '^model: sonnet$' ~/.claude/agents/fc-{qa-spec,qa-code,tech-lead}.md
+if grep -H '^model:' ~/.claude/agents/fc-{pm,architect,developer,qa-spec,qa-code,tech-lead}.md; then exit 1; fi
 ```
 
-Paste the output. Review agents must carry `model: sonnet`; operate agents must carry no `model:` key at all.
+Paste the output. All six role agents must carry no `model:` key; hard-gate reviewers receive the selected override at dispatch time per `/fc-build-or-fix`.
 
 ## What this never does
 

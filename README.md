@@ -1,6 +1,6 @@
 # Feature-Crew
 
-**v5.0.1** · An agent-team framework for **Claude Code**. Seven skills, each for a different thing you're missing, plus role agents that do the work under hard gates and cross-family review.
+**v5.1.0** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates.
 
 ## Install
 
@@ -9,121 +9,85 @@
 .\install.ps1        # native Windows PowerShell
 ```
 
-Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`.
+Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
 
-Agents install to `~/.claude/agents/fc-*.md`, skills to `~/.claude/skills/fc-*/`. Both work in every project afterwards.
+## Describe the need
 
-## The seven skills
+Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, and adversarial confidence in a chosen consequential decision. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
 
-| Skill | Use when you lack | What it does |
-|---|---|---|
-| `/fc-research` | **facts** | Parallel search across distinct angles → synthesize → validate against sources |
-| `/fc-grill-me` | **decisions** | Interviews you one question at a time, each with a recommended answer |
-| `/fc-brainstorm` | **an approach** | Three subagents with opposing stances → diversity check → one opinionated recommendation |
-| `/fc-build-or-fix` | **the code** | Right-sized track (Trivial / Standard / Complex) with gates and TDD |
-| `/fc-review` | **confidence in an artifact** | Reviews a diff, PR, spec, or plan. Read-only by construction |
-| `/fc-second-opinion` | **confidence in a decision** | Adversarial refuters, majority verdict |
-| `/fc-update` | **the current version** | Pulls, warns about files you edited, reinstalls |
+The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`; this README does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-build-or-fix`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
 
-Each skill's description says what it does, when to use it, and when to use a sibling instead — so seven skills don't fight over the same request. Skills offer each other; they never chain automatically.
+## Complexity tracks
 
-## Tracks
+| Track | Behavior |
+|---|---|
+| **Just Do It** | Straightforward, bounded, obvious, low-risk, reversible work; PM explores, writes the failing test first, implements, and verifies without approval/spec/role dispatch |
+| **Standard** | Coherent feature; approved bullet spec, TDD, one selected QA pass |
+| **Complex** | Multi-module or architectural work; approved spec and plan, developers, selected QA, Tech Lead |
 
-```
-Trivial   →  do it + verify + commit                          (1 file, no design choice)
-Standard  →  bullet spec + TDD + one QA pass                  (1–5 files, small feature)
-Complex   →  spec → architect → devs → QA → tech lead         (multi-module, new architecture)
-```
+File count is only a warning signal. A mirrored low-risk content change across several files can be Just Do It; a one-line runtime/config/API/deploy change cannot. The canonical escalation list and track rules live in `/fc-build-or-fix`.
 
-The PM proposes a track on every request; you can override. Right-sizing is the speed lever — a typo fix does not pay for the Complex track's ceremony, because that track lives in a reference file loaded only when it's used.
+Just Do It is auto-selected from natural language and does not ask for track approval. If exploration finds ambiguity, coupling, risk, unresolved decisions, or escalation-list scope, the PM stops before production edits and escalates to Standard. Standard and Complex retain user approval gates unless waived; observed verification, spec compliance, and Complex Tech Lead approval remain mandatory.
 
-## The team
+## Dynamic hard-gate review
 
-| Role | Used in | Model |
-|---|---|---|
-| **PM** | all tracks | session default |
-| **Architect** | Complex | session default |
-| **Developer** | Standard, Complex | session default |
-| **QA spec / QA code** | Standard, Complex | `sonnet` |
-| **Tech Lead** | Complex | `sonnet` |
+All six role agents install without a `model` frontmatter key. Before each model-authored hard-gate review, the dispatcher uses the artifact author's known family/provenance to select an explicit cross-family Agent override and records an audit envelope. Unknown provenance, a family collision, or unavailable selected model leaves the gate unsatisfied; there is no same-family fallback.
 
-Operate roles and review roles run on different model families. The installer writes `model:` into review agents' frontmatter, so cross-family review is structural rather than something the PM has to remember. If a second family isn't reachable, run fewer reviewers rather than two from the same family.
+The exact selector is canonical in `/fc-build-or-fix`; other docs point there rather than copying it. Standalone `/fc-review` and `/fc-second-opinion` remain useful but do not substitute for pipeline hard gates.
 
 ## Hard gates
 
-1. User approves the track
-2. User approves the spec (Standard, Complex)
-3. User approves the plan (Complex)
-4. Verification evidence for every "done" claim — command output in the message making the claim
+1. Standard/Complex track approval unless waived
+2. Standard/Complex spec approval unless waived
+3. Complex plan approval unless waived
+4. Observed verification evidence for every done claim
 5. Implementation matches the approved spec
 6. Tech Lead approval before merging Complex work
 
-Everything else is advisory: reported, then judged.
-
 ## Non-negotiables
 
-- **TDD** — no production code without a failing test first
-- **Verify before claiming** — paste the output, don't describe it
-- **Root cause first** — 3 failed fixes means rethink
-- **No guessing** — look facts up, ask about decisions
-- **YAGNI** — don't build what wasn't requested
-- **Cross-platform parity** — `install.sh` and `install.ps1` change in the same commit
+- **TDD** — no production code without an observed failing test first; docs use objective acceptance checks first
+- **Verify before claiming** — paste output, do not describe it
+- **Root cause first** — three failed fixes means rethink
+- **No guessing** — look up facts, ask about decisions
+- **YAGNI** — build only what was requested
+- **Cross-platform parity** — `install.sh` and `install.ps1` ship together
 
 ## Framework caps
 
-Changes to Feature-Crew itself are Standard-track maximum. Orchestration (`agents/fc-pm.md` + every `SKILL.md`) stays ≤600 lines; the total stays ≤1500. Enforced by:
+Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md` plus every `SKILL.md`) stays ≤600 lines; the total stays ≤1500 and under the ratcheted baseline. Run:
 
 ```bash
-bash tests/framework_test.sh
+FC_STRICT=1 bash tests/framework_test.sh
 ```
-
-The framework must not become heavier than the work it serves.
 
 ## Layout
 
-```
+```text
 feature-crew/
-├── .claude/skills/
-│   ├── fc-research/        fc-grill-me/       fc-brainstorm/
-│   ├── fc-review/          fc-second-opinion/
-│   └── fc-build-or-fix/
-│       ├── SKILL.md        ← hot path, loaded every build request
-│       └── reference/      ← Complex track + meta-work cap, loaded on demand
-├── agents/fc-*.md          ← six role prompts
-├── .github/workflows/      ← test on PR, release on tag
-├── docs/specs|plans|reviews/
+├── .claude/skills/fc-*/       # seven skills
+├── agents/fc-*.md             # six unpinned role prompts
+├── .github/workflows/         # test and release pipelines
 ├── tests/framework_test.sh
-├── CLAUDE.md               ← agent instructions (no AGENTS.md; Claude Code only)
+├── CLAUDE.md                  # repository instructions
 └── install.sh / install.ps1
 ```
 
 ## Releasing
 
-Milestone → issues → PR → merge → tag. CI publishes on tag push; see the release process in [CLAUDE.md](CLAUDE.md).
+Milestone → issues → PR → merge → tag. CI publishes on tag push; see [CLAUDE.md](CLAUDE.md). The GitHub release body is the changelog; there is no changelog file.
 
 ```bash
 git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-**The GitHub release body is the changelog.** There is no changelog file — one record, generated per tag from the commits that actually shipped, so it cannot drift from the tag it describes. See [releases](https://github.com/D0n9X1n/feature-crew/releases).
-
 ## Updating
 
-```bash
-/fc-update
-```
-
-Pulls, tells you which installed files you have edited **before** overwriting them, reports skills that are installed but no longer shipped, and reinstalls. Or by hand:
-
-```bash
-git pull origin main && ./install.sh --force
-```
-
-The installer removes the legacy unprefixed skill directories so `/build-or-fix` doesn't linger beside `/fc-build-or-fix` — but only ones whose content hash matches something this project actually published. Uninstall is the same: it removes only files byte-identical to what it installed, so anything you edited or added alongside is left alone.
+Run `/fc-update`, or `git pull origin main && ./install.sh --force`. Before overwriting, the update flow reports installed files you edited. Legacy cleanup and uninstall remove only files whose exact content proves Feature-Crew installed them.
 
 ## Credits
 
-`/fc-grill-me` adapts the grilling mechanic from [mattpocock/skills](https://github.com/mattpocock/skills). The evidence-in-message rule is from [obra/superpowers](https://github.com/obra/superpowers). The description contract — what it does, when to use it, when not to — follows [tech-leads-club/agent-skills](https://github.com/tech-leads-club/agent-skills).
+`/fc-grill-me` adapts the grilling mechanic from [mattpocock/skills](https://github.com/mattpocock/skills). The evidence-in-message rule is from [obra/superpowers](https://github.com/obra/superpowers). The description contract follows [tech-leads-club/agent-skills](https://github.com/tech-leads-club/agent-skills).
 
 ## License
 

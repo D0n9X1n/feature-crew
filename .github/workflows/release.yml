@@ -96,7 +96,7 @@ jobs:
             printf '### Commits\n%s\n\n' "$COMMIT_LIST"
             printf '### Contents\n'
             printf -- '- %s skills (`~/.claude/skills/fc-*/`)\n' "$SKILLS"
-            printf -- '- %s role agents (`~/.claude/agents/fc-*.md`), review roles pinned to `model: sonnet`\n' "$AGENTS"
+            printf -- '- %s role agents (`~/.claude/agents/fc-*.md`), unpinned for provenance-based hard-gate selection\n' "$AGENTS"
             printf -- '- Cross-platform installer (`install.sh` / `install.ps1`)\n\n'
             printf '### Validation\n'
             printf -- '- Framework self-test, strict mode (skips count as failures)\n'

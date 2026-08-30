@@ -11,7 +11,7 @@ Produces an approved spec by exploring the solution space before committing to i
 
 Restate the problem in one sentence and name the constraint that matters most. Look up anything discoverable yourself: existing patterns, dependencies, prior art in the repo.
 
-If the problem itself is unclear, run `/fc-grill-me` first — a panel exploring the wrong problem wastes every dispatch.
+If a user-owned requirement is missing, use the canonical need classifier in `/fc-build-or-fix`: `/fc-grill-me` resolves that category and returns here before the panel runs.
 
 ## 2 — Panel
 
@@ -45,16 +45,16 @@ Present the approaches in a comparison table, then **recommend one**. The recomm
 
 ## 5 — Spec
 
-Once the user picks a direction, run `/fc-grill-me` to settle the open decisions, then write the spec to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap 1000 words** — over it, decompose into sub-projects.
+Once the user picks a direction, invoke `/fc-grill-me` only for remaining user-owned decisions; it returns the settled result here. Then write the spec to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap 1000 words** — over it, decompose into sub-projects.
 
-Cross-audit the spec with a review-family model before asking for approval (see the canonical audit rule in `/fc-build-or-fix`). Address CRITICAL findings first.
+Cross-audit the spec with the dynamic hard-gate selector in `/fc-build-or-fix` before asking for approval. Address CRITICAL findings first.
 
 The user approving the spec is a hard gate. Hand off to `/fc-build-or-fix` only after that, and tell it approval happened.
 
 ## Caps
 
-- **Max 4 dispatches** — 3 panel + 1 cross-audit. Re-spawn counts against it; a second re-spawn needs the user's OK.
-- **Never auto-chain.** Offer `/fc-research` or `/fc-second-opinion`; don't invoke them silently.
+- **Max 4 panel/review dispatches** — 3 panel + 1 cross-audit. Re-spawn counts; a second re-spawn needs the user's OK.
+- A subskill resolves one classified gap and returns here. It does not self-invoke or recurse; reclassify only a distinct remaining gap, per `/fc-build-or-fix`.
 
 ## Anti-patterns
 

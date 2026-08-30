@@ -47,8 +47,7 @@ skip() {
 }
 
 SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-build-or-fix fc-review fc-second-opinion fc-update)
-REVIEW_AGENTS=(fc-qa-spec fc-qa-code fc-tech-lead)
-OPERATE_AGENTS=(fc-pm fc-architect fc-developer)
+ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
 
 skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
 
@@ -80,14 +79,14 @@ else
 fi
 
 # ---------------------------------------------------------------- T3
-# The hot path must actually shrink -- this file is paid for on every
-# build/fix request, including trivial ones.
+# The hot path must remain tightly ratcheted -- this file is paid for on every
+# build/fix request, including Just Do It work.
 if [ -f .claude/skills/fc-build-or-fix/SKILL.md ]; then
   bof=$(wc -l < .claude/skills/fc-build-or-fix/SKILL.md)
-  if [ "$bof" -lt 287 ]; then
-    ok "T3 fc-build-or-fix/SKILL.md = ${bof} lines (< 287 baseline)"
+  if [ "$bof" -le 128 ]; then
+    ok "T3 fc-build-or-fix/SKILL.md = ${bof} lines (<= 128 ratchet)"
   else
-    bad "T3 hot path did not shrink" "fc-build-or-fix/SKILL.md = ${bof}, baseline 287"
+    bad "T3 hot path exceeded ratchet" "fc-build-or-fix/SKILL.md = ${bof}, cap 128"
   fi
 else
   bad "T3 hot path" ".claude/skills/fc-build-or-fix/SKILL.md missing"
@@ -108,72 +107,76 @@ else
 fi
 
 # ---------------------------------------------------------------- T5
-# Review agents carry `model: sonnet` in INSTALLED frontmatter; operate agents
-# inherit the session model (no model: key at all).
+# All six installed ROLE agents must resolve with no model key. Hard-gate
+# reviewers receive an explicit model override at dispatch time from the
+# artifact-author selector; frontmatter pins would bypass that provenance rule.
 #
-# Grepping for the LINE is not enough: YAML resolves duplicate keys to the
-# LAST one, so `model: sonnet` on line 4 and `model: haiku` on line 5 leaves a
-# line-grep green while the agent runs on haiku. Parse the frontmatter and
-# assert the RESOLVED value, and reject duplicate keys outright.
-tmp_prefix="$(mktemp -d)"
-# The T15 probe lives inside the repo, so it must be cleaned up even if an
-# assertion between here and there exits early -- otherwise a failed run leaves
-# the working tree dirty.
-T15_PROBE=".claude/skills/t15-probe-$$"
-T21_SCRIPT="./t21-noguard-$$.sh"
-trap 'rm -rf "$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT"' EXIT
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  t5_err=""
-  if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
-    t5_out=$(python3 - "$tmp_prefix" <<'PY'
+# This parses YAML rather than grepping lines: duplicate keys resolve silently
+# to the last value, so reject duplicate keys outright before checking the
+# resolved mapping.
+validate_role_frontmatter() {
+  python3 - "$1" <<'PY'
 import sys, re, glob, os, yaml
-review  = {"fc-qa-spec", "fc-qa-code", "fc-tech-lead"}
-operate = {"fc-pm", "fc-architect", "fc-developer"}
+roles = {"fc-pm", "fc-architect", "fc-developer", "fc-qa-spec", "fc-qa-code", "fc-tech-lead"}
 errs = []
+seen = set()
 for f in sorted(glob.glob(sys.argv[1] + "/agents/*.md")):
     name = os.path.basename(f)[:-3]
+    seen.add(name)
     txt = open(f, encoding="utf-8").read()
     m = re.match(r"^---\n(.*?)\n---\n", txt, re.S)
     if not m:
         errs.append(f"{name}:no-frontmatter"); continue
     block = m.group(1)
-    # Duplicate keys parse silently and the last wins -- reject them.
     keys = [ln.split(":", 1)[0] for ln in block.splitlines() if re.match(r"^[a-z-]+:", ln)]
     if len(keys) != len(set(keys)):
         errs.append(f"{name}:duplicate-keys"); continue
     d = yaml.safe_load(block) or {}
-    got = d.get("model")
-    if name in review and got != "sonnet":
-        errs.append(f"{name}:model={got!r}-want-sonnet")
-    if name in operate and got is not None:
-        errs.append(f"{name}:model={got!r}-should-inherit")
+    if "model" in d:
+        errs.append(f"{name}:model={d['model']!r}-must-be-absent")
+for name in sorted(roles - seen):
+    errs.append(f"{name}:missing")
+for name in sorted(seen - roles):
+    errs.append(f"{name}:unexpected-role")
 print(" ".join(errs))
 PY
-)
-    [ -n "$t5_out" ] && t5_err="$t5_err$t5_out"
+}
+
+tmp_prefix="$(mktemp -d)"
+# The T15 probe lives inside the repo, so it must be cleaned up even if an
+# assertion between here and there exits early -- otherwise a failed run leaves
+# the working tree dirty. Other tests add their temp paths to this shared list.
+T15_PROBE=".claude/skills/t15-probe-$$"
+T21_SCRIPT="./t21-noguard-$$.sh"
+CLEANUP_PATHS=("$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT")
+cleanup() { rm -rf "${CLEANUP_PATHS[@]}"; }
+trap cleanup EXIT
+if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
+  t5_err=""
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+    if t5_out=$(validate_role_frontmatter "$tmp_prefix" 2>&1); then
+      [ -n "$t5_out" ] && t5_err="$t5_err$t5_out"
+    else
+      t5_rc=$?
+      t5_err="$t5_err validator-exited-$t5_rc:${t5_out:-no-diagnostic}"
+    fi
   else
-    # No parser available: fall back to the line check and say so.
-    for a in "${REVIEW_AGENTS[@]}"; do
+    # No parser available: line checks cannot prove duplicate-key safety.
+    for a in "${ROLE_AGENTS[@]}"; do
       f="$tmp_prefix/agents/$a.md"
       if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
-      elif ! head -12 "$f" | grep -q '^model: sonnet$'; then t5_err="$t5_err $a:no-model-sonnet"
-      fi
-    done
-    for a in "${OPERATE_AGENTS[@]}"; do
-      f="$tmp_prefix/agents/$a.md"
-      if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
-      elif head -12 "$f" | grep -q '^model:'; then t5_err="$t5_err $a:should-inherit"
+      elif head -12 "$f" | grep -q '^model:'; then t5_err="$t5_err $a:model-present"
       fi
     done
     skip "T5 no YAML parser — duplicate-key override unverified"
   fi
   if [ -z "$t5_err" ]; then
-    ok "T5 review agents resolve to sonnet; operate agents inherit"
+    ok "T5 all six installed role agents resolve with no model key"
   else
-    bad "T5 installed agent model frontmatter" "issues:$t5_err"
+    bad "T5 installed role-agent model frontmatter" "issues:$t5_err"
   fi
 else
-  bad "T5 installed agent model frontmatter" "install.sh failed against temp prefix"
+  bad "T5 installed role-agent model frontmatter" "install.sh failed against temp prefix"
 fi
 
 # ---------------------------------------------------------------- T6
@@ -291,7 +294,7 @@ sh_operative_ok() {
 }
 
 t10_err=""
-for token in fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead sonnet; do
+for token in fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead; do
   grep -q -- "$token" install.sh  || t10_err="$t10_err sh:$token"
   grep -q -- "$token" install.ps1 || t10_err="$t10_err ps1:$token"
 done
@@ -604,10 +607,8 @@ rm -rf "$t23_prefix"
 # ---------------------------------------------------------------- T24
 # Two logic holes both reviewers found in the audit rule.
 #
-# (a) Family collision. Operate = session default, review = sonnet. If the
-#     session model IS Sonnet, Sonnet writes and Sonnet reviews, and the gate
-#     is satisfied in appearance only. The rule must tell the PM to detect
-#     that and record the gate unsatisfied rather than met.
+# (a) Family collision. A computed reviewer from the artifact author's known
+#     family must differ or the gate is recorded unsatisfied rather than met.
 # (b) Standard step 3 skips the spec audit, while the rule says EVERY
 #     model-authored hard-gate artifact is audited. Whichever way that is
 #     resolved, the exemption has to be stated in the rule -- otherwise a
@@ -620,7 +621,7 @@ echo "$rule" | grep -qi 'unsatisfied'              || t24_err="$t24_err collisio
 echo "$rule" | grep -qi 'exempt'                   || t24_err="$t24_err exemption-unstated"
 # The FLOW must cite the exemption, not merely contain the word somewhere. A
 # loose 'exemption' alternative here was satisfied by the rule itself and by
-# "Trivial is exempt" -- neither of which is step 3 -- so stripping step 3's
+# "Just Do It is exempt" -- neither of which is step 3 -- so stripping step 3's
 # clause left this green. Match the exact phrase step 3 uses.
 grep -qF 'one of the two exemptions' "$b" || t24_err="$t24_err flow-does-not-cite-exemption"
 [ -z "$t24_err" ] && ok "T24 audit rule handles family collision + names its exemptions" \
@@ -828,6 +829,116 @@ grep -q 'feature-crew ' .github/workflows/release.yml     || t31_err="$t31_err w
 
 [ -z "$t31_err" ] && ok "T31 release body is the changelog; no changelog file in repo" \
                   || bad "T31 changelog duplication" "issues:$t31_err"
+
+# ---------------------------------------------------------------- T32
+# Static contract alarm only: shell cannot execute Claude Code Agent dispatches.
+# Guard the canonical selector's branches, provenance envelope, explicit model
+# override, reviewer non-self-identification, and fail-closed/no-fallback cases.
+b=.claude/skills/fc-build-or-fix/SKILL.md
+t32_err=""
+selector=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
+echo "$selector" | grep -qiE 'Sonnet.family author.*model: *opus|author.*Sonnet.family.*`?opus`?' \
+  || t32_err="$t32_err sonnet-author-to-opus-missing"
+echo "$selector" | grep -qiE '(non-Sonnet.family|known.*other.*family).*model: *sonnet|(non-Sonnet.family|known.*other.*family).*`?sonnet`?' \
+  || t32_err="$t32_err non-sonnet-author-to-sonnet-missing"
+echo "$selector" | grep -qiE 'Agent.*model.*override|explicit.*model.*override' \
+  || t32_err="$t32_err explicit-agent-override-missing"
+echo "$selector" | grep -qi 'artifact.*identity' || t32_err="$t32_err artifact-identity-missing"
+echo "$selector" | grep -qiE 'author family|author-family' || t32_err="$t32_err author-family-missing"
+echo "$selector" | grep -qiE 'audit envelope|gate record' || t32_err="$t32_err gate-envelope-missing"
+echo "$selector" | grep -qiE 'must not infer|never infer|do not infer' || t32_err="$t32_err reviewer-self-inference-not-banned"
+echo "$selector" | grep -qiE 'unknown.*(family|provenance).*GATE UNSATISFIED|GATE UNSATISFIED.*unknown' \
+  || t32_err="$t32_err unknown-provenance-not-fail-closed"
+echo "$selector" | grep -qiE 'same.family.*GATE UNSATISFIED|GATE UNSATISFIED.*same.family' \
+  || t32_err="$t32_err collision-not-fail-closed"
+echo "$selector" | grep -qiE '(failure|unavailable).*(GATE UNSATISFIED)|GATE UNSATISFIED.*(failure|unavailable)' \
+  || t32_err="$t32_err dispatch-failure-not-fail-closed"
+echo "$selector" | grep -qiE 'no fallback|never.*fallback|do not.*fallback' \
+  || t32_err="$t32_err author-family-fallback-not-banned"
+echo "$selector" | grep -qiE 'tests-as-spec.*author family|author family.*tests-as-spec' \
+  || t32_err="$t32_err tests-as-spec-provenance-missing"
+[ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
+                   || bad "T32 dynamic selector prose contract" "missing:$t32_err"
+
+# Duplicate YAML keys can hide an override even when installed files look
+# superficially right. Mutate one generated agent and require the shared T5
+# validator to return the exact duplicate-key diagnostic. A crash, import error,
+# empty glob, or unrelated diagnostic is a test failure, not a rejection.
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  skip "T5 duplicate-key mutation — YAML parser unavailable"
+else
+  t5_mut="$(mktemp -d)"
+  CLEANUP_PATHS+=("$t5_mut")
+  if ! bash install.sh --prefix "$t5_mut" --force >/dev/null 2>&1; then
+    bad "T5 duplicate-key mutation" "install.sh failed"
+  else
+    python3 - "$t5_mut/agents/fc-qa-code.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace("description:", "model: sonnet\nmodel: opus\ndescription:", 1)
+open(p, "w", encoding="utf-8").write(s)
+PY
+    t5_mut_out=""
+    if t5_mut_out=$(validate_role_frontmatter "$t5_mut" 2>&1); then
+      if [ "$t5_mut_out" = "fc-qa-code:duplicate-keys" ]; then
+        ok "T5 duplicate-key mutation returns expected diagnostic"
+      else
+        bad "T5 duplicate-key mutation" "got '${t5_mut_out:-<empty>}', want 'fc-qa-code:duplicate-keys'"
+      fi
+    else
+      t5_mut_rc=$?
+      bad "T5 duplicate-key mutation" "validator exited $t5_mut_rc: ${t5_mut_out:-<no diagnostic>}"
+    fi
+  fi
+  rm -rf "$t5_mut"
+fi
+
+# ---------------------------------------------------------------- T33
+# Natural-language, need-based composition is canonical in build-or-fix. The
+# alarm checks all five routes and bounded return-to-origin behavior; it is not
+# runtime proof that a model will classify every request correctly.
+t33_err=""
+classifier=$(sed -n '/^## Need classifier/,/^## /p' "$b")
+echo "$classifier" | grep -qiE 'one discoverable fact.*look.*up|look.*up.*one discoverable fact' \
+  || t33_err="$t33_err direct-fact-route"
+echo "$classifier" | grep -qiE 'several places.*fc-research|fc-research.*several places' \
+  || t33_err="$t33_err research-route"
+echo "$classifier" | grep -qiE 'user-owned.*(requirement|decision).*fc-grill-me|fc-grill-me.*user-owned.*(requirement|decision)' \
+  || t33_err="$t33_err grill-route"
+echo "$classifier" | grep -qiE '(unresolved solution|approach|options).*fc-brainstorm|fc-brainstorm.*(unresolved solution|approach|options)' \
+  || t33_err="$t33_err brainstorm-route"
+echo "$classifier" | grep -qiE '(chosen consequential decision|adversarial confidence).*fc-second-opinion|fc-second-opinion.*(chosen consequential decision|adversarial confidence)' \
+  || t33_err="$t33_err second-opinion-route"
+echo "$classifier" | grep -qiE 'return.*origin|originat(ing|or).*resume' \
+  || t33_err="$t33_err return-to-origin"
+echo "$classifier" | grep -qiE 'must not self-invoke|no self-invocation|never self-invoke' \
+  || t33_err="$t33_err no-self-invocation"
+echo "$classifier" | grep -qiE 'do not repeat|never repeat|no repeat' \
+  || t33_err="$t33_err no-repeat"
+echo "$classifier" | grep -qiE 'recurs|cycle' || t33_err="$t33_err no-cycles"
+if grep -q '^disable-model-invocation: true$' .claude/skills/fc-grill-me/SKILL.md; then
+  t33_err="$t33_err grill-not-model-invocable"
+fi
+# Pointer docs must not grow a second copy of the canonical route table.
+dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md CLAUDE.md agents/fc-pm.md \
+  '.claude/skills/fc-brainstorm/SKILL.md' 2>/dev/null || true)
+[ -z "$dup_classifier" ] || t33_err="$t33_err duplicated-classifier:$(echo "$dup_classifier" | tr '\n' ',')"
+[ -z "$t33_err" ] && ok "T33 static contract alarm: five need routes + bounded return-to-origin" \
+                   || bad "T33 need-composition prose contract" "missing:$t33_err"
+
+# ---------------------------------------------------------------- T34
+# Reject obsolete track/pin language from active shipped content, while leaving
+# intentional standalone skill pins (fc-review/fc-second-opinion) outside scope.
+t34_err=""
+stale_track=$(printf 'Tri%s' 'vial')
+stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md agents '*.sh' '*.ps1' '.github/workflows/*' '.claude/skills/**' 2>/dev/null || true)
+[ -z "$stale_track_files" ] || t34_err="$t34_err stale-track:$(echo "$stale_track_files" | tr '\n' ',')"
+stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned to `?model: sonnet|review-family model|review family|different model family|session default model' -- \
+  README.md CLAUDE.md agents install.sh install.ps1 '.github/workflows/*' '.claude/skills/fc-build-or-fix/**' '.claude/skills/fc-brainstorm/**' '.claude/skills/fc-research/**' '.claude/skills/fc-update/**' 2>/dev/null || true)
+[ -z "$stale_pins" ] || t34_err="$t34_err stale-role-pin:$(echo "$stale_pins" | tr '\n' ',')"
+[ -z "$t34_err" ] && ok "T34 no stale legacy-track or role-pin wording in active shipped content" \
+                   || bad "T34 stale framework wording" "issues:$t34_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then

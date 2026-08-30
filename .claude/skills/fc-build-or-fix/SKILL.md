@@ -1,132 +1,124 @@
 ---
 name: fc-build-or-fix
-description: Runs a code change through a right-sized track (Trivial / Standard / Complex) with hard gates, TDD, and cross-family review. Use when the user asks to build, fix, change, refactor, implement, add, or extend code. Do NOT use for open questions or codebase search (use /fc-research), for deciding what to build (use /fc-brainstorm), or for reviewing an artifact this pipeline did not produce (use /fc-review).
+description: Runs a code change through a right-sized track (Just Do It / Standard / Complex) with hard gates, TDD, and cross-family review. Use when the user asks naturally to build, fix, change, refactor, implement, add, or extend code. Do NOT use for an open question whose primary need is facts, an approach, or review of an artifact this pipeline did not produce; route that need with the classifier below.
 ---
 
 # fc-build-or-fix
 
-You are the PM. Pick a track, confirm it, run the matching flow.
+You are the PM. Classify the missing ingredient, pick the track, and run its flow.
+
+## Need classifier
+
+Users describe the need naturally; slash-command knowledge is not required. At entry and whenever blocked, preserve **facts you look up; decisions you ask**:
+
+| Missing ingredient | Route |
+|---|---|
+| One discoverable fact | Look it up directly. |
+| Evidence from several places | Invoke `/fc-research`. |
+| User-owned requirement or decision | Invoke `/fc-grill-me`. |
+| Unresolved solution approach or options | Invoke `/fc-brainstorm`. |
+| A chosen consequential decision needing adversarial confidence | Invoke `/fc-second-opinion`. |
+
+Do not grill for facts, research preferences, brainstorm an already chosen approach, or use second-opinion to make the initial choice. A subskill resolves one category and returns its result to the originating flow; the originator may reclassify a distinct remaining gap, invoke one next appropriate skill, then resume. A subskill must not self-invoke or recursively invoke another skill. Do not repeat the same skill for an unchanged gap: no cycles.
 
 ## Step 1 — pick a track
 
 | Track | When | Spec | Dispatches |
 |---|---|---|---|
-| **Trivial** | ≤30 min, 1 file, no design choice | one sentence in chat | 0 |
-| **Standard** | 1–5 files, one coherent feature, no new architecture | bullet list in chat | 1–2 |
-| **Complex** | multi-module, new subsystem, security or data-integrity central, public API change | doc, ≤1000 words | 5+ |
+| **Just Do It** | Straightforward and bounded; obvious solution; no unresolved design; low regression risk; reversible | none | 0 |
+| **Standard** | One coherent feature, modest coupling, no new architecture | bullet list in chat | 1–2 |
+| **Complex** | Multi-module, new subsystem, security or data-integrity central, public API change | doc, ≤1000 words | 5+ |
 
-Ask: "Proposing **<track>** because <reason>. OK?" The user may override.
+File count is an optional warning signal, never an eligibility rule: a mirrored low-risk content change across several files can qualify, while a one-line high-risk change cannot. **Just Do It never applies** when the change touches the canonical **escalation list**: runtime behavior, config, auth, secrets, persistence, public API contract, or deploy behavior. This list is stated only here; it controls both the track floor and Standard spec audit.
 
-**Trivial never applies** — escalate to Standard minimum — when the change touches the **escalation list**: runtime behavior, config, auth, secrets, persistence, public API contract, or deploy behavior. A wrong one-line value in those areas reaches production.
+For Standard or Complex, ask: "Proposing **<track>** because <reason>. OK?" User approval remains required unless waived. The PM auto-selects Just Do It from natural language and proceeds without track approval.
 
-This list is canonical here. It sets the track floor *and* decides whether the Standard spec cross-audit fires (step 3), so a second copy elsewhere would produce two different answers about whether a hard gate applies. Other docs point at it; they do not restate it.
-
-**Framework-internal changes are Standard maximum.** See [reference/meta-work-cap.md](reference/meta-work-cap.md).
+Explore before production edits. If exploration reveals ambiguity, coupling, risk, unresolved decisions, or escalation-list scope, stop before production edits and escalate to Standard. Framework-internal changes are Standard maximum; see [reference/meta-work-cap.md](reference/meta-work-cap.md).
 
 ## Step 2 — run the track
 
-### Trivial
+### Just Do It
 
-1. User approves track.
-2. Make the change.
-3. Run a verification command, paste the output.
-4. Commit.
+1. Explore enough to confirm eligibility and the existing pattern.
+2. Write a failing test first; for docs, write objective acceptance checks first.
+3. Make the minimal change.
+4. Run observed verification and paste its output.
+5. Commit only if the overall user request authorizes a commit.
 
-No spec, no subagent, no QA pass.
+No track approval, spec, role-agent dispatch, or QA pass.
 
 ### Standard
 
-1. User approves track.
-2. Write a bullet spec in chat: purpose (1 sentence) · files touched · behavior (3–8 bullets) · must-pass test command · non-goals.
-   Look facts up yourself — paths, existing patterns, test commands. Ask the user only about decisions.
-3. **Cross-audit the spec** when the change touches the escalation list above. Otherwise skip — this is one of the two exemptions named in the audit rule below, not an oversight.
-4. User approves spec.
-5. Implement TDD: failing test → verify it fails → minimal code → verify it passes.
-6. Run the must-pass command, paste the output.
-7. One QA dispatch, one-clue mode, **combined spec + code review** — `fc-qa-code` prompted to check both, since this is the only review pass.
-8. Judge the finding: CRITICAL → fix. IMPORTANT → fix or file follow-up. PASS → done.
-9. Commit on a feature branch, offer a PR.
+1. User approves track unless waived.
+2. Write a bullet spec in chat: purpose · files · 3–8 behavior bullets · must-pass full-suite command · non-goals. Look up facts; ask only user-owned decisions.
+3. **Cross-audit the spec** when it touches the escalation list. Otherwise skip as one of the two exemptions in the audit rule.
+4. User approves spec unless waived.
+5. Implement TDD: failing test → observe failure → minimal code → observe pass → refactor.
+6. Run the must-pass full suite and paste output.
+7. Dispatch `fc-qa-code` in one-clue mode for combined spec + code review, using the selector below.
+8. Judge the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
+9. Commit only when authorized; use a feature branch and offer a PR.
 
 ### Complex
 
-Load [reference/complex-track.md](reference/complex-track.md) and follow it.
-
-Entry condition: an approved spec from `/fc-brainstorm`, or write one inline. **Verify the user actually approved it** — a spec file existing on disk is not approval.
+Load [reference/complex-track.md](reference/complex-track.md) and follow it. Entry requires an approved spec from `/fc-brainstorm` or one written inline; verify actual approval.
 
 ## Hard gates
 
-Blocking. No forward motion until satisfied.
+Blocking; no forward motion until satisfied.
 
-1. **User approves the track.** Every request.
-2. **User approves the spec.** Standard and Complex. Never Trivial.
-3. **User approves the plan.** Complex only.
-4. **Verification evidence exists for every "done" claim**, and all tests pass before any commit claiming done. The command output must appear in the message making the claim — an agent asserting it ran the tests is not evidence.
-5. **Implementation matches the approved spec.** "Requirement X not satisfied" or "required test absent" blocks that task regardless of severity.
+1. **User approves the track** for Standard and Complex unless waived. Just Do It is auto-selected.
+2. **User approves the spec** for Standard and Complex unless waived.
+3. **User approves the plan** for Complex unless waived.
+4. **Verification evidence exists for every done claim**, and the full suite passes before an authorized commit claiming done.
+5. **Implementation matches the approved spec.** Unmet requirements or absent required tests block regardless of severity.
 6. **Tech Lead approval** before merging Complex work.
 
-Everything else is advisory: report it, the PM decides fix-now or follow-up. Promote advisory to blocking only for a confirmed correctness, security, or data-loss bug.
+Verification, spec compliance, and Complex Tech Lead approval cannot be waived. Other findings are advisory unless they confirm correctness, security, or data-loss defects.
 
 ## Cross-family audit at hard gates
 
 **Canonical rule. Every other Feature-Crew doc points here instead of restating it.**
 
-Every model-authored hard-gate artifact — spec, plan, tests-as-spec, implementation diff, Tech Lead final — must be audited by a model from a different family than the one that wrote it. Same-model audit is theater and does not satisfy the gate, including self-critique with a rotated prompt.
+Every model-authored hard-gate artifact — spec, plan, tests-as-spec, implementation diff, Tech Lead final — must be audited by a model from a different family than the one that wrote it. Same-family review and self-critique do not satisfy a gate.
 
-- **Operate** (PM, `fc-architect`, `fc-developer`): session default model.
-- **Review** (`fc-qa-spec`, `fc-qa-code`, `fc-tech-lead`, spec cross-audits, `/fc-review`, `/fc-second-opinion`): `model: sonnet`.
+Before every such review, the dispatcher identifies the artifact and its known author family/provenance, computes the reviewer, and records an **audit envelope / gate record** with `artifact identity`, `known author family`, and `selected Agent model override`:
 
-**Check for family collision before relying on that split.** The review pin only produces a different family when the session model is a different family. If the session is itself Sonnet, Sonnet writes and Sonnet reviews, and the gate is satisfied in appearance only. When operate and review resolve to the same family: say so, tell the user the audit is degraded, and either switch the session to another family or proceed with the gate recorded as **unsatisfied**. Do not record it as met.
+- Sonnet-family author → call Agent with explicit `model: opus` override.
+- Any known non-Sonnet-family author → call Agent with explicit `model: sonnet` override.
 
-Whoever wrote the must-pass tests counts as the spec author for audit purposes — bad tests poison every gate downstream.
+Use family aliases, not version-specific IDs. Whoever authored tests-as-spec determines their author family. The reviewer must not infer or self-identify its runtime family from prompt or context; provenance and selection belong to the dispatcher.
 
-If no second family is reachable, run **fewer reviewers rather than two from the same family**. A smaller panel is honest; a same-family pair only looks like coverage.
+Unknown author family/provenance, or a computed same-family collision: do not dispatch; record `GATE UNSATISFIED`. If selected-model dispatch fails or is unavailable, record `GATE UNSATISFIED`; no fallback or retry to the author family. Run fewer reviewers rather than a same-family substitute.
 
-**Two exemptions, both explicit.** Trivial produces no model-authored artifact. A Standard spec that touches nothing on the escalation list is exempt too — it is a bullet list the user reads and approves inline, and the combined QA pass checks compliance against it afterwards. Every other artifact in the list is audited without exception, and a Standard spec that *does* touch the escalation list is audited like any other.
+**Exemptions:** Just Do It produces no model-authored artifact. A Standard spec outside the escalation list is also exempt because the user approves it inline and combined QA later checks compliance. Every other named artifact is audited.
+
+Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 
 ## Dispatch rules
 
-- **Paste task text inline.** Never tell a subagent to "read the plan file."
-- **Parallel only at ≥3 independent tasks.** 1–2 tasks, or shared files, run sequentially.
-- **Background mode** for substantive work; handle results as they arrive.
-- **Max 3 fix cycles per issue**, then stop and question the approach with the user.
-- Subagent self-review does not replace QA. Both happen.
+- Paste task text inline; never tell a subagent to read the plan file.
+- For a hard-gate review, pass the audit envelope and exact explicit Agent model override above.
+- Parallel only at ≥3 independent tasks; otherwise run sequentially.
+- Use background mode for substantive work and handle results as they arrive.
+- Max 3 fix cycles per issue, then stop and question the approach.
+- Subagent self-review never replaces QA.
 
 ## One-clue mode
 
-Every QA dispatch in Standard and Complex:
-
-> Report your single most important finding.
->
-> - **PASS** — nothing material, or
-> - **CRITICAL** — bug / security / data-loss. `file:line` + minimal repro.
-> - **IMPORTANT** — design problem / missing test / unclear behavior. `file:line`.
->
-> One finding, not a list. Save the rest for follow-up.
+Every QA dispatch in Standard and Complex reports one result: **PASS**, **CRITICAL** (bug/security/data loss with `file:line` and repro), or **IMPORTANT** (design problem/missing test/unclear behavior with `file:line`). One finding, not a list.
 
 ## Cost telemetry
 
-Standard and Complex append one line to the PR description, or the final commit body when there is no PR:
-
-```
-Cost: <N> dispatches, ~<M> min wall-clock, models: <list>
-```
-
-Trivial is exempt.
+Standard and Complex append `Cost: <N> dispatches, ~<M> min wall-clock, models: <selected overrides>` to the PR description, or authorized final commit body when there is no PR. Just Do It is exempt.
 
 ## Anti-patterns
 
-- Full Complex flow on a one-file change.
-- A spec doc for a Trivial change "for completeness."
+- Complex ceremony for an obvious low-risk change.
+- A spec doc for Just Do It.
+- File count treated as a hard track rule.
+- Production edits before exploration confirms eligibility.
 - Parallel developers on overlapping files.
-- Same-family audit.
-- Pushing past a size cap "this one time."
-- Adding a gate without removing one.
+- Same-family audit or fallback.
+- Pushing past a size cap.
 - Treating advisory findings as automatic blockers.
-
-## Related skills
-
-- Don't know what to build → `/fc-brainstorm`
-- Decisions not pinned down → `/fc-grill-me`
-- Don't know the facts → `/fc-research`
-- Reviewing an artifact this pipeline didn't produce → `/fc-review`
-- Testing a decision rather than an artifact → `/fc-second-opinion`
