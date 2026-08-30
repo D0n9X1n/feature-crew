@@ -40,22 +40,17 @@ $SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
 $DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
 
-# Map agent filename -> (description, model). The subagent NAME is the filename
-# without .md -- source files are fc-prefixed, so there is no mapping to keep in
-# sync and no way for source and installed names to drift apart.
-#
-# The model field is what makes cross-family review structural rather than a
-# rule the PM has to remember at dispatch time:
-#   operate roles (pm, architect, developer) -> "", inherit the session model
-#   review roles  (qa-spec, qa-code, tech-lead) -> sonnet, a different family
-# Keep in sync with agent_meta() in install.sh.
+# Map agent filename -> description. The subagent NAME is the filename without
+# .md, so source and installed names cannot drift. Role frontmatter carries no
+# model key: hard-gate dispatchers select an explicit override from artifact
+# author provenance. Keep in sync with agent_meta() in install.sh.
 $AgentMeta = @{
-  "fc-pm.md"        = @("Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.", "")
-  "fc-architect.md" = @("Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).", "")
-  "fc-developer.md" = @("Feature-Crew Developer: implements one task TDD-style against an approved plan.", "")
-  "fc-qa-spec.md"   = @("Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).", "sonnet")
-  "fc-qa-code.md"   = @("Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).", "sonnet")
-  "fc-tech-lead.md" = @("Feature-Crew Tech Lead: final cross-family review before merging Complex work.", "sonnet")
+  "fc-pm.md"        = "Feature-Crew Product Manager: selects Just Do It/Standard/Complex and orchestrates the pipeline."
+  "fc-architect.md" = "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines)."
+  "fc-developer.md" = "Feature-Crew Developer: implements one task TDD-style against an approved plan."
+  "fc-qa-spec.md"   = "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode)."
+  "fc-qa-code.md"   = "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode)."
+  "fc-tech-lead.md" = "Feature-Crew Tech Lead: final cross-family review before merging Complex work."
 }
 
 function Do-Or-Echo($msg, [scriptblock]$action) {
@@ -76,13 +71,12 @@ function Resolve-AbsPath($p) {
   return (Join-Path (Get-Location).ProviderPath $p)
 }
 
-function Install-Agent($src, $dest, $name, $desc, $model) {
+function Install-Agent($src, $dest, $name, $desc) {
   if ((Test-Path $dest) -and (-not $Force)) {
     Write-Host "skip (exists): $dest  [use -Force to overwrite]"; return
   }
   if ($DryRun) {
-    $m = if ($model) { ", model: $model" } else { "" }
-    Write-Host "DRY-RUN: install $src -> $dest  (name: $name$m)"; return
+    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return
   }
   # Explicit UTF-8, no BOM. PowerShell 5.1 defaults Get-Content/Set-Content to
   # the system ANSI code page, which silently mangles the en-dashes, em-dashes,
@@ -93,14 +87,12 @@ function Install-Agent($src, $dest, $name, $desc, $model) {
   $needFront = -not ($body -match '^\s*---\s*\r?\n')
   $front = ""
   if ($needFront) {
-    $modelLine = if ($model) { "model: $model`n" } else { "" }
     # Description is quoted: role descriptions contain ": ", which a plain YAML
     # scalar may not. Keep in sync with install.sh.
-    $front = "---`nname: $name`ndescription: `"$desc`"`n$modelLine---`n`n"
+    $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
   }
   [IO.File]::WriteAllText((Resolve-AbsPath $dest), ($front + $body), (New-Object System.Text.UTF8Encoding($false)))
-  $m = if ($model) { "  (model: $model)" } else { "" }
-  Write-Host "installed: $dest$m"
+  Write-Host "installed: $dest"
 }
 
 # Copy a directory tree, file-by-file, honoring -Force / -DryRun.
@@ -133,11 +125,11 @@ function Install-ClaudeGlobal {
   $count = 0
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = @("Feature-Crew agent.", "") }
+    if (-not $meta) { $meta = "Feature-Crew agent." }
     $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
     # Flat under ~/.claude/agents/ so they don't collide with personal agents.
     $destFile = Join-Path $DestAgents ($name + ".md")
-    Install-Agent $_.FullName $destFile $name $meta[0] $meta[1]
+    Install-Agent $_.FullName $destFile $name $meta
     $count++
   }
 
@@ -158,7 +150,8 @@ function Install-ClaudeGlobal {
   Write-Host "Agents:  $DestAgents"
   Write-Host "Skills:  $DestSkillsDir"
   Write-Host ""
-  Write-Host "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
+  Write-Host "Describe your need naturally in any project; slash commands are optional."
+  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
   Write-Host "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
 }
 
@@ -224,14 +217,13 @@ function Remove-LegacySkills {
 
 # Is the installed file byte-identical to what we would install right now?
 # Mirrors installed_is_ours() in install.sh.
-function Test-InstalledIsOurs($src, $dest, $name, $desc, $model) {
+function Test-InstalledIsOurs($src, $dest, $name, $desc) {
   if (-not (Test-Path $dest)) { return $false }
   $body = [IO.File]::ReadAllText((Resolve-AbsPath $src), [Text.Encoding]::UTF8)
   $needFront = -not ($body -match '^\s*---\s*\r?\n')
   $front = ""
   if ($needFront) {
-    $modelLine = if ($model) { "model: $model`n" } else { "" }
-    $front = "---`nname: $name`ndescription: `"$desc`"`n$modelLine---`n`n"
+    $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
   }
   $expected = $front + $body
   $actual = [IO.File]::ReadAllText((Resolve-AbsPath $dest), [Text.Encoding]::UTF8)
@@ -246,12 +238,12 @@ function Uninstall-ClaudeGlobal {
   # just protected. Keep in sync with install.sh.
   Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = @("Feature-Crew agent.", "") }
+    if (-not $meta) { $meta = "Feature-Crew agent." }
     $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
     $d = Join-Path $DestAgents ($name + ".md")
     if (-not (Test-Path $d)) {
       Write-Host "not present: $d"
-    } elseif (Test-InstalledIsOurs $_.FullName $d $name $meta[0] $meta[1]) {
+    } elseif (Test-InstalledIsOurs $_.FullName $d $name $meta) {
       Do-Or-Echo "removed: $d" { Remove-Item -Force $d }
     } else {
       Write-Host "kept (yours - differs from what we install): $d"

@@ -41,24 +41,19 @@ SRC_SKILLS_DIR="${SCRIPT_DIR}/.claude/skills"
 DEST_AGENTS="${PREFIX}/agents"
 DEST_SKILLS_DIR="${PREFIX}/skills"
 
-# Map agent filename -> (description, model). The subagent NAME is the filename
-# without .md -- source files are fc-prefixed, so there is no mapping to keep in
-# sync and no way for source and installed names to drift apart.
-#
-# The model field is what makes cross-family review structural rather than a
-# rule the PM has to remember at dispatch time:
-#   operate roles (pm, architect, developer) -> empty, inherit the session model
-#   review roles  (qa-spec, qa-code, tech-lead) -> sonnet, a different family
-# Keep in sync with $AgentMeta in install.ps1.
+# Map agent filename -> description. The subagent NAME is the filename without
+# .md, so source and installed names cannot drift. Role frontmatter carries no
+# model key: hard-gate dispatchers select an explicit override from artifact
+# author provenance. Keep in sync with $AgentMeta in install.ps1.
 agent_meta() {
   case "$1" in
-    fc-pm.md)         echo "Feature-Crew Product Manager: picks track (Trivial/Standard/Complex) and orchestrates the pipeline.|" ;;
-    fc-architect.md)  echo "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines).|" ;;
-    fc-developer.md)  echo "Feature-Crew Developer: implements one task TDD-style against an approved plan.|" ;;
-    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode).|sonnet" ;;
-    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode).|sonnet" ;;
-    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review before merging Complex work.|sonnet" ;;
-    *)                echo "Feature-Crew agent.|" ;;
+    fc-pm.md)         echo "Feature-Crew Product Manager: selects Just Do It/Standard/Complex and orchestrates the pipeline." ;;
+    fc-architect.md)  echo "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines)." ;;
+    fc-developer.md)  echo "Feature-Crew Developer: implements one task TDD-style against an approved plan." ;;
+    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode)." ;;
+    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode)." ;;
+    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review before merging Complex work." ;;
+    *)                echo "Feature-Crew agent." ;;
   esac
 }
 
@@ -83,13 +78,13 @@ ensure_dir() {
 # Install one agent file: prepend YAML frontmatter (name, description) if the
 # source doesn't already have one, then write to dest.
 install_agent() {
-  local src="$1" dest="$2" name="$3" desc="$4" model="${5:-}"
+  local src="$1" dest="$2" name="$3" desc="$4"
   if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
     say "skip (exists): $dest  [use --force to overwrite]"
     return 0
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    say "DRY-RUN: install $src -> $dest  (name: $name${model:+, model: $model})"
+    say "DRY-RUN: install $src -> $dest  (name: $name)"
     return 0
   fi
   {
@@ -99,13 +94,11 @@ install_agent() {
       # Architect: turns an approved spec into..."), and a plain YAML scalar may
       # not. Claude Code 2.1.220 tolerates the unquoted form, but that tolerance
       # is undocumented. Keep in sync with install.ps1.
-      printf -- '---\nname: %s\ndescription: "%s"\n' "$name" "$desc"
-      [ -n "$model" ] && printf -- 'model: %s\n' "$model"
-      printf -- '---\n\n'
+      printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$name" "$desc"
     fi
     cat "$src"
   } > "$dest"
-  say "installed: $dest${model:+  (model: $model)}"
+  say "installed: $dest"
 }
 
 install_skill() {
@@ -210,14 +203,12 @@ remove_legacy_skills() {
 # Compares against a freshly generated copy, frontmatter included, so an agent
 # the user edited is not ours to delete.
 installed_is_ours() {
-  local src="$1" dest="$2" name="$3" desc="$4" model="${5:-}" tmp rc
+  local src="$1" dest="$2" name="$3" desc="$4" tmp rc
   [ -f "$dest" ] || return 1
   tmp="$(mktemp)"
   {
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      printf -- '---\nname: %s\ndescription: "%s"\n' "$name" "$desc"
-      [ -n "$model" ] && printf -- 'model: %s\n' "$model"
-      printf -- '---\n\n'
+      printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$name" "$desc"
     fi
     cat "$src"
   } > "$tmp"
@@ -235,16 +226,14 @@ uninstall_paths() {
   # of ours keeps it too; once edited it is partly their work.
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base meta name desc model dest
+    local base name desc dest
     base="$(basename "$src")"
     name="${base%.md}"
-    meta="$(agent_meta "$base")"
-    desc="${meta%%|*}"
-    model="${meta#*|}"
+    desc="$(agent_meta "$base")"
     dest="$DEST_AGENTS/${name}.md"
     if [ ! -e "$dest" ]; then
       say "not present: $dest"
-    elif installed_is_ours "$src" "$dest" "$name" "$desc" "$model"; then
+    elif installed_is_ours "$src" "$dest" "$name" "$desc"; then
       if [ "$DRY_RUN" -eq 1 ]; then
         say "DRY-RUN: would remove $dest"
       else
@@ -314,15 +303,13 @@ main_install() {
   local count=0
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
-    local base meta name desc model dest
+    local base name desc dest
     base="$(basename "$src")"
     name="${base%.md}"
-    meta="$(agent_meta "$base")"
-    desc="${meta%%|*}"
-    model="${meta#*|}"
+    desc="$(agent_meta "$base")"
     # Flat under ~/.claude/agents/ so they don't collide with personal agents.
     dest="$DEST_AGENTS/${name}.md"
-    install_agent "$src" "$dest" "$name" "$desc" "$model"
+    install_agent "$src" "$dest" "$name" "$desc"
     count=$((count + 1))
   done
 
@@ -346,8 +333,9 @@ main_install() {
   say "Agents:  $DEST_AGENTS"
   say "Skills:  $DEST_SKILLS_DIR"
   say ""
-  say "Use in any project: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
-  say "/fc-review, /fc-second-opinion, /fc-update — or delegate to an fc-* subagent."
+  say "Describe your need naturally in any project; slash commands are optional."
+  say "Available: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
+  say "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
 }
 
 

@@ -113,17 +113,13 @@ jobs:
           $probe = Join-Path $prefix "agents\fc-pm.md"
           if (-not (Test-Path $probe)) { throw "fc-pm.md not where PowerShell would put it" }
 
-      - name: Review agents pinned to sonnet, operate agents inherit
+      - name: All role agents install without model keys
         shell: pwsh
         run: |
           $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
-          foreach ($n in @("fc-qa-spec","fc-qa-code","fc-tech-lead")) {
+          foreach ($n in @("fc-pm","fc-architect","fc-developer","fc-qa-spec","fc-qa-code","fc-tech-lead")) {
             $t = Get-Content (Join-Path $prefix "agents\$n.md") -Raw
-            if ($t -notmatch "(?m)^model: sonnet`$") { throw "$n missing model: sonnet" }
-          }
-          foreach ($n in @("fc-pm","fc-architect","fc-developer")) {
-            $t = Get-Content (Join-Path $prefix "agents\$n.md") -Raw
-            if ($t -match "(?m)^model:") { throw "$n should inherit the session model" }
+            if ($t -match "(?m)^model:") { throw "$n must not carry a model key" }
           }
 
       - name: Agent bodies survive the round-trip byte-for-byte

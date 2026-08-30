@@ -1,6 +1,6 @@
 ---
 name: fc-research
-description: Multi-agent research pipeline that fans out across distinct search angles, synthesizes the findings, and validates them against the sources with a review-family model. Use when answering needs evidence from several places — codebase plus web, multiple files, comparing options, surveying prior art. Do NOT use for a single grep or one known file (read it directly), for choosing between approaches (use /fc-brainstorm), or for judging existing work (use /fc-review).
+description: Multi-agent research pipeline that fans out across distinct search angles, synthesizes the findings, and validates them against the sources. Use when answering needs evidence from several places — codebase plus web, multiple files, comparing options, surveying prior art. Do NOT use for a single grep or one known file (read it directly), for choosing between approaches (use /fc-brainstorm), or for judging existing work (use /fc-review).
 ---
 
 # fc-research
@@ -36,7 +36,7 @@ One `general-purpose` agent. Paste **all** Phase-1 output inline; never tell it 
 
 ## Phase 3 — validate
 
-One agent from the review family (see the canonical audit rule in `/fc-build-or-fix`). Paste the synthesis **and** the original Phase-1 material.
+Dispatch one validator with the dynamic selector in `/fc-build-or-fix`, using the synthesis author's known family/provenance. Paste the synthesis **and** the original Phase-1 material.
 
 > Audit this report against its sources. Mark each numbered claim:
 >
@@ -62,7 +62,7 @@ Report any angle that returned nothing — a silent gap reads as coverage.
 
 - **Max 5 dispatches** per invocation. More than that needs the user's OK first.
 - **Max 1 revise cycle.**
-- Phase 3 runs on a different model family from Phase 2. If none is reachable, say so in the output rather than validating within one family.
+- Phase 3 uses the canonical selector; if its gate is unsatisfied, say so instead of validating within one family.
 
 ## Anti-patterns
 

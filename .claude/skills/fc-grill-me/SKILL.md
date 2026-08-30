@@ -1,7 +1,6 @@
 ---
 name: fc-grill-me
-description: A relentless interview that pins down every decision in a plan or design before any work starts. Use when the user says "grill me", "interview me", "stress-test this plan", or has a half-formed idea that needs its decisions surfaced one at a time. Do NOT use for gathering facts (use /fc-research), for generating alternative approaches (use /fc-brainstorm), or for judging work that already exists (use /fc-review or /fc-second-opinion).
-disable-model-invocation: true
+description: A relentless interview that pins down every user-owned requirement or decision before work starts, then returns the result to its originating flow. Use when the user says "grill me" or a flow needs the user's choices surfaced one at a time. Do NOT use for gathering facts (look up one fact or use /fc-research), generating solution approaches (use /fc-brainstorm), or judging existing work (use /fc-review or /fc-second-opinion).
 ---
 
 # fc-grill-me
@@ -21,7 +20,7 @@ Stop when the user confirms, or when the remaining questions are ones only imple
 
 ## Output
 
-When grilling ends, restate the shared understanding as a numbered list of settled decisions, each with its rationale in a few words. Then ask what to do with it:
+When grilling ends, restate the shared understanding as a numbered list of settled decisions, each with its rationale in a few words. If another flow invoked this skill, return that result to the originator; do not invoke another skill yourself. If the user invoked it directly, offer the appropriate next flow:
 
 - **Build it** → `/fc-build-or-fix`
 - **Explore alternatives first** → `/fc-brainstorm`
