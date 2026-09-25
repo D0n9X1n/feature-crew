@@ -1054,6 +1054,37 @@ STUB
   t35_installed
   t35_result "T35c Git Bash exit 127 falls back, warns, and does not leak its exit code"
 
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' ran > "$t35_root/git-ran"
+exit 126
+STUB
+  rm -f "$t35_marker" "$t35_root/git-ran"
+  t35_prefix="$t35_root/m-prefix"
+  t35_run m "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ -e "$t35_root/git-ran" ] || t35_err="$t35_err Git-bash-not-run"
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  grep -qxF 'feature-crew: Git Bash could not run install.sh (exit 126); using the PowerShell installer.' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
+  t35_installed
+  t35_result "T35m Git Bash exit 126 falls back, warns, and does not leak its exit code"
+
+  # A missing interpreter fails to launch; a non-executable file may open in an app.
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!$t35_root/missing-interpreter
+printf '%s\n' ran > "$t35_root/git-ran"
+STUB
+  chmod +x "$t35_git/bin/bash.exe"
+  rm -f "$t35_marker" "$t35_root/git-ran"
+  t35_prefix="$t35_root/n-prefix"
+  t35_run n "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ ! -e "$t35_root/git-ran" ] || t35_err="$t35_err unstartable-bash-ran"
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  grep -qxF 'feature-crew: Git Bash could not run install.sh (exit 127); using the PowerShell installer.' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
+  t35_installed
+  t35_result "T35n Git Bash launch failure falls back, warns, and installs successfully"
+
   t35_prefix="$t35_root/d-target"
   t35_run d-prefix "$t35_root/empty-path" -Command "& $t35_ps1 --dry-run --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
   t35_expect_rc 0
@@ -1212,7 +1243,7 @@ STUB
     t35_result "T35l typed $t35_style force/uninstall flags reach Git-layout bash"
   done
 else
-  for t35_case_id in a b c d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native; do
+  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native; do
     skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
   done
 fi
