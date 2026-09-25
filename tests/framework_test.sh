@@ -283,7 +283,7 @@ ps1_operative_ok() {
     tolower($0) ~ /^function[[:space:]]/ { in_function = 1 }
     in_function { if (/^}/) in_function = 0; next }
     /^Install-ClaudeGlobal[[:space:]]*$/ { exit }
-    tolower($0) ~ /(^|[[:space:];{])throw([[:space:];}]|$)/ || /^exit([[:space:]]|$)/ { bad = 1; exit }
+    tolower($0) ~ /(^|[^[:alnum:]_$.-])throw([^[:alnum:]_-]|$)/ || /^exit([[:space:]]|$)/ { bad = 1; exit }
     END { exit bad }
   ' "$f"
 }
@@ -619,7 +619,7 @@ ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
 sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
 
 rm -rf "$mut"
-[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (5 mutations + 2 controls)" \
+[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (6 mutations + 2 controls)" \
                   || bad "T20 mutation test" "issues:$t20_err"
 
 # ---------------------------------------------------------------- T21
