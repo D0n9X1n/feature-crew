@@ -7,23 +7,29 @@ description: Multi-agent research pipeline that fans out across distinct search 
 
 You orchestrate; you do not do the searching yourself.
 
+## Worker boundary
+
+Append this suffix to every worker prompt in Phases 1, 2 and 3, including any re-dispatch:
+
+> Perform the assigned work yourself. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task. Return only the requested output. The entire invocation has a five-dispatch budget, including descendants at any depth; return an unresolved gap to the orchestrator rather than expanding it.
+
 ## Phase 1 — search, parallel
 
-Decompose the topic into **distinct angles** first. Three agents on one query is three copies of one answer.
+Decompose the topic into **distinct angles** first. Three agents on one query is three copies of one answer. Prefer `Explore` for direct search; it has no `Agent` tool. Where a search needs other tools, use a profile excluding `Agent` when available; the no-delegation suffix remains mandatory for every worker.
 
 Typical angles:
 
 - **Codebase** — `Explore` agent, specific search terms and file globs.
-- **Web/docs** — `general-purpose` agent with WebSearch/WebFetch.
+- **Web/docs** — prefer `Explore` when it exposes WebSearch/WebFetch; otherwise a search-capable profile as above.
 - **Adjacent context** — related systems, prior art, history via git log, changelogs, ADRs.
 
-Dispatch all of them in one message, parallel tool calls. Every prompt ends with:
+Reserve one dispatch each for synthesis and validation before search; the default budget leaves at most three search workers. Dispatch them in one message, parallel tool calls. Give each this prompt, followed by the mandatory Worker boundary suffix:
 
 > Return raw findings only. Each finding: a 1–2 sentence claim and a concrete source — `file:line`, URL, or command output. Do not synthesize, do not recommend. Cap 400 words. If a search returns nothing relevant, say so explicitly rather than padding. Say when you could not verify something instead of guessing.
 
 ## Phase 2 — synthesize
 
-One `general-purpose` agent. Paste **all** Phase-1 output inline; never tell it to go read the results.
+One `general-purpose` agent with explicit `model: opus`; record its actual author model for the selector. Paste **all** Phase-1 output inline; never tell it to go read the results. Append the Worker boundary suffix to this prompt:
 
 > Synthesize these findings into a structured answer:
 >
@@ -36,7 +42,7 @@ One `general-purpose` agent. Paste **all** Phase-1 output inline; never tell it 
 
 ## Phase 3 — validate
 
-Dispatch one validator with the dynamic selector in `/fc-build-or-fix`, using the synthesis author's known family/provenance. Paste the synthesis **and** the original Phase-1 material.
+Dispatch one validator with the dynamic selector in `/fc-build-or-fix`, using the synthesis author's recorded model/family. Verify the recorded validator model before accepting the result. Paste the synthesis **and** the original Phase-1 material; append the Worker boundary suffix to this prompt:
 
 > Audit this report against its sources. Mark each numbered claim:
 >
@@ -46,7 +52,7 @@ Dispatch one validator with the dynamic selector in `/fc-build-or-fix`, using th
 >
 > Then one verdict: **PASS** (all supported, trustworthy) or **REVISE** (name the worst claim). Audit only — do not add research of your own.
 
-On REVISE: drop or qualify the flagged claim, or run one targeted search to close the gap. **One revise cycle maximum**, then surface the remaining uncertainty.
+On REVISE: drop or qualify the flagged claim, or dispatch one targeted search only within the remaining budget (otherwise pause for approval). All re-dispatches use the Worker boundary suffix. **One revise cycle maximum**, then surface the remaining uncertainty.
 
 ## Output
 
@@ -60,7 +66,7 @@ Report any angle that returned nothing — a silent gap reads as coverage.
 
 ## Caps
 
-- **Max 5 dispatches** per invocation. More than that needs the user's OK first.
+- **Max 5 dispatches** per invocation, counting descendants at any depth, not just top-level calls. Track the total across searches, synthesis, validation and re-dispatches; pause for user approval before any expansion beyond five. If delegation occurs despite the worker rule, count it too and stop further expansion.
 - **Max 1 revise cycle.**
 - Phase 3 uses the canonical selector; if its gate is unsatisfied, say so instead of validating within one family.
 

@@ -11,7 +11,7 @@ Produces an approved spec by exploring the solution space before committing to i
 
 Restate the problem in one sentence and name the constraint that matters most. Look up anything discoverable yourself: existing patterns, dependencies, prior art in the repo.
 
-If a user-owned requirement is missing, use the canonical need classifier in `/fc-build-or-fix`: `/fc-grill-me` resolves that category and returns here before the panel runs.
+If a user-owned requirement is missing, use the canonical need classifier in `/fc-build-or-fix`: its leaf exception lets this flow call `/fc-grill-me`, which resolves that category and returns here before the panel runs.
 
 ## 2 — Panel
 
@@ -33,7 +33,7 @@ Each agent's prompt ends with:
 
 ## 3 — Diversity check
 
-Before showing anything, compare the three. If two approaches differ only in wording, or all three converge on the same shape, **re-dispatch once** with sharper stances and at least one deliberately unconventional angle. Report that you did.
+Before showing anything, compare the three. If two approaches differ only in wording, or all three converge on the same shape, **re-dispatch once** as a single round of up to three replacement workers with sharper stances and at least one deliberately unconventional angle. Report that you did.
 
 Convergence is a real result when it happens after a genuine re-spawn — say so plainly instead of manufacturing a third option.
 
@@ -49,12 +49,12 @@ Once the user picks a direction, invoke `/fc-grill-me` only for remaining user-o
 
 Cross-audit the spec with the dynamic hard-gate selector in `/fc-build-or-fix` before asking for approval. Address CRITICAL findings first.
 
-The user approving the spec is a hard gate. Hand off to `/fc-build-or-fix` only after that, and tell it approval happened.
+The user approving the spec is a hard gate. If another flow invoked this skill, return the approved spec and approval evidence to the originator; do not invoke `/fc-build-or-fix`. Only if the user invoked this skill directly, offer `/fc-build-or-fix` after approval.
 
 ## Caps
 
-- **Max 4 panel/review dispatches** — 3 panel + 1 cross-audit. Re-spawn counts; a second re-spawn needs the user's OK.
-- A subskill resolves one classified gap and returns here. It does not self-invoke or recurse; reclassify only a distinct remaining gap, per `/fc-build-or-fix`.
+- **Max 7 panel/review dispatches** — 3 panel + up to 3 re-dispatch + 1 cross-audit, including descendants at any depth. Reserve the audit slot; re-spawns and descendants count. Pause for user approval before exceeding the cap or starting a second diversity round.
+- The only nested skill call is the `/fc-grill-me` leaf; it returns here without invoking skills. For any other missing category, return to the invoking flow to reclassify a distinct gap; do not self-invoke or recurse, per `/fc-build-or-fix`.
 
 ## Anti-patterns
 

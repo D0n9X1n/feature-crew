@@ -8,7 +8,7 @@ disallowed-tools: Write Edit NotebookEdit
 
 # fc-review
 
-Reviews something that already exists. Read-only by construction: this skill has no write tools, so it cannot "helpfully fix" what it finds, and it cannot approve or block a gate. It reports; the human decides.
+Reviews something that already exists. Read-only by policy: do not edit files or mutate repository state through any tool, including shell commands or delegated workers. Frontmatter removes `Write`, `Edit`, and `NotebookEdit` only for the turn that loads the skill; its `model` override also lasts only for that turn. Bash and PowerShell remain write-capable when available; this is not enforced isolation. Reapply the policy after user replies and include it in every worker prompt. This skill cannot approve or block a gate. It reports; the human decides.
 
 ## 1 — Establish the artifact
 

@@ -19,7 +19,7 @@ Users describe the need naturally; slash-command knowledge is not required. At e
 | Unresolved solution approach or options | Invoke `/fc-brainstorm`. |
 | A chosen consequential decision needing adversarial confidence | Invoke `/fc-second-opinion`. |
 
-Do not grill for facts, research preferences, brainstorm an already chosen approach, or use second-opinion to make the initial choice. A subskill resolves one category and returns its result to the originating flow; the originator may reclassify a distinct remaining gap, invoke one next appropriate skill, then resume. A subskill must not self-invoke or recursively invoke another skill. Do not repeat the same skill for an unchanged gap: no cycles.
+Do not grill for facts, research preferences, brainstorm an already chosen approach, or use second-opinion to make the initial choice. A subskill resolves one category and returns its result to the originating flow; the originator may reclassify a distinct remaining gap, invoke one next appropriate skill, then resume. A subskill must not self-invoke or recursively invoke another skill; the sole nested-call exception is `/fc-grill-me`, a leaf any flow may call for user-owned decisions. The leaf returns to its caller and cannot invoke skills. Do not repeat the same skill for an unchanged gap: no cycles.
 
 ## Step 1 — pick a track
 
@@ -82,14 +82,14 @@ Verification, spec compliance, and Complex Tech Lead approval cannot be waived. 
 
 Every model-authored hard-gate artifact — spec, plan, tests-as-spec, implementation diff, Tech Lead final — must be audited by a model from a different family than the one that wrote it. Same-family review and self-critique do not satisfy a gate.
 
-Before every such review, the dispatcher identifies the artifact and its known author family/provenance, computes the reviewer, and records an **audit envelope / gate record** with `artifact identity`, `known author family`, and `selected Agent model override`:
+Before every such review, derive the author family from the model the harness recorded, not the requested alias. Authoring dispatches carry an explicit `model` override; record the model that answered before selecting QA. Follow [reference/gate-provenance.md](reference/gate-provenance.md) for record lookup, family mapping, and environment checks. Record an **audit envelope / gate record** with `artifact identity`, `record path`, `recorded author model(s)`, `known author family`, and `selected Agent model override`; append `recorded reviewer model(s)`, family, substitutions, and gate outcome after the review:
 
 - Sonnet-family author → call Agent with explicit `model: opus` override.
-- Any known non-Sonnet-family author → call Agent with explicit `model: sonnet` override.
+- Any known non-Sonnet-family author → call Agent with explicit `model: sonnet` override; if this session's record shows `sonnet` running in the author's family, instead select `model: opus`.
 
-Use family aliases, not version-specific IDs. Whoever authored tests-as-spec determines their author family. The reviewer must not infer or self-identify its runtime family from prompt or context; provenance and selection belong to the dispatcher.
+Use family aliases for requests, not version-specific IDs; aliases are not family evidence. Whoever authored tests-as-spec determines their author family. The reviewer must not infer or self-identify its runtime family from prompt or context; provenance and selection belong to the dispatcher.
 
-Unknown author family/provenance, or a computed same-family collision: do not dispatch; record `GATE UNSATISFIED`. If selected-model dispatch fails or is unavailable, record `GATE UNSATISFIED`; no fallback or retry to the author family. Run fewer reviewers rather than a same-family substitute.
+Unknown author family/provenance, or a computed same-family collision: do not dispatch; record `GATE UNSATISFIED`. If selected-model dispatch fails or is unavailable, record `GATE UNSATISFIED`; no fallback or retry to the author family. After each review, the dispatcher reads the recorded reviewer model: missing, unmappable, or in the author's family → `GATE UNSATISFIED`. A third family is recorded as a substitution and stands; never reject it merely for differing from the requested alias. Run fewer reviewers rather than a same-family substitute.
 
 **Exemptions:** Just Do It produces no model-authored artifact. A Standard spec outside the escalation list is also exempt because the user approves it inline and combined QA later checks compliance. Every other named artifact is audited.
 
