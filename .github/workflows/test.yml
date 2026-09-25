@@ -129,6 +129,43 @@ jobs:
           }
           if ($env:PATH -eq $before) { throw "cannot mask bash/git by removing their PATH directories" }
         }
+      CAPTURE_MANIFEST_TOOLS: |
+        # Capture Git's own executables BEFORE masking; never select WSL bash.
+        $gitPath = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
+        $gitRoot = Split-Path -Parent (Split-Path -Parent $gitPath)
+        $gitBash = $null
+        $gitSha256 = $null
+        foreach ($root in @($gitRoot, (Split-Path -Parent $gitRoot))) {
+          $bash = Join-Path (Join-Path $root "bin") "bash.exe"
+          $sha256 = Join-Path (Join-Path (Join-Path $root "usr") "bin") "sha256sum.exe"
+          if ((Test-Path -LiteralPath $bash -PathType Leaf) -and (Test-Path -LiteralPath $sha256 -PathType Leaf)) {
+            $gitBash = $bash
+            $gitSha256 = $sha256
+            break
+          }
+        }
+        if (-not $gitBash -or -not $gitSha256) { throw "Git for Windows bash/sha256sum missing beside git" }
+      TEST_MANIFEST_FALLBACK: |
+        Set-StrictMode -Version Latest
+        Invoke-Expression $env:CAPTURE_MANIFEST_TOOLS
+        Invoke-Expression $env:MASK_BASH
+        if (@(Get-Command bash, git -ErrorAction SilentlyContinue).Count) { throw "fallback commands are not masked" }
+        $prefix = Join-Path $env:RUNNER_TEMP ("fc-manifest-" + $PSVersionTable.PSVersion.Major)
+        if (Test-Path -LiteralPath $prefix) { throw "manifest fixture prefix is not fresh" }
+        $LASTEXITCODE = 0
+        & (Join-Path $env:GITHUB_WORKSPACE "install.ps1") --prefix $prefix --force
+        if ($LASTEXITCODE -ne 0) { throw "fallback manifest install exited $LASTEXITCODE" }
+        $manifest = Join-Path $prefix "feature-crew.sha256"
+        if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { throw "fallback install did not write a manifest" }
+        Push-Location $prefix
+        try {
+          & $gitSha256 -c feature-crew.sha256
+          if ($LASTEXITCODE -ne 0) { throw "fallback manifest checksum verification failed" }
+        } finally { Pop-Location }
+        $reference = Join-Path (Join-Path $env:RUNNER_TEMP "fc-manifest-sh") "feature-crew.sha256"
+        $expected = [Convert]::ToBase64String([IO.File]::ReadAllBytes($reference))
+        $actual = [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifest))
+        if ($actual -cne $expected) { throw "fallback manifest differs byte-for-byte from Git Bash" }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,6 +173,42 @@ jobs:
           # v4.0:` -- ownership is exact content identity, so the fixture must
           # be real published content. The default shallow clone has no tags.
           fetch-depth: 0
+
+      - name: Install manifest reference with Git Bash before masking
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          Invoke-Expression $env:CAPTURE_MANIFEST_TOOLS
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-manifest-sh"
+          if (Test-Path -LiteralPath $prefix) { throw "manifest reference prefix is not fresh" }
+          $env:FC_MANIFEST_PREFIX = $prefix
+          $env:FC_MANIFEST_REPO = $env:GITHUB_WORKSPACE
+          $install = @'
+          set -euo pipefail
+          prefix=$(cygpath -u "$FC_MANIFEST_PREFIX")
+          repo=$(cygpath -u "$FC_MANIFEST_REPO")
+          bash "$repo/install.sh" --prefix "$prefix" --force
+          '@
+          & $gitBash -c $install
+          if ($LASTEXITCODE -ne 0) { throw "Git Bash manifest install failed" }
+          $manifest = Join-Path $prefix "feature-crew.sha256"
+          if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { throw "Git Bash did not write a manifest" }
+          Push-Location $prefix
+          try {
+            & $gitSha256 -c feature-crew.sha256
+            if ($LASTEXITCODE -ne 0) { throw "Git Bash manifest checksum verification failed" }
+          } finally { Pop-Location }
+
+      - name: Verify manifest parity in the masked fallback (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: Invoke-Expression $env:TEST_MANIFEST_FALLBACK
+
+      - name: Verify manifest parity in the masked fallback (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: Invoke-Expression $env:TEST_MANIFEST_FALLBACK
 
       - name: Confirm bash masking works
         shell: pwsh
