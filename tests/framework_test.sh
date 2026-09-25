@@ -940,6 +940,334 @@ stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned 
 [ -z "$t34_err" ] && ok "T34 no stale legacy-track or role-pin wording in active shipped content" \
                    || bad "T34 stale framework wording" "issues:$t34_err"
 
+# ---------------------------------------------------------------- T35
+# Exercise both PowerShell invocation forms, not just parameter-name tokens.
+# PATH is controlled: an unrelated bash must never win, and a Git-layout stub
+# proves delegation and argv forwarding without requiring Windows on this host.
+t35_root=$(mktemp -d)
+CLEANUP_PATHS+=("$t35_root")
+t35_repo=$(pwd)
+mkdir -p "$t35_root/empty-path"
+PWSH_BIN="${PWSH:-$(command -v pwsh 2>/dev/null || true)}"
+
+# Quote a path as a PowerShell literal; switches remain unquoted in -Command
+# so these are the same calls a user types, not array-splatting approximations.
+t35_ps_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+t35_run() {
+  local name="$1" path="$2"; shift 2
+  t35_case="$t35_root/$name"
+  mkdir -p "$t35_case/home/.config/powershell" "$t35_case/cwd"
+  printf '%s\n' 'Set-StrictMode -Version Latest' > "$t35_case/home/.config/powershell/Microsoft.PowerShell_profile.ps1"
+  ( cd "$t35_case/cwd" && env -i HOME="$t35_case/home" PATH="$path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive "$@" ) \
+    > "$t35_case/stdout" 2> "$t35_case/stderr"
+  t35_rc=$?
+  t35_err=""
+}
+t35_expect_rc() {
+  [ "$t35_rc" -eq "$1" ] || t35_err="$t35_err exit=$t35_rc(want-$1)"
+}
+t35_unchanged() {
+  [ ! -e "$t35_prefix" ] || t35_err="$t35_err prefix-created"
+  [ ! -e "$t35_case/home/.claude" ] || t35_err="$t35_err HOME-install-created"
+  [ -z "$(ls -A "$t35_case/cwd")" ] || t35_err="$t35_err cwd-not-empty"
+}
+t35_installed() {
+  local got src name
+  got=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$got" -eq "$t35_want_agents" ] || t35_err="$t35_err agents=$got(want-$t35_want_agents)"
+  for src in "$t35_repo"/.claude/skills/*/SKILL.md; do
+    [ -f "$src" ] || continue
+    name=$(basename "$(dirname "$src")")
+    [ -f "$t35_prefix/skills/$name/SKILL.md" ] || t35_err="$t35_err missing-skill:$name"
+  done
+}
+t35_result() {
+  if [ -z "$t35_err" ]; then
+    ok "$1"
+  else
+    bad "$1" "issues:$t35_err"
+    # Keep the actual process diagnostic when binding failed before dispatch.
+    sed $'s/\033\\[[0-9;]*m//g; s/^/        /' "$t35_case/stderr"
+  fi
+}
+
+if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
+  PWSH_BIN="$(cd "$(dirname "$PWSH_BIN")" && pwd)/$(basename "$PWSH_BIN")"
+  t35_ps1=$(t35_ps_quote "$t35_repo/install.ps1")
+  t35_want_agents=$(find agents -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
+  t35_decoy="$t35_root/decoy"
+  t35_git="$t35_root/git"
+  t35_marker="$t35_root/decoy-ran"
+  mkdir -p "$t35_decoy" "$t35_git/cmd" "$t35_git/bin"
+  cat > "$t35_decoy/bash" <<STUB
+#!/bin/sh
+printf '%s\n' ran > "$t35_marker"
+exit 127
+STUB
+  chmod +x "$t35_decoy/bash"
+
+  t35_prefix="$t35_root/a-prefix"
+  t35_run a "$t35_decoy" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
+  t35_expect_rc 0
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  t35_installed
+  t35_result "T35a unrelated PATH bash is ignored; fallback installs all agents and skills"
+
+  printf '#!/bin/sh\nexit 0\n' > "$t35_git/cmd/git"
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' "\$@" > "$t35_root/git-args"
+exit 0
+STUB
+  chmod +x "$t35_git/cmd/git" "$t35_git/bin/bash.exe"
+  rm -f "$t35_marker"
+  t35_prefix="$t35_root/b-prefix"
+  t35_run b "$t35_git/cmd:$t35_decoy" -File "$t35_repo/install.ps1" --dry-run --prefix "$t35_prefix"
+  t35_expect_rc 0
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  if [ -f "$t35_root/git-args" ]; then
+    t35_first=$(head -1 "$t35_root/git-args")
+    case "$t35_first" in */install.sh) ;; *) t35_err="$t35_err first-arg-not-install.sh" ;; esac
+    for t35_arg in --dry-run --prefix "$t35_prefix"; do
+      grep -qxF -- "$t35_arg" "$t35_root/git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
+    done
+  else
+    t35_err="$t35_err Git-bash-not-run"
+  fi
+  t35_unchanged
+  t35_result "T35b Git-layout bash receives install.sh and GNU-style flags"
+
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' ran > "$t35_root/git-ran"
+exit 127
+STUB
+  rm -f "$t35_marker"
+  t35_prefix="$t35_root/c-prefix"
+  t35_run c "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ -e "$t35_root/git-ran" ] || t35_err="$t35_err Git-bash-not-run"
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  grep -qF 'using the PowerShell installer' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
+  t35_installed
+  t35_result "T35c Git Bash exit 127 falls back, warns, and does not leak its exit code"
+
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' ran > "$t35_root/git-ran"
+exit 126
+STUB
+  rm -f "$t35_marker" "$t35_root/git-ran"
+  t35_prefix="$t35_root/m-prefix"
+  t35_run m "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ -e "$t35_root/git-ran" ] || t35_err="$t35_err Git-bash-not-run"
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  grep -qxF 'feature-crew: Git Bash could not run install.sh (exit 126); using the PowerShell installer.' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
+  t35_installed
+  t35_result "T35m Git Bash exit 126 falls back, warns, and does not leak its exit code"
+
+  # A missing interpreter fails to launch; a non-executable file may open in an app.
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!$t35_root/missing-interpreter
+printf '%s\n' ran > "$t35_root/git-ran"
+STUB
+  chmod +x "$t35_git/bin/bash.exe"
+  rm -f "$t35_marker" "$t35_root/git-ran"
+  t35_prefix="$t35_root/n-prefix"
+  t35_run n "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ ! -e "$t35_root/git-ran" ] || t35_err="$t35_err unstartable-bash-ran"
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  grep -qxF 'feature-crew: Git Bash could not run install.sh (exit 127); using the PowerShell installer.' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
+  t35_installed
+  t35_result "T35n Git Bash launch failure falls back, warns, and installs successfully"
+
+  t35_prefix="$t35_root/d-target"
+  t35_run d-prefix "$t35_root/empty-path" -Command "& $t35_ps1 --dry-run --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
+  t35_unchanged
+  t35_result "T35d typed GNU-style dry run with prefix changes nothing"
+
+  t35_prefix="$t35_root/d-default-target"
+  t35_run d-default "$t35_root/empty-path" -Command "& $t35_ps1 --dry-run; exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
+  t35_unchanged
+  t35_result "T35d typed --dry-run alone creates no HOME install or --dry-run folder"
+
+  t35_prefix="$t35_root/e-prefix"
+  t35_run e "$t35_root/empty-path" -File "$t35_repo/install.ps1" --dry-run --prefix "$t35_prefix"
+  t35_expect_rc 0
+  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
+  t35_unchanged
+  t35_result "T35e -File accepts GNU-style dry run without installing"
+
+  for t35_bad_arg in --bogus foo; do
+    t35_prefix="$t35_root/f-prefix"
+    t35_run "f-$t35_bad_arg" "$t35_root/empty-path" -Command "& $t35_ps1 $t35_bad_arg; exit \$LASTEXITCODE"
+    t35_expect_rc 2
+    grep -qxF -- "Unknown option: $t35_bad_arg" "$t35_case/stderr" || t35_err="$t35_err unknown-option-diagnostic-missing"
+    t35_unchanged
+    t35_result "T35f typed $t35_bad_arg is rejected before changing anything"
+  done
+
+  t35_prefix="$t35_root/g-prefix"
+  t35_run g "$t35_root/empty-path" -Command "& $t35_ps1 --prefix; exit \$LASTEXITCODE"
+  t35_expect_rc 2
+  grep -qxF 'Missing value for --prefix' "$t35_case/stderr" || t35_err="$t35_err missing-value-diagnostic-missing"
+  t35_unchanged
+  t35_result "T35g typed --prefix requires a value before changing anything"
+
+  for t35_help in typed file alias; do
+    t35_prefix="$t35_root/h-prefix"
+    case "$t35_help" in
+      typed) t35_run h-typed "$t35_root/empty-path" -Command "& $t35_ps1 --help; exit \$LASTEXITCODE" ;;
+      file)  t35_run h-file "$t35_root/empty-path" -File "$t35_repo/install.ps1" --help ;;
+      alias) t35_run h-alias "$t35_root/empty-path" -Command "& $t35_ps1 -h; exit \$LASTEXITCODE" ;;
+    esac
+    t35_expect_rc 0
+    for t35_flag in --dry-run -DryRun; do
+      grep -qF -- "$t35_flag" "$t35_case/stdout" || t35_err="$t35_err usage-missing:$t35_flag"
+    done
+    t35_unchanged
+    t35_result "T35h $t35_help help names both flag spellings and changes nothing"
+  done
+
+  t35_run j-default "$t35_root/empty-path" -File "$t35_repo/install.ps1"
+  t35_prefix="$t35_case/home/.claude"
+  t35_expect_rc 0
+  t35_installed
+  t35_result "T35j strict profile: no arguments installs all agents and skills under HOME"
+
+  t35_prefix="$t35_root/j-dry-target"
+  t35_run j-dry-run "$t35_root/empty-path" -Command "& $t35_ps1 -DryRun -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
+  t35_unchanged
+  t35_result "T35j strict profile: typed PowerShell dry run changes nothing"
+
+  t35_prefix="$t35_root/j-install-target"
+  t35_run j-install "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
+  t35_expect_rc 0
+  t35_installed
+  t35_result "T35j strict profile: native -Prefix installs all agents and skills"
+
+  t35_run j-uninstall "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix" -Uninstall
+  t35_expect_rc 0
+  t35_left=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$t35_left" -eq 0 ] || t35_err="$t35_err agents-left:$t35_left"
+  [ -z "$(ls -A "$t35_prefix/skills" 2>/dev/null)" ] || t35_err="$t35_err skills-left"
+  t35_result "T35j strict profile: native -Uninstall removes installed agents and skills"
+
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' "\$@" > "$t35_root/j-git-args"
+exit 0
+STUB
+  rm -f "$t35_marker"
+  t35_prefix="$t35_root/j-git-target"
+  t35_run j-git "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  if [ -f "$t35_root/j-git-args" ]; then
+    t35_first=$(head -1 "$t35_root/j-git-args")
+    case "$t35_first" in */install.sh) ;; *) t35_err="$t35_err first-arg-not-install.sh" ;; esac
+    for t35_arg in --prefix "$t35_prefix"; do
+      grep -qxF -- "$t35_arg" "$t35_root/j-git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
+    done
+  else
+    t35_err="$t35_err Git-bash-not-run"
+  fi
+  t35_unchanged
+  t35_result "T35j strict profile: native -Prefix delegates to Git-layout bash"
+
+  for t35_form in typed file; do
+    for t35_flag in force uninstall; do
+      t35_prefix="$t35_root/k-$t35_flag-$t35_form-prefix"
+      t35_run "k-$t35_flag-$t35_form-install" "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
+      t35_expect_rc 0
+      t35_installed
+      if [ -n "$t35_err" ]; then
+        t35_result "T35k $t35_form --$t35_flag requires a fresh install"
+        continue
+      fi
+      if [ "$t35_flag" = force ]; then
+        cp "$t35_prefix/agents/fc-pm.md" "$t35_root/k-$t35_form-fresh-pm.md"
+        printf '\nLocally edited agent.\n' >> "$t35_prefix/agents/fc-pm.md"
+      fi
+      case "$t35_form" in
+        typed) t35_run "k-$t35_flag-typed" "$t35_root/empty-path" -Command "& $t35_ps1 --$t35_flag --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
+        file)  t35_run "k-$t35_flag-file" "$t35_root/empty-path" -File "$t35_repo/install.ps1" "--$t35_flag" --prefix "$t35_prefix" ;;
+      esac
+      t35_expect_rc 0
+      if [ "$t35_flag" = force ]; then
+        cmp -s "$t35_prefix/agents/fc-pm.md" "$t35_root/k-$t35_form-fresh-pm.md" || t35_err="$t35_err installed-bytes-not-restored"
+        t35_result "T35k $t35_form --force restores fresh-install bytes"
+      else
+        t35_left=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
+        [ "$t35_left" -eq 0 ] || t35_err="$t35_err agents-left:$t35_left"
+        t35_left=$(find "$t35_prefix/skills" -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        [ "$t35_left" -eq 0 ] || t35_err="$t35_err skill-directories-left:$t35_left"
+        t35_result "T35k $t35_form --uninstall removes installed agents and skills"
+      fi
+    done
+  done
+
+  # Earlier cases replace this stub; each run must record its own arguments.
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' "\$@" > "$t35_root/git-args"
+exit 0
+STUB
+  for t35_style in gnu native; do
+    rm -f "$t35_marker" "$t35_root/git-args"
+    t35_prefix="$t35_root/l-$t35_style-prefix"
+    case "$t35_style" in
+      gnu)    t35_run l-gnu "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --force --uninstall --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
+      native) t35_run l-native "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 -Force -Uninstall -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
+    esac
+    t35_expect_rc 0
+    [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+    if [ -f "$t35_root/git-args" ]; then
+      for t35_arg in --force --uninstall --prefix "$t35_prefix"; do
+        grep -qxF -- "$t35_arg" "$t35_root/git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
+      done
+    else
+      t35_err="$t35_err Git-bash-not-run"
+    fi
+    t35_unchanged
+    t35_result "T35l typed $t35_style force/uninstall flags reach Git-layout bash"
+  done
+else
+  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native; do
+    skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
+  done
+fi
+
+# These acceptance checks run even when pwsh is unavailable.
+t35_case="$t35_root/g-bash"
+t35_prefix="$t35_root/g-bash-prefix"
+mkdir -p "$t35_case/home" "$t35_case/cwd"
+t35_bash=$(command -v bash)
+( cd "$t35_case/cwd" && HOME="$t35_case/home" "$t35_bash" "$t35_repo/install.sh" --prefix ) \
+  > "$t35_case/stdout" 2> "$t35_case/stderr"
+t35_rc=$?
+t35_err=""
+t35_expect_rc 2
+grep -qxF 'Missing value for --prefix' "$t35_case/stderr" || t35_err="$t35_err missing-value-diagnostic-missing"
+t35_unchanged
+t35_result "T35g install.sh --prefix requires a value with exit 2"
+
+if grep '^Flags:' README.md | grep -qF -- '-DryRun'; then
+  ok "T35i README Flags line names the PowerShell spelling"
+else
+  bad "T35i README Flags line names the PowerShell spelling" "-DryRun absent from Flags line"
+fi
+
 echo
 if [ "$SKIP" -gt 0 ]; then
   echo "== ${PASS} passed, ${FAIL} failed, ${SKIP} SKIPPED (coverage incomplete) =="

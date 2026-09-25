@@ -23,7 +23,13 @@ while [ $# -gt 0 ]; do
     --force)         FORCE=1 ;;
     --dry-run)       DRY_RUN=1 ;;
     --uninstall)     UNINSTALL=1 ;;
-    --prefix)        shift; PREFIX="$1" ;;
+    --prefix)
+      if [ "$#" -lt 2 ]; then
+        echo "Missing value for --prefix" >&2
+        exit 2
+      fi
+      shift; PREFIX="$1"
+      ;;
     -h|--help)
       sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
