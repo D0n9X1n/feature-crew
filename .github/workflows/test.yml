@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 # Reuse the same typed invocations in both Windows hosts and both installer paths.
 # Capture Write-Host (stream 6), not native stderr: redirecting native stderr can

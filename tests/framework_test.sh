@@ -272,19 +272,20 @@ ps1_operative_ok() {
   grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$'   "$f" || return 1
   grep -qE '^[[:space:]]*Copy-Tree[[:space:]]+\$'       "$f" || return 1
   grep -qE '^Install-ClaudeGlobal[[:space:]]*$'         "$f" || return 1
-  # Presence is not reachability. An unconditional `throw`/`exit` at column 0
-  # before the dispatch leaves every token in place while the installer does
-  # nothing -- a reviewer demonstrated exactly that and the suite stayed green.
-  #
-  # Column 0 specifically: install.ps1 legitimately exits from inside `if`
-  # blocks (bash delegation, --uninstall), and those are indented. Only an
-  # unindented terminator runs unconditionally. Static analysis cannot prove
-  # reachability in general; the Windows CI job proves the rest by executing.
-  local disp
-  disp=$(grep -n '^Install-ClaudeGlobal[[:space:]]*$' "$f" | head -1 | cut -d: -f1)
-  [ -n "$disp" ] || return 1
-  head -n "$disp" "$f" | grep -qE '^(throw|exit)([[:space:]]|$)' && return 1
-  return 0
+  # Presence is not reachability. Reject throws outside function bodies even
+  # when nested in a top-level `if`, but keep legitimate conditional exits for
+  # delegation/help/uninstall. Functions and their closing braces are column 0
+  # in this installer. This bounded static check complements Windows execution.
+  awk '
+    /^[[:space:]]*<#/ { block_comment = 1 }
+    block_comment { if (/#>/) block_comment = 0; next }
+    /^[[:space:]]*#/ { next }
+    tolower($0) ~ /^function[[:space:]]/ { in_function = 1 }
+    in_function { if (/^}/) in_function = 0; next }
+    /^Install-ClaudeGlobal[[:space:]]*$/ { exit }
+    tolower($0) ~ /(^|[[:space:];{])throw([[:space:];}]|$)/ || /^exit([[:space:]]|$)/ { bad = 1; exit }
+    END { exit bad }
+  ' "$f"
 }
 sh_operative_ok() {
   local f="$1"

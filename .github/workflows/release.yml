@@ -6,30 +6,23 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   release:
+    name: release
+    needs: test
+    permissions:
+      contents: write
+      actions: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install PyYAML
-        run: |
-          set -euo pipefail
-          python3 -m pip install --user pyyaml \
-            || python3 -m pip install --user --break-system-packages pyyaml \
-            || python3 -m pip install --break-system-packages pyyaml
-          python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
-
-      - name: Gate on the suite
-        # A tag must not publish a release the tests do not back, and a skipped
-        # assertion is not a passing one.
-        env:
-          FC_STRICT: "1"
-        run: bash tests/framework_test.sh
 
       - name: Refuse to release a tag that is not on main
         run: |
@@ -40,15 +33,29 @@ jobs:
           # would have failed this job on the first real tag push.
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME is not an ancestor of main — tag main, not a branch."
+            echo "::error::$GITHUB_REF_NAME is not an ancestor of main - tag main, not a branch."
             exit 1
           fi
 
       - name: Build release notes from the previous tag
         id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+
+          # Called-job names may include a reusable-workflow prefix. Exclude
+          # only this publishing job and fail closed on empty or non-green data.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --paginate \
+            | jq -ers '
+                [.[].jobs[] | select(.name != "release")] as $jobs
+                | ($jobs[] | "- \(.name): \(.conclusion // "pending")"),
+                  (if ($jobs | length) == 0 then error("no validation jobs found")
+                   elif any($jobs[]; .conclusion != "success") then error("validation jobs did not all succeed")
+                   else empty end)
+              ' | tee validation.txt
+          VALIDATION="$(cat validation.txt)"
 
           # Previous tag by VERSION order, not by reachability.
           #
@@ -79,7 +86,7 @@ jobs:
           # release whose Commits section is blank.
           COMMITS="$(git log --no-merges --oneline "$RANGE" | wc -l | tr -d ' ')"
           if [ "$COMMITS" -eq 0 ]; then
-            echo "::error::no commits between ${PREV:-<start>} and ${TAG} — nothing to release"
+            echo "::error::no commits between ${PREV:-<start>} and ${TAG} - nothing to release"
             exit 1
           fi
 
@@ -98,11 +105,7 @@ jobs:
             printf -- '- %s skills (`~/.claude/skills/fc-*/`)\n' "$SKILLS"
             printf -- '- %s role agents (`~/.claude/agents/fc-*.md`), unpinned for provenance-based hard-gate selection\n' "$AGENTS"
             printf -- '- Cross-platform installer (`install.sh` / `install.ps1`)\n\n'
-            printf '### Validation\n'
-            printf -- '- Framework self-test, strict mode (skips count as failures)\n'
-            printf -- '- PowerShell fallback executed on Windows with bash masked\n'
-            printf -- '- Bash-delegation path executed on Windows\n'
-            printf -- '- Installer round-trip: install, verify, uninstall\n\n'
+            printf '### Validation\n%s\n\n' "$VALIDATION"
             printf '### Install\n'
             printf '```bash\n'
             printf 'git clone https://github.com/%s.git\n' "$GITHUB_REPOSITORY"
