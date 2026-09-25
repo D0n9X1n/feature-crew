@@ -605,6 +605,15 @@ else
   t20_err="$t20_err attack5-not-applied"
 fi
 
+# Attack 6 (#26): parentheses after throw must not hide the keyword.
+awk '/^Install-ClaudeGlobal[[:space:]]*$/ { print "if ($true) { throw(\"native-only regression\") }" } { print }' \
+  install.ps1 > "$mut/f.ps1"
+if grep -qxF 'if ($true) { throw("native-only regression") }' "$mut/f.ps1"; then
+  ps1_operative_ok "$mut/f.ps1" && t20_err="$t20_err attack6-undetected"
+else
+  t20_err="$t20_err attack6-not-applied"
+fi
+
 # Control: the real installers must still pass, or the check is just broken.
 ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
 sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
