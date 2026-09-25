@@ -483,6 +483,36 @@ jobs:
             throw "uninstall deleted the personal agent"
           }
 
+      - name: Dot-segment prefixes uninstall completely in the fallback
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $installer = Join-Path $env:GITHUB_WORKSPACE "install.ps1"
+          $root = Join-Path $env:RUNNER_TEMP ("fc-dot-prefix-" + [Guid]::NewGuid().ToString('N'))
+          $cwd = Join-Path $root 'feature-crew'
+          [IO.Directory]::CreateDirectory($cwd) | Out-Null
+          Push-Location $cwd
+          try {
+            foreach ($prefix in @('..\u', '.\p')) {
+              $actual = [IO.Path]::GetFullPath((Join-Path $cwd $prefix))
+              $global:LASTEXITCODE = 0
+              & $installer --prefix $prefix
+              if ($LASTEXITCODE -ne 0) { throw "$prefix install exited $LASTEXITCODE" }
+              if (-not (Test-Path -LiteralPath (Join-Path $actual 'agents\fc-pm.md'))) {
+                throw "$prefix did not install its agents"
+              }
+              $global:LASTEXITCODE = 0
+              & $installer --prefix $prefix --uninstall
+              if ($LASTEXITCODE -ne 0) { throw "$prefix uninstall exited $LASTEXITCODE" }
+              $left = @(Get-ChildItem -LiteralPath $actual -Recurse -File -Force)
+              if ($left.Count -ne 0) { throw "$prefix uninstall left $($left.Count) files" }
+            }
+          } finally {
+            Pop-Location
+          }
+
       - name: Ordered output parity between Git Bash and the PowerShell fallback
         if: ${{ !cancelled() }}
         shell: pwsh
@@ -548,7 +578,9 @@ jobs:
           bash "$repo/install.sh" --prefix "$prefix" "$@"
           '@
           function Run-Installer($engine, $prefix, [string[]]$flags) {
-            $LASTEXITCODE = 0
+            # Native children update the global automatic variable. A local
+            # reset would shadow their exit code and make this check vacuous.
+            $global:LASTEXITCODE = 0
             if ($engine -eq 'sh') {
               $env:FC_MATRIX_PREFIX = $prefix
               # Only the explicit Git Bash child gets its required utility PATH.

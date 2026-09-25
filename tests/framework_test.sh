@@ -1385,6 +1385,12 @@ run_installer() { # engine, prefix, flags; preserves nonzero exits for assertion
   installer_rc=$?
   installer_out=$(cat "$installer_root/run.out")
 }
+run_installer_at() { # cwd, engine, prefix, flags; retain the child exit code
+  local cwd="$1"; shift
+  ( cd "$cwd" && run_installer "$@"; exit "$installer_rc" )
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+}
 expect_installer_success() {
   if [ "$installer_rc" -ne 0 ]; then
     case_err="$case_err $1:exit-$installer_rc:$(printf '%s\n' "$installer_out" | sed $'s/\033\\[[0-9;]*m//g' | tail -1)"
@@ -1460,43 +1466,78 @@ done
 # Use v3.1's OWN installer: copying today's agents would not reproduce the old
 # names, unquoted frontmatter, or duplicate fc-pm. Count the six agent removals
 # specifically; v3.1 also installed two legacy skills eligible for cleanup.
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t37-$engine"
+t37_legacy_case() { # engine, actual prefix, given prefix, cwd, label
+  local engine="$1" p="$2" given="$3" cwd="$4" label="$5" action name count
   case_err=""
   if ! seed_v31 "$p"; then
-    bad "T37 $engine v3.1 cleanup is per-file on install and uninstall" "v3.1 installer fixture failed"
-    continue
+    bad "$label" "v3.1 installer fixture failed"
+    return
   fi
   cp "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md"
   snapshot_tree "$p" > "$installer_root/before"
   for action in install uninstall; do
-    if [ "$action" = install ]; then run_installer "$engine" "$p" --dry-run
-    else run_installer "$engine" "$p" --uninstall --dry-run; fi
+    if [ "$action" = install ]; then run_installer_at "$cwd" "$engine" "$given" --dry-run
+    else run_installer_at "$cwd" "$engine" "$given" --uninstall --dry-run; fi
     expect_installer_success "dry-$action"
     snapshot_tree "$p" > "$installer_root/after"
     cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-$action:tree-changed"
     printf '%s\n' "$installer_out" | grep -q '^removed' && case_err="$case_err dry-$action:claims-removed"
-    count=$(printf '%s\n' "$installer_out" | grep -cF "DRY-RUN: would remove (legacy): $p/agents/feature-crew/" || true)
+    count=$(printf '%s\n' "$installer_out" | grep -cF "DRY-RUN: would remove (legacy): $given/agents/feature-crew/" || true)
     [ "$count" -eq 6 ] || case_err="$case_err dry-$action:legacy-agent-lines=$count(want-6)"
     for name in architect developer pm qa-code-reviewer qa-spec-reviewer tech-lead; do
-      printf '%s\n' "$installer_out" | grep -qxF "DRY-RUN: would remove (legacy): $p/agents/feature-crew/$name.md" \
+      printf '%s\n' "$installer_out" | grep -qxF "DRY-RUN: would remove (legacy): $given/agents/feature-crew/$name.md" \
         || case_err="$case_err dry-$action:not-listed:$name"
     done
   done
-  run_installer "$engine" "$p"
+  run_installer_at "$cwd" "$engine" "$given"
   expect_installer_success install
   for name in architect developer pm qa-code-reviewer qa-spec-reviewer tech-lead; do
     [ ! -e "$p/agents/feature-crew/$name.md" ] || case_err="$case_err legacy-agent-left:$name"
   done
+  for name in build-or-fix research; do
+    [ ! -d "$p/skills/$name" ] || case_err="$case_err legacy-skill-left:$name"
+  done
   cmp -s "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md" || case_err="$case_err personal-agent-deleted"
-  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/agents/feature-crew/my-own-agent.md" \
+  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $given/agents/feature-crew/my-own-agent.md" \
     || case_err="$case_err personal-agent-not-reported"
   count=$(find "$p/agents" -type f -name '*.md' -exec grep -l '^name: fc-pm$' {} + | wc -l | tr -d ' ')
   [ "$count" -eq 1 ] || case_err="$case_err fc-pm-definitions=$count(want-1)"
-  run_installer "$engine" "$p" --uninstall
+  run_installer_at "$cwd" "$engine" "$given" --uninstall
   expect_installer_success uninstall
   cmp -s "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md" || case_err="$case_err personal-agent-deleted-on-uninstall"
-  installer_result "T37 $engine v3.1 cleanup is per-file on install and uninstall"
+  count=$(find "$p" -type f | wc -l | tr -d ' ')
+  [ "$count" -eq 1 ] || case_err="$case_err uninstall-files=$count(want-personal-only)"
+  installer_result "$label"
+}
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t37-$engine"
+  t37_legacy_case "$engine" "$p" "$p" "$installer_repo" "T37 $engine v3.1 cleanup is per-file on install and uninstall"
+  for form in dot parent; do
+    cwd="$installer_root/t37-$engine-$form/feature-crew"
+    mkdir -p "$cwd"
+    if [ "$form" = dot ]; then given='./p'; p="$cwd/p"
+    else given='../p'; p="$(dirname "$cwd")/p"; fi
+    t37_legacy_case "$engine" "$p" "$given" "$cwd" "T37 $engine v3.1 cleanup through $given from feature-crew"
+  done
+
+  # Both dot forms also cover a fresh install. A long cwd name makes ../'s
+  # uncanonicalized root longer than a listed file, exposing Substring errors.
+  case_err=""
+  for form in dot parent; do
+    cwd="$installer_root/t37-fresh-$engine-$form/feature-crew"
+    mkdir -p "$cwd"
+    if [ "$form" = dot ]; then given='./u'; p="$cwd/u"
+    else given='../u'; p="$(dirname "$cwd")/u"; fi
+    run_installer_at "$cwd" "$engine" "$given"
+    expect_installer_success "$given/install"
+    [ -f "$p/agents/fc-pm.md" ] && [ -f "$p/skills/fc-review/SKILL.md" ] \
+      || case_err="$case_err $given:not-installed"
+    run_installer_at "$cwd" "$engine" "$given" --uninstall
+    expect_installer_success "$given/uninstall"
+    count=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
+    [ "$count" -eq 0 ] || case_err="$case_err $given:files-left=$count"
+  done
+  installer_result "T37 $engine fresh ./u and ../u installs uninstall completely"
 done
 
 # ---------------------------------------------------------------- T38
@@ -1680,12 +1721,16 @@ if [ "${#INSTALLERS[@]}" -ne 2 ]; then
 elif ! command -v python3 >/dev/null 2>&1; then
   skip "T45 installer output parity matrix (python3 unavailable)"
 else
-  for scenario in fresh reinstall dry-force dry-empty uninstall-dry uninstall install-v31 uninstall-dry-v31 edited-agent legacy-skill; do
+  for scenario in fresh reinstall dry-force dry-empty uninstall-dry uninstall install-v31 uninstall-dry-v31 edited-agent legacy-skill dot-install-v31 parent-round-trip; do
     case_err=""
     scenario_root="$installer_root/t45-$scenario"
     mkdir -p "$scenario_root"
     for engine in "${INSTALLERS[@]}"; do
       p="$scenario_root/$engine"
+      given="$p"
+      cwd="$installer_repo"
+      raw="$scenario_root/$engine.raw"
+      : > "$raw"
       flags=()
       case "$scenario" in
         reinstall|dry-force|uninstall-dry|uninstall|edited-agent)
@@ -1698,22 +1743,38 @@ else
         legacy-skill)
           seed_legacy_skill "$p" || case_err="$case_err $engine/legacy-skill-fixture-failed"
           ;;
+        dot-install-v31|parent-round-trip)
+          cwd="$scenario_root/$engine/feature-crew"
+          mkdir -p "$cwd"
+          if [ "$scenario" = dot-install-v31 ]; then
+            given='./p'; p="$cwd/p"
+            seed_v31 "$p" || case_err="$case_err $engine/v3.1-fixture-failed"
+          else
+            given='../u'; p="$scenario_root/$engine/u"
+            run_installer_at "$cwd" "$engine" "$given"
+            expect_installer_success "$engine/parent-install"
+            cat "$installer_root/run.out" >> "$raw"
+          fi
+          ;;
       esac
       case "$scenario" in
         dry-force) flags=(--dry-run --force) ;;
         dry-empty) flags=(--dry-run) ;;
         uninstall-dry|uninstall-dry-v31) flags=(--uninstall --dry-run) ;;
-        uninstall) flags=(--uninstall) ;;
+        uninstall|parent-round-trip) flags=(--uninstall) ;;
         edited-agent)
           printf '\nmy edit\n' >> "$p/agents/fc-pm.md"
           flags=(--uninstall)
           ;;
       esac
       # Bash 3.2 treats an empty array as unset under nounset.
-      if [ "${#flags[@]}" -gt 0 ]; then run_installer "$engine" "$p" "${flags[@]}"
-      else run_installer "$engine" "$p"; fi
+      if [ "${#flags[@]}" -gt 0 ]; then run_installer_at "$cwd" "$engine" "$given" "${flags[@]}"
+      else run_installer_at "$cwd" "$engine" "$given"; fi
       expect_installer_success "$engine/$scenario"
-      normalize_installer_output "$p" "$installer_repo" "$installer_root/run.out" > "$scenario_root/$engine.out" \
+      cat "$installer_root/run.out" >> "$raw"
+      # For dot-segment scenarios only normalize the actual absolute prefix;
+      # ./p and ../u must remain printed exactly as the caller supplied them.
+      normalize_installer_output "$p" "$installer_repo" "$raw" > "$scenario_root/$engine.out" \
         || case_err="$case_err $engine/normalization-failed"
     done
     if ! cmp -s "$scenario_root/sh.out" "$scenario_root/ps1.out"; then
