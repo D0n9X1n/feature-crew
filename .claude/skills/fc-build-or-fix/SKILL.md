@@ -98,7 +98,7 @@ Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 ## Dispatch rules
 
 - Paste task text inline; never tell a subagent to read the plan file.
-- For a hard-gate review, pass the audit envelope and exact explicit Agent model override above.
+- For a hard-gate review, pass the audit envelope and exact explicit Agent model override above. Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
 - Parallel only at ≥3 independent tasks; otherwise run sequentially.
 - Use background mode for substantive work and handle results as they arrive.
 - Max 3 fix cycles per issue, then stop and question the approach.

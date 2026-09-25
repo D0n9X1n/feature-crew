@@ -6,7 +6,7 @@ Use the canonical selector in [../SKILL.md](../SKILL.md); this reference explain
 
 Capture the `agentId` from the Agent result and locate `~/.claude/projects/<cwd-slug>/<session-id>/subagents/agent-<agentId>.jsonl`. The main session's own record is `~/.claude/projects/<cwd-slug>/<session-id>.jsonl`; use it for artifacts authored inline. Resolve the actual project slug and session id from this harness, not a guessed directory or another session's record.
 
-Assistant entries carry `.message.model`, the model that answered. Read all assistant entries relevant to the artifact, including resumed turns; retain every distinct model id so a mid-run fallback is not hidden by the final answer. For a subagent dedicated to one artifact, inspect the complete record:
+Assistant entries carry `.message.model`, the model that answered. Read all assistant entries relevant to the artifact, including resumed turns; retain every distinct model id so a mid-run fallback is not hidden by the final answer. A record with an `Agent` or `Workflow` call has contributors outside that record; read their records the same way, recursively, and follow forked `Skill` runs too. A child record that cannot be found or read makes provenance unknown and the gate unsatisfied. A `Skill` call without a fork stays in the same record. For a subagent dedicated to one artifact, inspect its complete record and every contributor's record:
 
 ```bash
 jq -r 'select(.type=="assistant") | .message.model // "UNKNOWN"' "$record" | sort | uniq -c
@@ -18,7 +18,7 @@ jq -r 'select(.type=="assistant") | .message.model // "UNKNOWN"' "$record" | sor
 
 - `claude-sonnet-*` → Sonnet; `claude-opus-*` → Opus; `claude-haiku-*` → Haiku. Version or context suffixes do not create a new family.
 - A non-Claude id maps by its provider/vendor model-line prefix to a family: `gpt-*` → GPT. Every id in one vendor line is one family, regardless of version or suffix; do not infer a family from the requested alias. For a recorded non-Claude id, provenance is unknown only when its vendor cannot be identified.
-- If several models contributed, retain the complete family set for that artifact. A reviewer cannot satisfy the selector against any author family it shares; every contributing reviewer model must be known and outside that set. Do not cherry-pick the last model after a fallback.
+- If several models contributed, retain the complete family set for that artifact. Include all recorded child-agent models in the artifact family set at every depth, for authoring and review alike. A reviewer cannot satisfy the selector against any author family it shares; every contributing reviewer model must be known and outside that set. Do not cherry-pick the last model after a fallback or omit a child's model because delegation was forbidden.
 - Keep this session's observed alias-to-family substitutions with the records. Use them for the selector's collision check and alternative override; never generalize an alias mapping across sessions. Record an acceptable substitution even when the review otherwise passes.
 
 ## Environment assumptions
