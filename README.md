@@ -9,7 +9,7 @@
 .\install.ps1        # native Windows PowerShell
 ```
 
-Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
+Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`; `install.ps1` also accepts `-Force`, `-DryRun`, `-Uninstall`, `-Prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
 
 ## Describe the need
 
@@ -55,7 +55,7 @@ The exact selector is canonical in `/fc-build-or-fix`; other docs point there ra
 
 ## Framework caps
 
-Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md` plus every `SKILL.md`) stays ≤600 lines; the total stays ≤1500 and under the ratcheted baseline. Run:
+Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md` plus every `SKILL.md`) stays ≤600 lines; the total stays ≤1500 and under the ratcheted baseline. The suite needs pwsh (set `PWSH` to its path if it is not on PATH). Run:
 
 ```bash
 FC_STRICT=1 bash tests/framework_test.sh

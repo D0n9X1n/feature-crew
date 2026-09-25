@@ -1,36 +1,93 @@
 # feature-crew installer for native Windows PowerShell.
-# Mirrors install.sh — same flags, same behavior, same outputs.
-# Prefers bash (Git Bash / WSL) when available so there's a single source of
-# truth; falls back to a pure-PowerShell implementation otherwise.
+# Mirrors install.sh - same flags, same behavior, same outputs.
+# Uses Git for Windows' bash found through git on PATH when present; otherwise
+# uses the PowerShell implementation. Unrelated bash commands are never used.
 #
 # Usage:
 #   .\install.ps1                           # install for Claude Code globally (~/.claude)
-#   .\install.ps1 -Force                    # overwrite existing files
-#   .\install.ps1 -DryRun                   # print what would happen, change nothing
-#   .\install.ps1 -Uninstall                # remove files this script installs
-#   .\install.ps1 -Prefix C:\Users\me\.claude
+#   .\install.ps1 --force                   # or -Force: overwrite existing files
+#   .\install.ps1 --dry-run                 # or -DryRun: print actions, change nothing
+#   .\install.ps1 --uninstall               # or -Uninstall: remove installed files
+#   .\install.ps1 --prefix DIR              # or -Prefix DIR: override ~/.claude
+#   .\install.ps1 --help                    # or -Help / -h: show usage
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
   [switch]$Force,
   [switch]$DryRun,
   [switch]$Uninstall,
-  [string]$Prefix = (Join-Path $HOME ".claude")
+  [Alias('h')][switch]$Help,
+  [string]$Prefix = (Join-Path $HOME ".claude"),
+  [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
 )
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# Prefer bash if present — single source of truth.
-$bash = Get-Command bash -ErrorAction SilentlyContinue
-if ($bash) {
-  $args = @()
-  if ($Force)        { $args += "--force" }
-  if ($DryRun)       { $args += "--dry-run" }
-  if ($Uninstall)    { $args += "--uninstall" }
-  if ($Prefix)       { $args += @("--prefix", $Prefix) }
-  & bash (Join-Path $ScriptDir "install.sh") @args
-  exit $LASTEXITCODE
+# Typed PowerShell calls and -File bind GNU-style options differently. Parse
+# any unbound tokens before dispatch so a switch can never become a prefix.
+for ($i = 0; $i -lt $Rest.Count; $i++) {
+  switch -CaseSensitive ($Rest[$i]) {
+    "--force"     { $Force = $true }
+    "--dry-run"   { $DryRun = $true }
+    "--uninstall" { $Uninstall = $true }
+    "--help"      { $Help = $true }
+    "--prefix" {
+      if ($i + 1 -ge $Rest.Count) {
+        [Console]::Error.WriteLine("Missing value for --prefix")
+        exit 2
+      }
+      $i++
+      $Prefix = $Rest[$i]
+    }
+    default {
+      [Console]::Error.WriteLine("Unknown option: $($Rest[$i])")
+      exit 2
+    }
+  }
+}
+if ($Help) {
+  Write-Host "Usage: .\install.ps1 [--force|-Force] [--dry-run|-DryRun] [--uninstall|-Uninstall]"
+  Write-Host "                     [--prefix DIR|-Prefix DIR] [--help|-Help|-h]"
+  exit 0
+}
+
+function Find-GitBash {
+  $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $git) { return $null }
+  $root = Split-Path -Parent (Split-Path -Parent $git.Path)
+  # git lives in <root>/cmd, <root>/bin, or <root>/mingw64/bin.
+  for ($level = 0; $level -lt 2 -and $root; $level++) {
+    $candidate = Join-Path (Join-Path $root "bin") "bash.exe"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    $root = Split-Path -Parent $root
+  }
+  return $null
+}
+
+$gitBash = Find-GitBash
+if ($gitBash) {
+  $bashArgs = @()
+  if ($Force)     { $bashArgs += "--force" }
+  if ($DryRun)    { $bashArgs += "--dry-run" }
+  if ($Uninstall) { $bashArgs += "--uninstall" }
+  $bashArgs += @("--prefix", $Prefix)
+  $bashExitCode = 127
+  try {
+    # PowerShell 5.1 can turn redirected native stderr into a terminating error
+    # under Stop. Only launch failure or exit 126/127 should trigger fallback.
+    $ErrorActionPreference = "Continue"
+    & $gitBash (Join-Path $ScriptDir "install.sh") @bashArgs
+    $bashExitCode = $LASTEXITCODE
+  } catch {
+    $bashExitCode = 127
+  } finally {
+    $ErrorActionPreference = "Stop"
+  }
+  if ($bashExitCode -ne 126 -and $bashExitCode -ne 127) {
+    exit $bashExitCode
+  }
+  [Console]::Error.WriteLine("feature-crew: Git Bash could not run install.sh (exit $bashExitCode); using the PowerShell installer.")
 }
 
 # --- Pure-PowerShell fallback (full feature parity with install.sh) ---
@@ -117,7 +174,7 @@ function Copy-Tree($srcDir, $destDir, [bool]$preserveAgentFrontmatter = $false) 
 
 function Install-ClaudeGlobal {
   if (-not (Test-Path $SrcAgents)) {
-    Write-Error "Cannot find agents/ next to install.ps1 ($SrcAgents)"; exit 1
+    [Console]::Error.WriteLine("Cannot find agents/ next to install.ps1 ($SrcAgents)"); exit 1
   }
   Write-Host "feature-crew: installing into $Prefix"
   Ensure-Dir $DestAgents
@@ -295,3 +352,4 @@ if ($Uninstall) {
 }
 
 Install-ClaudeGlobal
+exit 0
