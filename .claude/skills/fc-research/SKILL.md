@@ -29,7 +29,7 @@ Reserve one dispatch each for synthesis and validation before search; the defaul
 
 ## Phase 2 — synthesize
 
-One `general-purpose` agent with explicit `model: opus`; record its actual author model for the selector. Paste **all** Phase-1 output inline; never tell it to go read the results. Append the Worker boundary suffix to this prompt:
+One `general-purpose` agent with an explicit `model` override from the authoring rule in `/fc-build-or-fix`; record its actual author model for the selector. Paste **all** Phase-1 output inline; never tell it to go read the results. Append the Worker boundary suffix to this prompt:
 
 > Synthesize these findings into a structured answer:
 >

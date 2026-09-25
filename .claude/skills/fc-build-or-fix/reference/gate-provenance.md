@@ -17,7 +17,7 @@ jq -r 'select(.type=="assistant") | .message.model // "UNKNOWN"' "$record" | sor
 ## Map model ids to families
 
 - `claude-sonnet-*` → Sonnet; `claude-opus-*` → Opus; `claude-haiku-*` → Haiku. Version or context suffixes do not create a new family.
-- A non-Claude id requires a verified provider or gateway mapping to its family; do not classify it by the alias requested, assume it is Sonnet, or treat every unfamiliar id as a distinct family. Without a reliable mapping, provenance is unknown.
+- A non-Claude id maps by its provider/vendor model-line prefix to a family: `gpt-*` → GPT. Every id in one vendor line is one family, regardless of version or suffix; do not infer a family from the requested alias. For a recorded non-Claude id, provenance is unknown only when its vendor cannot be identified.
 - If several models contributed, retain the complete family set for that artifact. A reviewer cannot satisfy the selector against any author family it shares; every contributing reviewer model must be known and outside that set. Do not cherry-pick the last model after a fallback.
 - Keep this session's observed alias-to-family substitutions with the records. Use them for the selector's collision check and alternative override; never generalize an alias mapping across sessions. Record an acceptable substitution even when the review otherwise passes.
 

@@ -27,9 +27,9 @@ Default stances:
 
 Substitute a different axis when it fits better — 1 day / 1 week / 1 month of effort, or build / buy / defer.
 
-Each agent's prompt ends with:
+Each agent's prompt, including re-dispatches, ends with:
 
-> Propose one concrete approach from this stance. Include: the approach in 3–5 sentences, the strongest objection to it, and what would have to be true for it to be the wrong call. Do not hedge and do not propose alternatives — argue your stance. ≤300 words.
+> Propose one concrete approach from this stance. Include: the approach in 3–5 sentences, the strongest objection to it, and what would have to be true for it to be the wrong call. Do not hedge and do not propose alternatives — argue your stance. ≤300 words. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.
 
 ## 3 — Diversity check
 
