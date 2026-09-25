@@ -18,7 +18,7 @@ param(
   [switch]$Uninstall,
   [Alias('h')][switch]$Help,
   [string]$Prefix = (Join-Path $HOME ".claude"),
-  [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
+  [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest = @()
 )
 
 $ErrorActionPreference = "Stop"
