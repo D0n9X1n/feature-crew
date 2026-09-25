@@ -146,11 +146,14 @@ function Get-SortedChildren($dir, [switch]$Recurse, [switch]$Directories, [strin
 }
 
 # [IO.File] resolves relative paths against the *process* working directory,
-# which is not necessarily PowerShell's current location. Resolve to absolute
-# first so a relative --prefix writes where the user expects.
+# which is not necessarily PowerShell's current location. Join that location
+# first, then collapse dot segments so roots match Get-ChildItem's FullName
+# before taking a relative-path substring. Printed paths keep the given prefix.
 function Resolve-AbsPath($p) {
-  if ([IO.Path]::IsPathRooted($p)) { return $p }
-  return (Join-Path (Get-Location).ProviderPath $p)
+  if (-not [IO.Path]::IsPathRooted($p)) {
+    $p = Join-Path (Get-Location).ProviderPath $p
+  }
+  return [IO.Path]::GetFullPath($p)
 }
 
 # Shared by install and ownership: never decode agent bodies. Text readers
