@@ -127,6 +127,40 @@ jobs:
           }
           Write-Host "bash and git masked; install.ps1 will use the PowerShell fallback"
 
+      - name: Strict-mode native flags in the fallback (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $dryPrefix = Join-Path $env:RUNNER_TEMP ("fc-strict-dry-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -DryRun -Prefix $dryPrefix
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode dry run exited $LASTEXITCODE" }
+          if (Test-Path -LiteralPath $dryPrefix) { throw "strict-mode dry run created the prefix" }
+          $prefix = Join-Path $env:RUNNER_TEMP ("fc-strict-install-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -Prefix $prefix -Force
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode install exited $LASTEXITCODE" }
+          $agents = @(Get-ChildItem (Join-Path $prefix "agents") -Filter fc-*.md)
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+
+      - name: Strict-mode native flags in the fallback (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $dryPrefix = Join-Path $env:RUNNER_TEMP ("fc-strict-dry-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -DryRun -Prefix $dryPrefix
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode dry run exited $LASTEXITCODE" }
+          if (Test-Path -LiteralPath $dryPrefix) { throw "strict-mode dry run created the prefix" }
+          $prefix = Join-Path $env:RUNNER_TEMP ("fc-strict-install-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -Prefix $prefix -Force
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode install exited $LASTEXITCODE" }
+          $agents = @(Get-ChildItem (Join-Path $prefix "agents") -Filter fc-*.md)
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+
       - name: Install to a temp prefix
         shell: pwsh
         run: |
@@ -318,3 +352,35 @@ jobs:
         if: ${{ !cancelled() }}
         shell: powershell
         run: Invoke-Expression $env:TEST_GNU_FLAGS
+
+      - name: Strict-mode native flags with Git Bash (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $dryPrefix = Join-Path $env:RUNNER_TEMP ("fc-strict-dry-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -DryRun -Prefix $dryPrefix
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode dry run exited $LASTEXITCODE" }
+          if (Test-Path -LiteralPath $dryPrefix) { throw "strict-mode dry run created the prefix" }
+          $prefix = Join-Path $env:RUNNER_TEMP ("fc-strict-install-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -Prefix $prefix -Force
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode install exited $LASTEXITCODE" }
+          $agents = @(Get-ChildItem (Join-Path $prefix "agents") -Filter fc-*.md)
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+
+      - name: Strict-mode native flags with Git Bash (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $dryPrefix = Join-Path $env:RUNNER_TEMP ("fc-strict-dry-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -DryRun -Prefix $dryPrefix
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode dry run exited $LASTEXITCODE" }
+          if (Test-Path -LiteralPath $dryPrefix) { throw "strict-mode dry run created the prefix" }
+          $prefix = Join-Path $env:RUNNER_TEMP ("fc-strict-install-" + [Guid]::NewGuid().ToString("N"))
+          & .\install.ps1 -Prefix $prefix -Force
+          if ($LASTEXITCODE -ne 0) { throw "strict-mode install exited $LASTEXITCODE" }
+          $agents = @(Get-ChildItem (Join-Path $prefix "agents") -Filter fc-*.md)
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }

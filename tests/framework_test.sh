@@ -956,10 +956,11 @@ t35_ps_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
 t35_run() {
   local name="$1" path="$2"; shift 2
   t35_case="$t35_root/$name"
-  mkdir -p "$t35_case/home" "$t35_case/cwd"
+  mkdir -p "$t35_case/home/.config/powershell" "$t35_case/cwd"
+  printf '%s\n' 'Set-StrictMode -Version Latest' > "$t35_case/home/.config/powershell/Microsoft.PowerShell_profile.ps1"
   ( cd "$t35_case/cwd" && env -i HOME="$t35_case/home" PATH="$path" \
       POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-      "$PWSH_BIN" -NoProfile -NonInteractive "$@" ) \
+      "$PWSH_BIN" -NonInteractive "$@" ) \
     > "$t35_case/stdout" 2> "$t35_case/stderr"
   t35_rc=$?
   t35_err=""
@@ -1104,8 +1105,56 @@ STUB
     t35_unchanged
     t35_result "T35h $t35_help help names both flag spellings and changes nothing"
   done
+
+  t35_run j-default "$t35_root/empty-path" -File "$t35_repo/install.ps1"
+  t35_prefix="$t35_case/home/.claude"
+  t35_expect_rc 0
+  t35_installed
+  t35_result "T35j strict profile: no arguments installs all agents and skills under HOME"
+
+  t35_prefix="$t35_root/j-dry-target"
+  t35_run j-dry-run "$t35_root/empty-path" -Command "& $t35_ps1 -DryRun -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
+  t35_unchanged
+  t35_result "T35j strict profile: typed PowerShell dry run changes nothing"
+
+  t35_prefix="$t35_root/j-install-target"
+  t35_run j-install "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
+  t35_expect_rc 0
+  t35_installed
+  t35_result "T35j strict profile: native -Prefix installs all agents and skills"
+
+  t35_run j-uninstall "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix" -Uninstall
+  t35_expect_rc 0
+  t35_left=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$t35_left" -eq 0 ] || t35_err="$t35_err agents-left:$t35_left"
+  [ -z "$(ls -A "$t35_prefix/skills" 2>/dev/null)" ] || t35_err="$t35_err skills-left"
+  t35_result "T35j strict profile: native -Uninstall removes installed agents and skills"
+
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' "\$@" > "$t35_root/j-git-args"
+exit 0
+STUB
+  rm -f "$t35_marker"
+  t35_prefix="$t35_root/j-git-target"
+  t35_run j-git "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
+  t35_expect_rc 0
+  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+  if [ -f "$t35_root/j-git-args" ]; then
+    t35_first=$(head -1 "$t35_root/j-git-args")
+    case "$t35_first" in */install.sh) ;; *) t35_err="$t35_err first-arg-not-install.sh" ;; esac
+    for t35_arg in --prefix "$t35_prefix"; do
+      grep -qxF -- "$t35_arg" "$t35_root/j-git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
+    done
+  else
+    t35_err="$t35_err Git-bash-not-run"
+  fi
+  t35_unchanged
+  t35_result "T35j strict profile: native -Prefix delegates to Git-layout bash"
 else
-  for t35_case_id in a b c d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias; do
+  for t35_case_id in a b c d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git; do
     skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
   done
 fi
