@@ -10,6 +10,7 @@ on:
 # raise NativeCommandError in Windows PowerShell 5.1 before we inspect the exit.
 env:
   TEST_GNU_FLAGS: |
+    Set-StrictMode -Version Latest
     $installer = Join-Path $env:GITHUB_WORKSPACE "install.ps1"
     $caseDir = Join-Path $env:RUNNER_TEMP ("fc-flags-" + $PSVersionTable.PSVersion.Major)
     $cwd = Join-Path $caseDir "cwd"
@@ -35,6 +36,26 @@ env:
       if ($LASTEXITCODE -ne 2) { throw "--bogus exited $LASTEXITCODE instead of 2" }
       if (Test-Path -LiteralPath $prefix) { throw "invalid option created the prefix" }
       if (@(Get-ChildItem -LiteralPath $cwd -Force).Count -ne 0) { throw "invalid option changed cwd" }
+
+      $prefix = Join-Path $caseDir ("force-uninstall-" + [Guid]::NewGuid().ToString("N"))
+      $LASTEXITCODE = 0
+      & $installer --prefix $prefix
+      if ($LASTEXITCODE -ne 0) { throw "setup install exited $LASTEXITCODE" }
+      $probe = Join-Path $prefix "agents\fc-pm.md"
+      $installed = [Convert]::ToBase64String([IO.File]::ReadAllBytes($probe))
+      [IO.File]::AppendAllText($probe, "`nLocally edited agent.`n")
+
+      $LASTEXITCODE = 0
+      & $installer --force --prefix $prefix
+      if ($LASTEXITCODE -ne 0) { throw "--force --prefix exited $LASTEXITCODE" }
+      $forced = [Convert]::ToBase64String([IO.File]::ReadAllBytes($probe))
+      if ($forced -cne $installed) { throw "--force did not restore installed bytes" }
+
+      $LASTEXITCODE = 0
+      & $installer --uninstall --prefix $prefix
+      if ($LASTEXITCODE -ne 0) { throw "--uninstall --prefix exited $LASTEXITCODE" }
+      $left = @(Get-ChildItem -LiteralPath (Join-Path $prefix "agents") -Filter fc-*.md -ErrorAction SilentlyContinue)
+      if ($left.Count -ne 0) { throw "--uninstall left $($left.Count) agent(s)" }
     } finally {
       Pop-Location
     }

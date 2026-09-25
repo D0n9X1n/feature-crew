@@ -1153,8 +1153,66 @@ STUB
   fi
   t35_unchanged
   t35_result "T35j strict profile: native -Prefix delegates to Git-layout bash"
+
+  for t35_form in typed file; do
+    for t35_flag in force uninstall; do
+      t35_prefix="$t35_root/k-$t35_flag-$t35_form-prefix"
+      t35_run "k-$t35_flag-$t35_form-install" "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
+      t35_expect_rc 0
+      t35_installed
+      if [ -n "$t35_err" ]; then
+        t35_result "T35k $t35_form --$t35_flag requires a fresh install"
+        continue
+      fi
+      if [ "$t35_flag" = force ]; then
+        cp "$t35_prefix/agents/fc-pm.md" "$t35_root/k-$t35_form-fresh-pm.md"
+        printf '\nLocally edited agent.\n' >> "$t35_prefix/agents/fc-pm.md"
+      fi
+      case "$t35_form" in
+        typed) t35_run "k-$t35_flag-typed" "$t35_root/empty-path" -Command "& $t35_ps1 --$t35_flag --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
+        file)  t35_run "k-$t35_flag-file" "$t35_root/empty-path" -File "$t35_repo/install.ps1" "--$t35_flag" --prefix "$t35_prefix" ;;
+      esac
+      t35_expect_rc 0
+      if [ "$t35_flag" = force ]; then
+        cmp -s "$t35_prefix/agents/fc-pm.md" "$t35_root/k-$t35_form-fresh-pm.md" || t35_err="$t35_err installed-bytes-not-restored"
+        t35_result "T35k $t35_form --force restores fresh-install bytes"
+      else
+        t35_left=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
+        [ "$t35_left" -eq 0 ] || t35_err="$t35_err agents-left:$t35_left"
+        t35_left=$(find "$t35_prefix/skills" -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        [ "$t35_left" -eq 0 ] || t35_err="$t35_err skill-directories-left:$t35_left"
+        t35_result "T35k $t35_form --uninstall removes installed agents and skills"
+      fi
+    done
+  done
+
+  # Earlier cases replace this stub; each run must record its own arguments.
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' "\$@" > "$t35_root/git-args"
+exit 0
+STUB
+  for t35_style in gnu native; do
+    rm -f "$t35_marker" "$t35_root/git-args"
+    t35_prefix="$t35_root/l-$t35_style-prefix"
+    case "$t35_style" in
+      gnu)    t35_run l-gnu "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --force --uninstall --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
+      native) t35_run l-native "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 -Force -Uninstall -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
+    esac
+    t35_expect_rc 0
+    [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+    if [ -f "$t35_root/git-args" ]; then
+      for t35_arg in --force --uninstall --prefix "$t35_prefix"; do
+        grep -qxF -- "$t35_arg" "$t35_root/git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
+      done
+    else
+      t35_err="$t35_err Git-bash-not-run"
+    fi
+    t35_unchanged
+    t35_result "T35l typed $t35_style force/uninstall flags reach Git-layout bash"
+  done
 else
-  for t35_case_id in a b c d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git; do
+  for t35_case_id in a b c d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native; do
     skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
   done
 fi
