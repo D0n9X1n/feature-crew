@@ -1060,8 +1060,11 @@ echo "$classifier" | grep -qiE 'recurs|cycle' || t33_err="$t33_err no-cycles"
 echo "$classifier" | grep -qiE 'fc-grill-me.*leaf.*any flow may call' \
   || t33_err="$t33_err grill-leaf-exception-missing"
 brainstorm=.claude/skills/fc-brainstorm/SKILL.md
+bs_panel=$(sed -n '/^## 2 — Panel/,/^## /p' "$brainstorm")
 bs_spec=$(sed -n '/^## 5 — Spec/,/^## /p' "$brainstorm")
 bs_caps=$(sed -n '/^## Caps/,/^## /p' "$brainstorm")
+echo "$bs_panel" | grep -qE '^> .*Do not call `Agent`, `Skill`, `Workflow`, or delegate' \
+  || t33_err="$t33_err brainstorm-panel-delegation-not-forbidden"
 echo "$bs_spec" | grep -qiE 'another flow invoked.*return.*approved spec.*originator' \
   || t33_err="$t33_err brainstorm-does-not-return-approved-spec"
 echo "$bs_spec" | grep -qF 'Hand off to `/fc-build-or-fix`' \
@@ -1119,8 +1122,16 @@ if [ -f "$provenance" ]; then
     echo "$families" | grep -qF "claude-${family}-*" \
       || t55_err="$t55_err ${family}-id-family-mapping-missing"
   done
-  echo "$families" | grep -qiE 'non-Claude id.*(provider|gateway).*family' \
+  echo "$families" | grep -qiE 'non-Claude id.*provider.*family' \
     || t55_err="$t55_err non-claude-family-mapping-missing"
+  echo "$families" | grep -qiE 'non-Claude id.*prefix.*`gpt-\*`.*GPT' \
+    || t55_err="$t55_err non-claude-vendor-prefix-rule-missing"
+  echo "$families" | grep -qiE 'every id.*one vendor line.*one family' \
+    || t55_err="$t55_err vendor-line-family-boundary-missing"
+  echo "$families" | grep -qiE 'unknown only when.*vendor cannot be (told|identified)' \
+    || t55_err="$t55_err unknown-vendor-boundary-missing"
+  echo "$families" | grep -qiE 'non-Claude id.*requires.*verified.*mapping|without.*(reliable|verified).*mapping.*unknown' \
+    && t55_err="$t55_err verified-mapping-still-required"
   for assumption in 2.1.251 CLAUDE_CODE_SUBAGENT_MODEL_FORCE availableModels 'fallback chains' 'alias-remapping gateways'; do
     echo "$assumptions" | grep -qF "$assumption" \
       || t55_err="$t55_err missing-assumption:$assumption"
@@ -1130,11 +1141,34 @@ if [ -f "$provenance" ]; then
 else
   t55_err="$t55_err gate-provenance-missing"
 fi
+# Pin the caller's choice, not a fixed author family. Each call site must use
+# the canonical default so a Sonnet session is not silently moved to Opus.
+echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*alias.*session.s own model.*unless the user chose another' \
+  || t55_err="$t55_err session-authoring-alias-default-missing"
 complex_flow=$(sed -n '/^## Flow/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
-echo "$complex_flow" | grep -qE '^5\. .*fc-architect.*explicit.*`model: (opus|sonnet|haiku|fable)`' \
-  || t55_err="$t55_err architect-model-not-explicit"
-echo "$complex_flow" | grep -qE '^8\. .*fc-developer.*explicit.*`model: (opus|sonnet|haiku|fable)`' \
-  || t55_err="$t55_err developer-model-not-explicit"
+architect_dispatch=$(echo "$complex_flow" | grep -E '^5\. ')
+developer_dispatch=$(echo "$complex_flow" | grep -E '^8\. ')
+synthesis_dispatch=$(sed -n '/^## Phase 2/,/^## /p' .claude/skills/fc-research/SKILL.md)
+echo "$architect_dispatch" | grep -qE 'fc-architect.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
+  || t55_err="$t55_err architect-authoring-rule-not-linked"
+echo "$developer_dispatch" | grep -qE 'fc-developer.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
+  || t55_err="$t55_err developer-authoring-rule-not-linked"
+echo "$synthesis_dispatch" | grep -qE 'general-purpose.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
+  || t55_err="$t55_err synthesis-authoring-rule-not-linked"
+for authoring_site in architect developer synthesis; do
+  case "$authoring_site" in
+    architect) authoring_text="$architect_dispatch" ;;
+    developer) authoring_text="$developer_dispatch" ;;
+    synthesis) authoring_text="$synthesis_dispatch" ;;
+  esac
+  echo "$authoring_text" | grep -qE 'model: *(opus|sonnet|haiku|fable)' \
+    && t55_err="$t55_err $authoring_site:hardcoded-authoring-alias"
+done
+complex_example=$(sed -n '/^## Worked example/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
+echo "$complex_example" | grep -qE '^> .*fc-architect.*requested with `model: sonnet`' \
+  || t55_err="$t55_err example-architect-changes-session-family"
+echo "$complex_example" | grep -qE '^> .*Developers requested with `model: sonnet`' \
+  || t55_err="$t55_err example-developers-change-session-family"
 [ -z "$t55_err" ] && ok "T55 static contract alarm: recorded-model provenance + pinned authors" \
                    || bad "T55 provenance reference and author dispatch contract" "missing:$t55_err"
 
