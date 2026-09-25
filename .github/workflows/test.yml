@@ -5,6 +5,42 @@ on:
     branches: [main]
   pull_request:
 
+# Reuse the same typed invocations in both Windows hosts and both installer paths.
+# Capture Write-Host (stream 6), not native stderr: redirecting native stderr can
+# raise NativeCommandError in Windows PowerShell 5.1 before we inspect the exit.
+env:
+  TEST_GNU_FLAGS: |
+    $installer = Join-Path $env:GITHUB_WORKSPACE "install.ps1"
+    $caseDir = Join-Path $env:RUNNER_TEMP ("fc-flags-" + $PSVersionTable.PSVersion.Major)
+    $cwd = Join-Path $caseDir "cwd"
+    $prefix = Join-Path $caseDir "prefix"
+    New-Item -ItemType Directory -Force -Path $cwd | Out-Null
+    Push-Location $cwd
+    try {
+      $LASTEXITCODE = 0
+      $output = & $installer --dry-run --prefix $prefix 6>&1
+      if ($LASTEXITCODE -ne 0) { throw "--dry-run --prefix exited $LASTEXITCODE" }
+      if (($output -join "`n") -notmatch 'DRY-RUN:') { throw "missing dry-run output" }
+      if (Test-Path -LiteralPath $prefix) { throw "dry run created the prefix" }
+      if (@(Get-ChildItem -LiteralPath $cwd -Force).Count -ne 0) { throw "dry run changed cwd" }
+
+      $LASTEXITCODE = 0
+      $output = & $installer --dry-run 6>&1
+      if ($LASTEXITCODE -ne 0) { throw "--dry-run exited $LASTEXITCODE" }
+      if (($output -join "`n") -notmatch 'DRY-RUN:') { throw "missing default dry-run output" }
+      if (@(Get-ChildItem -LiteralPath $cwd -Force).Count -ne 0) { throw "created a --dry-run folder" }
+
+      $LASTEXITCODE = 0
+      & $installer --bogus
+      if ($LASTEXITCODE -ne 2) { throw "--bogus exited $LASTEXITCODE instead of 2" }
+      if (Test-Path -LiteralPath $prefix) { throw "invalid option created the prefix" }
+      if (@(Get-ChildItem -LiteralPath $cwd -Force).Count -ne 0) { throw "invalid option changed cwd" }
+    } finally {
+      Pop-Location
+    }
+    # GitHub appends exit $LASTEXITCODE; the expected --bogus exit must not fail CI.
+    exit 0
+
 jobs:
   framework:
     runs-on: ubuntu-latest
@@ -34,7 +70,9 @@ jobs:
         # bug T10 and T15 had.
         env:
           FC_STRICT: "1"
-        run: bash tests/framework_test.sh
+        run: |
+          pwsh --version
+          bash tests/framework_test.sh
 
       - name: Verify installer against a clean prefix
         run: |
@@ -51,28 +89,24 @@ jobs:
           test "$(ls "$PREFIX/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 0
 
   powershell:
-    # install.ps1 cannot be executed on the dev machine, so CI is the only place
-    # it ever runs. Parity is a repo rule; without this job it is only asserted.
-    #
-    # install.ps1 prefers bash when present, and windows-latest ships several
-    # bash binaries -- Git's, and WSL's under System32. Running it as-is tests
-    # bash-on-Windows and never touches the pure-PowerShell fallback, so the
-    # encoding fix, Resolve-AbsPath, and the ownership check all go unexercised
-    # while the job reports green.
-    #
-    # Masking by directory NAME is not enough (an earlier attempt filtered for
-    # 'Git' and bash still resolved). Instead: ask where bash actually is, drop
-    # that directory, repeat until it stops resolving. That handles every bash
-    # on the box without guessing at any of their paths.
+    # Windows-specific fallback coverage complements T35's Unix pwsh cases.
+    # windows-latest ships Git's bash and WSL's under System32. Mask both bash
+    # and git so discovery through git cannot silently bypass the fallback.
+    # Query actual command locations and remove their PATH directories until
+    # neither command resolves; directory-name guesses have missed bash before.
     runs-on: windows-latest
     env:
       MASK_BASH: |
-        for ($i = 0; $i -lt 10; $i++) {
-          $b = Get-Command bash -ErrorAction SilentlyContinue
-          if (-not $b) { break }
-          $dir = Split-Path $b.Source -Parent
-          $env:PATH = ($env:PATH -split ';' |
-            Where-Object { $_ -and ($_.TrimEnd('\') -ne $dir.TrimEnd('\')) }) -join ';'
+        while ($true) {
+          $commands = @(Get-Command bash, git -ErrorAction SilentlyContinue)
+          if ($commands.Count -eq 0) { break }
+          $before = $env:PATH
+          foreach ($command in $commands) {
+            $dir = Split-Path $command.Source -Parent
+            $env:PATH = ($env:PATH -split ';' |
+              Where-Object { $_ -and ($_.TrimEnd('\') -ne $dir.TrimEnd('\')) }) -join ';'
+          }
+          if ($env:PATH -eq $before) { throw "cannot mask bash/git by removing their PATH directories" }
         }
     steps:
       - uses: actions/checkout@v4
@@ -87,10 +121,11 @@ jobs:
         run: |
           Invoke-Expression $env:MASK_BASH
           $b = Get-Command bash -ErrorAction SilentlyContinue
-          if ($b) {
-            throw "bash still resolves at $($b.Source) — the fallback would be skipped and this job would test nothing"
+          $g = Get-Command git -ErrorAction SilentlyContinue
+          if ($b -or $g) {
+            throw "bash or git still resolves - the fallback would be skipped and this job would test nothing"
           }
-          Write-Host "bash masked; install.ps1 will use the PowerShell fallback"
+          Write-Host "bash and git masked; install.ps1 will use the PowerShell fallback"
 
       - name: Install to a temp prefix
         shell: pwsh
@@ -145,6 +180,7 @@ jobs:
           # published content -- a hand-written approximation tests the fixture,
           # not the classifier, and the classifier correctly refuses to delete
           # something it never shipped.
+          $gitPath = (Get-Command git -CommandType Application | Select-Object -First 1).Path
           Invoke-Expression $env:MASK_BASH
           $prefix = Join-Path $env:RUNNER_TEMP "fc-legacy"
           $mine   = Join-Path $prefix "skills\research"
@@ -169,7 +205,7 @@ jobs:
           # hash then does not match and the classifier correctly refuses to
           # delete it -- which is how the previous attempt at this fixture
           # failed. Join explicitly with LF and restore the trailing newline.
-          $lines = git show v4.0:.claude/skills/build-or-fix/SKILL.md
+          $lines = & $gitPath show v4.0:.claude/skills/build-or-fix/SKILL.md
           [IO.File]::WriteAllText(
             (Join-Path $ours "SKILL.md"),
             (($lines -join "`n") + "`n"),
@@ -204,21 +240,81 @@ jobs:
           $left = @(Get-ChildItem (Join-Path $prefix "agents") -Filter *.md -EA SilentlyContinue)
           if ($left.Count -ne 0) { throw "uninstall left $($left.Count) agent(s)" }
 
+      - name: GNU-style flags in the PowerShell fallback (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Invoke-Expression $env:TEST_GNU_FLAGS
+
+      - name: GNU-style flags in the PowerShell fallback (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Invoke-Expression $env:TEST_GNU_FLAGS
+
   powershell-delegation:
-    # The other half: with bash present, install.ps1 must delegate to it. That
-    # is the path most Windows users with Git installed actually take.
+    # Prove Git for Windows' bash runs even when a broken bash is first on PATH.
     runs-on: windows-latest
+    env:
+      TEST_DECOY_BASH: |
+        $decoy = Join-Path $env:RUNNER_TEMP "decoy"
+        $marker = Join-Path $decoy "ran"
+        $decoyBash = Join-Path $decoy "bash.cmd"
+        New-Item -ItemType Directory -Force -Path $decoy | Out-Null
+        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+        $lines = @('@echo off', ('echo ran > "' + $marker + '"'), 'exit /b 127')
+        Set-Content -LiteralPath $decoyBash -Value $lines -Encoding Ascii
+        $env:PATH = "$decoy;$env:PATH"
+        $resolved = (Get-Command bash -ErrorAction Stop).Source
+        if ($resolved -ne $decoyBash) { throw "decoy is not first on PATH: $resolved" }
+        $prefix = Join-Path $env:RUNNER_TEMP ("fc-decoy-" + $PSVersionTable.PSVersion.Major)
+        $LASTEXITCODE = 0
+        $output = .\install.ps1 -Prefix $prefix -Force 6>&1
+        $code = $LASTEXITCODE
+        if (Test-Path -LiteralPath $marker) { throw "install.ps1 ran the PATH decoy" }
+        if ($code -ne 0) { throw "install.ps1 exited $code" }
+        $agents = @(Get-ChildItem (Join-Path $prefix "agents") -Filter fc-*.md)
+        $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+        if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+        if (($output -join "`n") -notmatch '/agents/fc-pm\.md') {
+          throw "no Git Bash path in output - the PowerShell fallback is not delegation"
+        }
     steps:
       - uses: actions/checkout@v4
 
-      - name: Delegates to bash when bash is available
+      - name: Confirm Git for Windows bash is available
         shell: pwsh
         run: |
-          if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
-            throw "no bash on windows-latest — this job cannot test delegation"
-          }
-          $prefix = Join-Path $env:RUNNER_TEMP "fc-delegated"
-          .\install.ps1 -Prefix $prefix -Force
-          $agents = Get-ChildItem (Join-Path $prefix "agents") -Filter *.md
-          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
-          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+          $git = Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1
+          $gitDir = Split-Path -Parent $git.Path
+          $parent = Split-Path -Parent $gitDir
+          $grandparent = Split-Path -Parent $parent
+          $candidates = @(
+            (Join-Path (Join-Path $parent "bin") "bash.exe")
+            (Join-Path (Join-Path $grandparent "bin") "bash.exe")
+          )
+          $gitBash = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $gitBash) { throw "no Git for Windows bash beside git - cannot test delegation" }
+          Write-Host "Git for Windows bash: $gitBash"
+
+      - name: Ignores a decoy bash first on PATH (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: Invoke-Expression $env:TEST_DECOY_BASH
+
+      - name: GNU-style flags from a temp cwd (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: Invoke-Expression $env:TEST_GNU_FLAGS
+
+      - name: Ignores a decoy bash first on PATH (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: Invoke-Expression $env:TEST_DECOY_BASH
+
+      - name: GNU-style flags from a temp cwd (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: Invoke-Expression $env:TEST_GNU_FLAGS
