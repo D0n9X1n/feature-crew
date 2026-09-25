@@ -108,6 +108,8 @@ jobs:
           test "$(ls "$PREFIX/skills" | wc -l | tr -d ' ')" -eq "$WANT_SKILLS"
           bash install.sh --prefix "$PREFIX" --uninstall
           test "$(ls "$PREFIX/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 0
+          test "$(find "$PREFIX/skills" -mindepth 1 -maxdepth 1 -type d -name 'fc-*' 2>/dev/null | wc -l | tr -d ' ')" -eq 0
+          test ! -e "$PREFIX/feature-crew.sha256"
 
   powershell:
     # Windows-specific fallback coverage complements T35's Unix pwsh cases.
@@ -128,6 +130,18 @@ jobs:
               Where-Object { $_ -and ($_.TrimEnd('\') -ne $dir.TrimEnd('\')) }) -join ';'
           }
           if ($env:PATH -eq $before) { throw "cannot mask bash/git by removing their PATH directories" }
+        }
+      TEST_AGENT_BYTES: |
+        foreach ($src in Get-ChildItem agents -Filter *.md) {
+          $installed = [IO.File]::ReadAllBytes((Join-Path $prefix "agents\$($src.Name)"))
+          $original = [IO.File]::ReadAllBytes($src.FullName)
+          # ASCII maps each byte to one character, so the header length is a
+          # byte offset. Never compare decoded or newline-normalized bodies.
+          $front = [regex]::Match([Text.Encoding]::ASCII.GetString($installed),
+            '\A---\r?\n.*?\r?\n---\r?\n\r?\n', [Text.RegularExpressions.RegexOptions]::Singleline)
+          if (-not $front.Success) { throw "$($src.Name) generated frontmatter missing" }
+          $body = [Convert]::ToBase64String($installed, $front.Length, $installed.Length - $front.Length)
+          if ($body -cne [Convert]::ToBase64String($original)) { throw "$($src.Name) body altered on install" }
         }
       CAPTURE_MANIFEST_TOOLS: |
         # Capture Git's own executables BEFORE masking; never select WSL bash.
@@ -288,17 +302,10 @@ jobs:
       - name: Agent bodies survive the round-trip byte-for-byte
         shell: pwsh
         run: |
-          # The bug this catches: PowerShell 5.1 defaults to the system ANSI
-          # code page, which mangles the en-dashes, arrows and U+2264 in the
-          # agent bodies. Compare against the source to prove it did not.
+          # Keep byte identity, including BOMs, case, and line endings; a decoded
+          # text comparison can hide corruption on either PowerShell host.
           $prefix = Join-Path $env:RUNNER_TEMP "fc-install"
-          foreach ($src in Get-ChildItem agents -Filter *.md) {
-            $installed = [IO.File]::ReadAllText(
-              (Join-Path $prefix "agents\$($src.Name)"), [Text.Encoding]::UTF8)
-            $original  = [IO.File]::ReadAllText($src.FullName, [Text.Encoding]::UTF8)
-            $body = $installed -replace '(?s)^---\r?\n.*?\r?\n---\r?\n\r?\n', ''
-            if ($body -ne $original) { throw "$($src.Name) body altered on install" }
-          }
+          Invoke-Expression $env:TEST_AGENT_BYTES
 
       - name: Legacy cleanup does not destroy a personal skill
         shell: pwsh
@@ -367,6 +374,57 @@ jobs:
           .\install.ps1 -Prefix $prefix -Uninstall
           $left = @(Get-ChildItem (Join-Path $prefix "agents") -Filter *.md -EA SilentlyContinue)
           if ($left.Count -ne 0) { throw "uninstall left $($left.Count) agent(s)" }
+          $skills = @(Get-ChildItem -LiteralPath (Join-Path $prefix "skills") -Filter fc-* -Directory -Force -EA SilentlyContinue)
+          if ($skills.Count -ne 0) { throw "uninstall left $($skills.Count) skill(s)" }
+          if (Test-Path -LiteralPath (Join-Path $prefix "feature-crew.sha256")) { throw "uninstall left its manifest" }
+
+      # CI cannot simulate CJK ANSI code pages: hosted runners cannot switch the
+      # system code page per step. T17's byte-path assertion is the static guard;
+      # byte I/O removes that code path. Exercise both Windows hosts regardless.
+      - name: Install to a clean prefix (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install-ps51"
+          if (Test-Path -LiteralPath $prefix) { throw "PowerShell 5.1 prefix is not fresh" }
+          $LASTEXITCODE = 0
+          & .\install.ps1 -Prefix $prefix -Force
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell 5.1 install exited $LASTEXITCODE" }
+          $agents = @(Get-ChildItem -LiteralPath (Join-Path $prefix "agents") -Filter *.md)
+          $skills = @(Get-ChildItem -LiteralPath (Join-Path $prefix "skills") -Directory)
+          $wantAgents = @(Get-ChildItem agents -Filter *.md).Count
+          $wantSkills = @(Get-ChildItem .claude\skills -Directory |
+                          Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") }).Count
+          if ($agents.Count -ne $wantAgents) { throw "expected $wantAgents agents, got $($agents.Count)" }
+          if ($skills.Count -ne $wantSkills) { throw "expected $wantSkills skills, got $($skills.Count)" }
+          if (-not (Test-Path -LiteralPath (Join-Path $prefix "agents\fc-pm.md"))) { throw "PowerShell 5.1 did not install fc-pm.md" }
+
+      - name: Agent bodies survive the byte round-trip (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install-ps51"
+          Invoke-Expression $env:TEST_AGENT_BYTES
+
+      - name: Uninstall removes the clean prefix contents (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-install-ps51"
+          $LASTEXITCODE = 0
+          & .\install.ps1 -Prefix $prefix -Uninstall
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell 5.1 uninstall exited $LASTEXITCODE" }
+          $agents = @(Get-ChildItem -LiteralPath (Join-Path $prefix "agents") -Filter fc-*.md -File -Force -EA SilentlyContinue)
+          if ($agents.Count -ne 0) { throw "uninstall left $($agents.Count) agent(s)" }
+          $skills = @(Get-ChildItem -LiteralPath (Join-Path $prefix "skills") -Filter fc-* -Directory -Force -EA SilentlyContinue)
+          if ($skills.Count -ne 0) { throw "uninstall left $($skills.Count) skill(s)" }
+          if (Test-Path -LiteralPath (Join-Path $prefix "feature-crew.sha256")) { throw "uninstall left its manifest" }
 
       - name: GNU-style flags in the PowerShell fallback (pwsh)
         if: ${{ !cancelled() }}

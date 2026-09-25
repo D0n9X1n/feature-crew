@@ -595,12 +595,21 @@ else
   t20_err="$t20_err attack4-not-applied"
 fi
 
+# Attack 5 (#26): a conditional top-level throw bypasses the column-0 check.
+awk '/^Install-ClaudeGlobal[[:space:]]*$/ { print "if ($true) { throw \"native-only regression\" }" } { print }' \
+  install.ps1 > "$mut/e.ps1"
+if grep -qxF 'if ($true) { throw "native-only regression" }' "$mut/e.ps1"; then
+  ps1_operative_ok "$mut/e.ps1" && t20_err="$t20_err attack5-undetected"
+else
+  t20_err="$t20_err attack5-not-applied"
+fi
+
 # Control: the real installers must still pass, or the check is just broken.
 ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
 sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
 
 rm -rf "$mut"
-[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (4 mutations + 2 controls)" \
+[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (5 mutations + 2 controls)" \
                   || bad "T20 mutation test" "issues:$t20_err"
 
 # ---------------------------------------------------------------- T21
@@ -2303,6 +2312,69 @@ sed -n '/^## Updating$/,/^## Credits$/p' README.md | grep -qF 'feature-crew.sha2
 count=$(wc -l < README.md | tr -d ' ')
 [ "$count" -eq 94 ] || case_err="$case_err README-lines=$count(want-94)"
 installer_result "T54 README explains the install manifest without gaining lines"
+
+# ---------------------------------------------------------------- T58
+# Parse the workflow graph: a Linux-only suite in release.yml cannot substantiate
+# Windows validation. The release must need the reusable full test workflow and
+# build its validation list from the jobs of this run, not static claims.
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  skip "T58 release workflow gate (PyYAML unavailable)"
+else
+  if t58_out=$(python3 - <<'PY'
+import pathlib, sys, yaml
+
+test = yaml.safe_load(pathlib.Path('.github/workflows/test.yml').read_text())
+release_text = pathlib.Path('.github/workflows/release.yml').read_text()
+release = yaml.safe_load(release_text)
+errors = []
+def require(condition, message):
+    if not condition:
+        errors.append(message)
+
+# PyYAML's YAML 1.1 resolver may interpret the key `on` as boolean True.
+triggers = test.get('on', test.get(True, {}))
+require(isinstance(triggers, dict) and {'workflow_call', 'push', 'pull_request'} <= set(triggers),
+        'test-missing-reusable-or-existing-trigger')
+require(release.get('permissions') == {'contents': 'read'}, 'release-default-permissions-not-read-only')
+jobs = release.get('jobs', {})
+reusable = {name for name, job in jobs.items() if job.get('uses') == './.github/workflows/test.yml'}
+require(bool(reusable), 'release-does-not-call-test-workflow')
+publish = jobs.get('release', {})
+require(publish.get('name') == 'release', 'publishing-job-must-be-named-release')
+needs = publish.get('needs', [])
+if isinstance(needs, str):
+    needs = [needs]
+require(bool(reusable.intersection(needs)), 'release-does-not-need-full-tests')
+require(publish.get('permissions') == {'contents': 'write', 'actions': 'read'},
+        'publishing-permissions-must-be-contents-write-actions-read')
+steps = [step for job in jobs.values() for step in job.get('steps', [])]
+scripts = '\n'.join(str(step.get('run', '')) for step in steps)
+require('tests/framework_test.sh' not in scripts, 'release-runs-its-own-suite')
+require(not any('pyyaml' in str(step).lower() for step in steps), 'release-installs-its-own-PyYAML')
+require('executed on Windows' not in release_text, 'release-claims-static-Windows-validation')
+require(any('gh api' in str(step.get('run', '')) and
+            'actions/runs/$GITHUB_RUN_ID/jobs' in str(step.get('run', '')) and
+            step.get('env', {}).get('GH_TOKEN') == '${{ github.token }}' for step in steps),
+        'release-missing-authenticated-current-run-jobs-query')
+require('git fetch origin main' in scripts and
+        'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in scripts,
+        'release-missing-tag-on-main-gate')
+require('release-notes.md' in scripts and
+        all(heading in scripts for heading in ('## feature-crew ', '### Commits', '### Contents', '### Validation', '### Install')),
+        'release-missing-generated-body-structure')
+require(any('gh release create' in str(step.get('run', '')) and
+            '--verify-tag' in str(step.get('run', '')) and
+            '--notes-file release-notes.md' in str(step.get('run', '')) for step in steps),
+        'release-missing-verified-tag-publication')
+print(' '.join(errors))
+sys.exit(bool(errors))
+PY
+  ); then
+    ok "T58 release needs the full reusable test workflow and reports this run's validation"
+  else
+    bad "T58 release workflow gate" "issues:$t58_out"
+  fi
+fi
 
 echo
 if [ "$SKIP" -gt 0 ]; then
