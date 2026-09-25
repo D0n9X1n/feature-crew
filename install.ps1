@@ -96,6 +96,15 @@ $SrcAgents     = Join-Path $ScriptDir "agents"
 $SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
 $DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
+$EmDash = [char]0x2014
+$DryDirs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$PublishedHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$publishedTable = Join-Path $ScriptDir "published.sha256"
+if (Test-Path -LiteralPath $publishedTable -PathType Leaf) {
+  foreach ($line in [IO.File]::ReadAllLines($publishedTable)) {
+    [void]$PublishedHashes.Add($line)
+  }
+}
 
 # Map agent filename -> description. The subagent NAME is the filename without
 # .md, so source and installed names cannot drift. Role frontmatter carries no
@@ -110,14 +119,30 @@ $AgentMeta = @{
   "fc-tech-lead.md" = "Feature-Crew Tech Lead: final cross-family review before merging Complex work."
 }
 
-function Do-Or-Echo($msg, [scriptblock]$action) {
-  if ($DryRun) { Write-Host "DRY-RUN: $msg" } else { & $action; Write-Host $msg }
+function Ensure-Dir($p) {
+  if (Test-Path -LiteralPath $p -PathType Container) { return }
+  if ($DryRun) {
+    if ($DryDirs.Add($p)) { Write-Host "DRY-RUN: mkdir -p $p" }
+  } else {
+    [IO.Directory]::CreateDirectory((Resolve-AbsPath $p)) | Out-Null
+  }
 }
 
-function Ensure-Dir($p) {
-  if (-not (Test-Path $p)) {
-    Do-Or-Echo "mkdir $p" { New-Item -ItemType Directory -Path $p -Force | Out-Null }
+# Sort slash-separated relative paths with an ordinal comparer, not the host's
+# culture. -Force includes hidden files just as find does in install.sh.
+function Get-SortedChildren($dir, [switch]$Recurse, [switch]$Directories, [string]$Filter = '*') {
+  $items = @(Get-ChildItem -LiteralPath $dir -Force -Recurse:$Recurse -Filter $Filter)
+  $paths = New-Object 'System.Collections.Generic.List[string]'
+  $byPath = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+  $root = (Resolve-AbsPath $dir).TrimEnd('\','/')
+  foreach ($item in $items) {
+    if ($item.PSIsContainer -ne [bool]$Directories) { continue }
+    $rel = $item.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
+    $paths.Add($rel)
+    $byPath.Add($rel, $item)
   }
+  $paths.Sort([StringComparer]::Ordinal)
+  foreach ($rel in $paths) { $byPath[$rel] }
 }
 
 # [IO.File] resolves relative paths against the *process* working directory,
@@ -128,59 +153,68 @@ function Resolve-AbsPath($p) {
   return (Join-Path (Get-Location).ProviderPath $p)
 }
 
+# Shared by install and ownership: never decode agent bodies. Text readers
+# discard BOMs and can silently use the system ANSI code page in PowerShell 5.1.
+function Get-AgentBytes($src, $name, $desc) {
+  $body = [IO.File]::ReadAllBytes((Resolve-AbsPath $src))
+  # Match install.sh's first-line predicate exactly: three dashes, LF or EOF.
+  $hasFront = ($body.Length -ge 3 -and $body[0] -eq 45 -and $body[1] -eq 45 -and
+    $body[2] -eq 45 -and ($body.Length -eq 3 -or $body[3] -eq 10))
+  if ($hasFront) { return ,$body }
+  # Quote descriptions containing ": " and encode only the new frontmatter.
+  $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
+  $utf8 = New-Object Text.UTF8Encoding($false)
+  return ,([byte[]]($utf8.GetBytes($front) + $body))
+}
+
+function Test-BytesEqual([byte[]]$a, [byte[]]$b) {
+  if ($a.Length -ne $b.Length) { return $false }
+  for ($i = 0; $i -lt $a.Length; $i++) {
+    if ($a[$i] -ne $b[$i]) { return $false }
+  }
+  return $true
+}
+
 function Install-Agent($src, $dest, $name, $desc) {
-  if ((Test-Path $dest) -and (-not $Force)) {
-    Write-Host "skip (exists): $dest  [use -Force to overwrite]"; return
+  if ((Test-Path -LiteralPath $dest) -and (-not $Force)) {
+    Write-Host "skip (exists): $dest  [use --force to overwrite]"; return
   }
   if ($DryRun) {
     Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return
   }
-  # Explicit UTF-8, no BOM. PowerShell 5.1 defaults Get-Content/Set-Content to
-  # the system ANSI code page, which silently mangles the en-dashes, em-dashes,
-  # arrows, and U+2264 in the agent bodies on CJK code pages. install.sh copies
-  # byte-for-byte via cat, so without this the two installers disagree -- and
-  # the corruption is silent, producing agents that install "successfully".
-  $body = [IO.File]::ReadAllText((Resolve-AbsPath $src), [Text.Encoding]::UTF8)
-  $needFront = -not ($body -match '^\s*---\s*\r?\n')
-  $front = ""
-  if ($needFront) {
-    # Description is quoted: role descriptions contain ": ", which a plain YAML
-    # scalar may not. Keep in sync with install.sh.
-    $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
-  }
-  [IO.File]::WriteAllText((Resolve-AbsPath $dest), ($front + $body), (New-Object System.Text.UTF8Encoding($false)))
+  [IO.File]::WriteAllBytes((Resolve-AbsPath $dest), (Get-AgentBytes $src $name $desc))
   Write-Host "installed: $dest"
 }
 
 # Copy a directory tree, file-by-file, honoring -Force / -DryRun.
-function Copy-Tree($srcDir, $destDir, [bool]$preserveAgentFrontmatter = $false) {
+function Copy-Tree($srcDir, $destDir) {
   Ensure-Dir $destDir
-  if (-not (Test-Path $srcDir)) { return }
-  Get-ChildItem -Recurse -File -Path $srcDir | ForEach-Object {
+  if (-not (Test-Path -LiteralPath $srcDir -PathType Container)) { return }
+  Get-SortedChildren $srcDir -Recurse | ForEach-Object {
     $rel = $_.FullName.Substring($srcDir.Length).TrimStart('\','/')
     $d   = Join-Path $destDir $rel
-    if ((Test-Path $d) -and (-not $Force)) {
-      Write-Host "skip (exists): $d  [use -Force to overwrite]"; return
+    if ((Test-Path -LiteralPath $d) -and (-not $Force)) {
+      Write-Host "skip (exists): $d  [use --force to overwrite]"; return
     }
     Ensure-Dir (Split-Path -Parent $d)
     if ($DryRun) {
-      Write-Host "DRY-RUN: cp $($_.FullName) -> $d"
+      Write-Host "DRY-RUN: cp $($_.FullName) $d"
     } else {
-      Copy-Item -Path $_.FullName -Destination $d -Force
+      [IO.File]::Copy((Resolve-AbsPath $_.FullName), (Resolve-AbsPath $d), $true)
       Write-Host "installed: $d"
     }
   }
 }
 
 function Install-ClaudeGlobal {
-  if (-not (Test-Path $SrcAgents)) {
+  if (-not (Test-Path -LiteralPath $SrcAgents -PathType Container)) {
     [Console]::Error.WriteLine("Cannot find agents/ next to install.ps1 ($SrcAgents)"); exit 1
   }
   Write-Host "feature-crew: installing into $Prefix"
   Ensure-Dir $DestAgents
 
   $count = 0
-  Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
+  Get-SortedChildren $SrcAgents -Filter '*.md' | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
     if (-not $meta) { $meta = "Feature-Crew agent." }
     $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
@@ -191,16 +225,16 @@ function Install-ClaudeGlobal {
   }
 
   $skillCount = 0
-  if (Test-Path $SrcSkillsDir) {
-    Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
+  if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
+    Get-SortedChildren $SrcSkillsDir -Directories | ForEach-Object {
       # A directory without SKILL.md is not a skill -- skip scratch dirs
       # rather than shipping them. Mirrored in install.sh.
-      if (-not (Test-Path (Join-Path $_.FullName "SKILL.md"))) { return }
+      if (-not (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf)) { return }
       Copy-Tree $_.FullName (Join-Path $DestSkillsDir $_.Name)
       $skillCount++
     }
   }
-  Remove-LegacySkills
+  Remove-Legacy
 
   Write-Host ""
   Write-Host "Done. Installed $count agent file(s) and $skillCount skill(s)."
@@ -212,62 +246,74 @@ function Install-ClaudeGlobal {
   Write-Host "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
 }
 
-# Skills gained the fc- prefix in v5.0.0. Remove the unprefixed directories so
-# an upgrade doesn't leave both installed and /build-or-fix still resolving.
-#
-# ONLY remove a directory we can prove we shipped. `research` and `build-or-fix`
-# are plausible names for a user's own skill, and deleting one would destroy
-# work with no prompt and no backup. Each candidate must carry both the exact
-# legacy `name:` field and a Feature-Crew provenance marker; anything else is
-# left alone and reported so the user can decide.
-# Mirrors remove_legacy_skills() in install.sh.
-# SHA-256 of every SKILL.md this project has ever published under the legacy
-# unprefixed names, hashed after normalizing CRLF to LF. Keep in sync with
-# legacy_hashes() in install.sh.
-#
 # Exact content identity, not a description prefix. Three prior attempts each
 # destroyed user data a different way: no check at all, a whole-file grep for
 # "feature-crew", then a description prefix. Prefix matching cannot answer
-# "did we write this file"; a hash can.
-$LegacyHashes = @{
-  "build-or-fix" = @(
-    "f11a81aff11703559827198e66f2d237d2bdab263ad43199e82972ec52d9cf72"  # v3.0, v3.1
-    "13cd94d534d0ed87d2b8d4edbf9bc904761a92ef826780ed9d7138f7258cd808"  # v4.0
-  )
-  "research" = @(
-    "e119bc4fe7ab4d528fd1fc2394a33e1aff6a7821be2182ae2903e1ecb925b94a"  # v3.1, v4.0
-  )
-}
+# "did we write this file"; a hash can, but only for that file, not neighbours.
+# published.sha256 is regenerated from the tagged installers by T43. Missing
+# table means nothing is recognized; edited and unknown files stay untouched.
 
 function Get-Sha256Lf($path) {
   $bytes = [IO.File]::ReadAllBytes((Resolve-AbsPath $path))
   # Strip CR so a Windows checkout of a genuine legacy skill still matches.
-  $lf = [byte[]]($bytes | Where-Object { $_ -ne 13 })
+  $lf = [byte[]]@($bytes | Where-Object { $_ -ne 13 })
   $sha = [Security.Cryptography.SHA256]::Create()
   try {
     ($sha.ComputeHash($lf) | ForEach-Object { $_.ToString("x2") }) -join ""
   } finally { $sha.Dispose() }
 }
 
-function Remove-LegacySkills {
-  foreach ($old in @("build-or-fix", "research")) {
-    $d = Join-Path $DestSkillsDir $old
-    if (-not (Test-Path $d)) { continue }
-    $f = Join-Path $d "SKILL.md"
-    if (-not (Test-Path $f)) {
-      Write-Host "kept (not ours - no SKILL.md): $d"; continue
+function Test-PublishedFile($file, $relativePath) {
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $false }
+  return $PublishedHashes.Contains((Get-Sha256Lf $file) + '  ' + $relativePath)
+}
+
+function Keep-Legacy($path) {
+  Write-Host "kept (not ours $EmDash content does not match any published version): $path"
+  Write-Host "  if this was an older Feature-Crew you edited, remove it by hand: $path"
+}
+
+function Remove-Legacy {
+  foreach ($location in @('agents/feature-crew', 'skills/build-or-fix', 'skills/research')) {
+    $dir = Join-Path $Prefix $location
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+    if ($location -ne 'agents/feature-crew') {
+      $skill = Join-Path $dir 'SKILL.md'
+      if (-not (Test-Path -LiteralPath $skill -PathType Leaf)) {
+        Write-Host "kept (not ours $EmDash no SKILL.md): $dir"; continue
+      }
+      if (-not (Test-PublishedFile $skill ($location + '/SKILL.md'))) {
+        Keep-Legacy $dir; continue
+      }
     }
-    $got = Get-Sha256Lf $f
-    if ($LegacyHashes[$old] -notcontains $got) {
-      Write-Host "kept (not ours - content does not match any published version): $d"
-      Write-Host "  if this was an older Feature-Crew you edited, remove it by hand: $d"
-      continue
+    $root = (Resolve-AbsPath $dir).TrimEnd('\','/')
+    foreach ($file in @(Get-SortedChildren $dir -Recurse)) {
+      $rel = $file.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
+      $path = Join-Path $dir $rel
+      if (Test-PublishedFile $path ($location + '/' + $rel)) {
+        if ($DryRun) {
+          Write-Host "DRY-RUN: would remove (legacy): $path"
+        } else {
+          Remove-Item -LiteralPath $path -Force
+          Write-Host "removed (legacy): $path"
+        }
+      } else {
+        Keep-Legacy $path
+      }
     }
-    if ($DryRun) {
-      Write-Host "DRY-RUN: would remove (legacy skill): $d"
-    } else {
-      Remove-Item -Recurse -Force $d
-      Write-Host "removed (legacy skill): $d"
+    if (-not $DryRun) {
+      # Descendants follow their parent in ordinal order. Reverse that order
+      # and remove only empty directories; never recurse over unknown files.
+      $dirs = @(Get-SortedChildren $dir -Directories -Recurse)
+      for ($i = $dirs.Count - 1; $i -ge 0; $i--) {
+        $path = $dirs[$i].FullName
+        if (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) {
+          [IO.Directory]::Delete((Resolve-AbsPath $path))
+        }
+      }
+      if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) {
+        [IO.Directory]::Delete((Resolve-AbsPath $dir))
+      }
     }
   }
 }
@@ -275,16 +321,10 @@ function Remove-LegacySkills {
 # Is the installed file byte-identical to what we would install right now?
 # Mirrors installed_is_ours() in install.sh.
 function Test-InstalledIsOurs($src, $dest, $name, $desc) {
-  if (-not (Test-Path $dest)) { return $false }
-  $body = [IO.File]::ReadAllText((Resolve-AbsPath $src), [Text.Encoding]::UTF8)
-  $needFront = -not ($body -match '^\s*---\s*\r?\n')
-  $front = ""
-  if ($needFront) {
-    $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
-  }
-  $expected = $front + $body
-  $actual = [IO.File]::ReadAllText((Resolve-AbsPath $dest), [Text.Encoding]::UTF8)
-  return $expected -ceq $actual
+  if (-not (Test-Path -LiteralPath $dest -PathType Leaf)) { return $false }
+  $expected = Get-AgentBytes $src $name $desc
+  $actual = [IO.File]::ReadAllBytes((Resolve-AbsPath $dest))
+  return (Test-BytesEqual $expected $actual)
 }
 
 function Uninstall-ClaudeGlobal {
@@ -293,55 +333,60 @@ function Uninstall-ClaudeGlobal {
   # collision unlikely, not impossible -- and install deliberately SKIPS a
   # pre-existing file, so deleting it here would destroy work the install path
   # just protected. Keep in sync with install.sh.
-  Get-ChildItem -Path $SrcAgents -Filter *.md | ForEach-Object {
+  Get-SortedChildren $SrcAgents -Filter '*.md' | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
     if (-not $meta) { $meta = "Feature-Crew agent." }
     $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
     $d = Join-Path $DestAgents ($name + ".md")
-    if (-not (Test-Path $d)) {
+    if (-not (Test-Path -LiteralPath $d)) {
       Write-Host "not present: $d"
     } elseif (Test-InstalledIsOurs $_.FullName $d $name $meta) {
-      Do-Or-Echo "removed: $d" { Remove-Item -Force $d }
+      if ($DryRun) {
+        Write-Host "DRY-RUN: would remove $d"
+      } else {
+        Remove-Item -LiteralPath $d -Force
+        Write-Host "removed: $d"
+      }
     } else {
-      Write-Host "kept (yours - differs from what we install): $d"
+      Write-Host "kept (yours $EmDash differs from what we install): $d"
     }
   }
-  if (Test-Path $SrcSkillsDir) {
-    Get-ChildItem -Directory -Path $SrcSkillsDir | ForEach-Object {
+  if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
+    Get-SortedChildren $SrcSkillsDir -Directories | ForEach-Object {
       # Only consider what we would have installed.
-      if (-not (Test-Path (Join-Path $_.FullName "SKILL.md"))) { return }
+      if (-not (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf)) { return }
       $d = Join-Path $DestSkillsDir $_.Name
-      if (-not (Test-Path $d)) { Write-Host "not present: $d"; return }
+      if (-not (Test-Path -LiteralPath $d -PathType Container)) { Write-Host "not present: $d"; return }
       # Every file we ship must be present and identical, and the directory
       # must hold nothing else -- an extra file means the user put it there.
-      $ours = @(Get-ChildItem -Recurse -File -Path $_.FullName)
-      $theirs = @(Get-ChildItem -Recurse -File -Path $d)
+      $ours = @(Get-SortedChildren $_.FullName -Recurse)
+      $theirs = @(Get-SortedChildren $d -Recurse)
       $same = ($ours.Count -eq $theirs.Count)
       if ($same) {
         foreach ($f in $ours) {
           $rel = $f.FullName.Substring($_.FullName.Length).TrimStart('\','/')
           $t = Join-Path $d $rel
-          if (-not (Test-Path $t)) { $same = $false; break }
+          if (-not (Test-Path -LiteralPath $t -PathType Leaf)) { $same = $false; break }
           $a = [IO.File]::ReadAllBytes((Resolve-AbsPath $f.FullName))
           $b = [IO.File]::ReadAllBytes((Resolve-AbsPath $t))
-          if ($a.Length -ne $b.Length -or (Compare-Object $a $b -SyncWindow 0)) {
+          if (-not (Test-BytesEqual $a $b)) {
             $same = $false; break
           }
         }
       }
       if ($same) {
-        Do-Or-Echo "removed: $d" { Remove-Item -Recurse -Force $d }
+        if ($DryRun) {
+          Write-Host "DRY-RUN: would remove $d"
+        } else {
+          Remove-Item -LiteralPath $d -Recurse -Force
+          Write-Host "removed: $d"
+        }
       } else {
-        Write-Host "kept (yours - differs from what we install): $d"
+        Write-Host "kept (yours $EmDash differs from what we install): $d"
       }
     }
   }
-  # Best-effort cleanup of legacy nested folder from older installer versions.
-  $legacy = Join-Path $DestAgents "feature-crew"
-  if (Test-Path $legacy) {
-    Do-Or-Echo "removed (legacy): $legacy" { Remove-Item -Recurse -Force $legacy }
-  }
-  Remove-LegacySkills
+  Remove-Legacy
 }
 
 # --- Main dispatch (mirrors install.sh) ---
