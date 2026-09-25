@@ -1173,15 +1173,28 @@ echo "$complex_example" | grep -qE '^> .*Developers requested with `model: sonne
 # Keep these literal contract sentences scoped to their operative sections.
 # Removal mutations below must produce exactly their own diagnostic, not merely
 # some failure, and run only after the unmodified documents pass the control.
-t55_boundary_labels=(gated-prompts refuter-prompts recursive-records missing-child-records in-record-skills child-model-family-set)
-t55_boundary_sections=(dispatch refute record record record families)
+t55_boundary_labels=(
+  gated-prompts refuter-prompts authoring-call-boundary reviewer-call-boundary
+  artifact-change-contributor recursive-records missing-child-records in-record-skills
+  author-child-family-set reviewer-child-family-set disjoint-family-sets
+  child-record-link child-link-observation-scope unresolved-child-link
+)
+t55_boundary_sections=(dispatch refute record record record record record record families families families record record record)
 t55_boundary_rules=(
   'Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."'
   'Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
-  'A record with an `Agent` or `Workflow` call has contributors outside that record; read their records the same way, recursively, and follow forked `Skill` runs too.'
+  'Only `Agent` or `Workflow` calls made to produce or change the artifact contribute to its author set.'
+  'Gate reviews, validators and refuters, and their children, stay in reviewer sets when they only report findings, even if their calls sit in the main-session record; using their findings in a later fix does not make them authors.'
+  'A call that changes the artifact is an authoring contributor, whoever made it; if it also reviewed, keep it in both sets.'
+  'Read each relevant authoring or review child record recursively, including forked `Skill` runs.'
   'A child record that cannot be found or read makes provenance unknown and the gate unsatisfied.'
   'A `Skill` call without a fork stays in the same record.'
-  'Include all recorded child-agent models in the artifact family set at every depth, for authoring and review alike.'
+  'Authoring children join the author family set at every depth, according to their task rather than the parent record.'
+  'Children doing review join the set for that reviewer at every depth, not the author set unless they changed the artifact.'
+  'Every model in a reviewer set must be known and outside the author family set.'
+  'Match `.toolUseId` in child `agent-<agentId>.meta.json` to the spawning `Agent` tool_use `.id` in the parent record, then read the matching `agent-<agentId>.jsonl`.'
+  'This child-record link has been observed for depth-1 `Agent` calls only; `Workflow` children and depth 2 or greater have not been observed.'
+  'If this link cannot locate a contributor record, provenance is unknown and the gate unsatisfied.'
 )
 t55_delegation_contract() { # build-or-fix, second-opinion, provenance text
   local dispatch refute record families section i errors=""
