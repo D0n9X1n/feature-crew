@@ -1169,6 +1169,63 @@ echo "$complex_example" | grep -qE '^> .*fc-architect.*requested with `model: so
   || t55_err="$t55_err example-architect-changes-session-family"
 echo "$complex_example" | grep -qE '^> .*Developers requested with `model: sonnet`' \
   || t55_err="$t55_err example-developers-change-session-family"
+# Delegation can hide contributors from the dispatched agent's own record.
+# Keep these literal contract sentences scoped to their operative sections.
+# Removal mutations below must produce exactly their own diagnostic, not merely
+# some failure, and run only after the unmodified documents pass the control.
+t55_boundary_labels=(gated-prompts refuter-prompts recursive-records missing-child-records in-record-skills child-model-family-set)
+t55_boundary_sections=(dispatch refute record record record families)
+t55_boundary_rules=(
+  'Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."'
+  'Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
+  'A record with an `Agent` or `Workflow` call has contributors outside that record; read their records the same way, recursively, and follow forked `Skill` runs too.'
+  'A child record that cannot be found or read makes provenance unknown and the gate unsatisfied.'
+  'A `Skill` call without a fork stays in the same record.'
+  'Include all recorded child-agent models in the artifact family set at every depth, for authoring and review alike.'
+)
+t55_delegation_contract() { # build-or-fix, second-opinion, provenance text
+  local dispatch refute record families section i errors=""
+  dispatch=$(printf '%s\n' "$1" | sed -n '/^## Dispatch rules/,/^## /p')
+  refute=$(printf '%s\n' "$2" | sed -n '/^## 3 — Refute/,/^## /p' | grep '^> ')
+  record=$(printf '%s\n' "$3" | sed -n '/^## Read the record/,/^## /p')
+  families=$(printf '%s\n' "$3" | sed -n '/^## Map model ids to families/,/^## /p')
+  for ((i=0; i<${#t55_boundary_rules[@]}; i++)); do
+    case "${t55_boundary_sections[$i]}" in
+      dispatch) section="$dispatch" ;;
+      refute) section="$refute" ;;
+      record) section="$record" ;;
+      families) section="$families" ;;
+    esac
+    printf '%s\n' "$section" | grep -qF "${t55_boundary_rules[$i]}" \
+      || errors="$errors ${t55_boundary_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t55_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
+t55_refuter_text=$(cat .claude/skills/fc-second-opinion/SKILL.md)
+t55_provenance_text=$(cat "$provenance" 2>/dev/null)
+t55_boundary_out=$(t55_delegation_contract "$t55_build_text" "$t55_refuter_text" "$t55_provenance_text")
+t55_err="$t55_err$t55_boundary_out"
+if [ -z "$t55_boundary_out" ]; then
+  for ((t55_i=0; t55_i<${#t55_boundary_rules[@]}; t55_i++)); do
+    t55_rule="${t55_boundary_rules[$t55_i]}"
+    t55_build_mut="$t55_build_text"
+    t55_refuter_mut="$t55_refuter_text"
+    t55_provenance_mut="$t55_provenance_text"
+    case "${t55_boundary_sections[$t55_i]}" in
+      dispatch) t55_build_mut="${t55_build_mut/"$t55_rule"/}" ;;
+      refute) t55_refuter_mut="${t55_refuter_mut/"$t55_rule"/}" ;;
+      *) t55_provenance_mut="${t55_provenance_mut/"$t55_rule"/}" ;;
+    esac
+    t55_mut_out=$(t55_delegation_contract "$t55_build_mut" "$t55_refuter_mut" "$t55_provenance_mut")
+    if [ "$t55_mut_out" = " ${t55_boundary_labels[$t55_i]}" ]; then
+      ok "T55 removal mutation: ${t55_boundary_labels[$t55_i]} rejected by its own check"
+    else
+      bad "T55 removal mutation: ${t55_boundary_labels[$t55_i]}" \
+        "got '${t55_mut_out:-<empty>}', want ' ${t55_boundary_labels[$t55_i]}'"
+    fi
+  done
+fi
 [ -z "$t55_err" ] && ok "T55 static contract alarm: recorded-model provenance + pinned authors" \
                    || bad "T55 provenance reference and author dispatch contract" "missing:$t55_err"
 
