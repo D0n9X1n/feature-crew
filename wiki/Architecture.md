@@ -106,8 +106,8 @@ sequenceDiagram
     Note over PM,Rec: Sonnet author selects opus<br/>other known family selects sonnet, or opus on collision<br/>unknown provenance stops the gate
     PM->>QA: spec and commit range, one-clue mode, explicit model
     QA-->>PM: one verdict, every blocking finding listed
-    PM->>Rec: read recorded reviewer model
-    alt reviewer missing, unknown, same family, or delegated
+    PM->>Rec: read the reviewer record
+    alt the record fails the gate rule in SKILL.md
         PM->>PM: record GATE UNSATISFIED and stop
     else cross-family reviewer verified
         PM->>PM: fix CRITICAL, fix or follow up IMPORTANT, max three cycles
@@ -135,7 +135,7 @@ sequenceDiagram
 - **4–5 Track.** Standard fits one coherent feature. Just Do It is ruled out when the change touches the escalation list: runtime behavior, config, auth, secrets, persistence, public API, or deploy behavior.
 - **6–12 Spec.** The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
 - **13 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
-- **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. A missing, unknown, or same-family reviewer, or a review that called `Agent`, `Skill`, or `Workflow`, leaves the gate unsatisfied, with no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
+- **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. Whether the reviewer's record satisfies the gate is decided only by the canonical rule in [SKILL.md][bof] (*Cross-family audit at hard gates*); there is no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
 - **20–26 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Cleanup always runs.
 
 | Participant | Job in this flow | Key files |
