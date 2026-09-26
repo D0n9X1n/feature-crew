@@ -46,7 +46,7 @@ skip() {
   fi
 }
 
-SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-build-or-fix fc-review fc-second-opinion fc-update)
+SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-build-or-fix fc-review fc-second-opinion fc-update)
 ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
 
 skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
@@ -246,17 +246,47 @@ fi
 # frontmatter key, so it ran to EOF and the greps saw the whole file body --
 # vacuous for exactly the 3 skills whose description happens to be last, and
 # coverage silently depended on unrelated key ORDER.
-t9_err=""
-for n in "${SKILL_NAMES[@]}"; do
-  f=".claude/skills/$n/SKILL.md"
-  if [ ! -f "$f" ]; then t9_err="$t9_err $n:missing"; continue; fi
-  desc=$(awk '/^---$/{c++; if(c==2) exit; next} c==1' "$f" \
-         | awk '/^[a-z][a-z-]*:/{k=($0 ~ /^description:/)} k')
-  echo "$desc" | grep -qi 'use when'        || t9_err="$t9_err $n:no-use-when"
-  echo "$desc" | grep -qi 'do not use for'  || t9_err="$t9_err $n:no-anti-trigger"
-done
+t9_contract() { # skills root; prints one diagnostic per missing clause
+  local n f desc errors=""
+  for n in "${SKILL_NAMES[@]}"; do
+    f="$1/$n/SKILL.md"
+    if [ ! -f "$f" ]; then errors="$errors $n:missing"; continue; fi
+    desc=$(awk '/^---$/{c++; if(c==2) exit; next} c==1' "$f" \
+           | awk '/^[a-z][a-z-]*:/{k=($0 ~ /^description:/)} k')
+    echo "$desc" | grep -qi 'use when'        || errors="$errors $n:no-use-when"
+    echo "$desc" | grep -qi 'do not use for'  || errors="$errors $n:no-anti-trigger"
+  done
+  printf '%s\n' "$errors"
+}
+t9_err=$(t9_contract .claude/skills)
 [ -z "$t9_err" ] && ok "T9 all skills carry [what] + [use when] + [do NOT use for]" \
                  || bad "T9 skill description contract" "issues:$t9_err"
+# Negative checks on scratch copies: removing either clause from fc-debug's
+# description must fail this same check with exactly that clause's diagnostic.
+for t9_clause in use-when anti-trigger; do
+  case "$t9_clause" in
+    use-when)     t9_sed='/^description:/s/ Use when [^.]*\.//';       t9_want=' fc-debug:no-use-when' ;;
+    anti-trigger) t9_sed='/^description:/s/ Do NOT use for [^.]*\.//'; t9_want=' fc-debug:no-anti-trigger' ;;
+  esac
+  t9_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t9_mut")
+  cp -R .claude/skills "$t9_mut/skills"
+  t9_target="$t9_mut/skills/fc-debug/SKILL.md"
+  if [ ! -f "$t9_target" ]; then
+    bad "T9 removal mutation: fc-debug $t9_clause" "mutation target fc-debug/SKILL.md missing"
+  elif sed "$t9_sed" "$t9_target" > "$t9_mut/mutant" && cmp -s "$t9_mut/mutant" "$t9_target"; then
+    bad "T9 removal mutation: fc-debug $t9_clause" "clause not found; mutation not applied"
+  else
+    cp "$t9_mut/mutant" "$t9_target"
+    t9_mut_out=$(t9_contract "$t9_mut/skills")
+    if [ "$t9_mut_out" = "$t9_want" ]; then
+      ok "T9 removal mutation: fc-debug $t9_clause rejected by its own check"
+    else
+      bad "T9 removal mutation: fc-debug $t9_clause" "got '${t9_mut_out:-<empty>}', want '$t9_want'"
+    fi
+  fi
+  rm -rf "$t9_mut"
+done
 
 # ---------------------------------------------------------------- T10
 # Cross-platform parity: the two installers stay feature-mirrored.
@@ -335,13 +365,34 @@ done < <(git ls-files '.claude/skills/*' | cut -d/ -f3 | sort -u)
 
 # ---------------------------------------------------------------- T13
 # Both installers glob; this guards against someone hardcoding a list later.
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  t13_err=""
+t13_contract() { # install prefix; prints each skill whose SKILL.md is absent
+  local n errors=""
   for n in "${SKILL_NAMES[@]}"; do
-    [ -f "$tmp_prefix/skills/$n/SKILL.md" ] || t13_err="$t13_err $n"
+    [ -f "$1/skills/$n/SKILL.md" ] || errors="$errors $n"
   done
+  printf '%s\n' "$errors"
+}
+if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
+  t13_err=$(t13_contract "$tmp_prefix")
   [ -z "$t13_err" ] && ok "T13 all skills reach the install prefix" \
                     || bad "T13 skills not installed" "missing:$t13_err"
+  # Negative check on a scratch copy: omitting fc-debug's installed SKILL.md
+  # must fail this same check with exactly that skill's diagnostic.
+  t13_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t13_mut")
+  cp -R "$tmp_prefix" "$t13_mut/prefix"
+  if [ ! -f "$t13_mut/prefix/skills/fc-debug/SKILL.md" ]; then
+    bad "T13 removal mutation: fc-debug SKILL.md" "mutation target not installed"
+  else
+    rm "$t13_mut/prefix/skills/fc-debug/SKILL.md"
+    t13_mut_out=$(t13_contract "$t13_mut/prefix")
+    if [ "$t13_mut_out" = " fc-debug" ]; then
+      ok "T13 removal mutation: omitted fc-debug SKILL.md rejected by its own check"
+    else
+      bad "T13 removal mutation: fc-debug SKILL.md" "got '${t13_mut_out:-<empty>}', want ' fc-debug'"
+    fi
+  fi
+  rm -rf "$t13_mut"
 else
   bad "T13 skills not installed" "install.sh failed"
 fi
@@ -1190,7 +1241,7 @@ fi
 
 # ---------------------------------------------------------------- T33
 # Natural-language, need-based composition is canonical in build-or-fix. The
-# alarm checks all five routes and bounded return-to-origin behavior; it is not
+# alarm checks all six routes and bounded return-to-origin behavior; it is not
 # runtime proof that a model will classify every request correctly.
 t33_err=""
 classifier=$(sed -n '/^## Need classifier/,/^## /p' "$b")
@@ -1204,6 +1255,8 @@ echo "$classifier" | grep -qiE '(unresolved solution|approach|options).*fc-brain
   || t33_err="$t33_err brainstorm-route"
 echo "$classifier" | grep -qiE '(chosen consequential decision|adversarial confidence).*fc-second-opinion|fc-second-opinion.*(chosen consequential decision|adversarial confidence)' \
   || t33_err="$t33_err second-opinion-route"
+echo "$classifier" | grep -qiE '(unexplained failure|unproven cause).*fc-debug|fc-debug.*(unexplained failure|unproven cause)' \
+  || t33_err="$t33_err debug-route"
 echo "$classifier" | grep -qiE 'return.*origin|originat(ing|or).*resume' \
   || t33_err="$t33_err return-to-origin"
 echo "$classifier" | grep -qiE 'must not self-invoke|no self-invocation|never self-invoke' \
@@ -1238,8 +1291,89 @@ fi
 dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md CLAUDE.md agents/fc-pm.md \
   '.claude/skills/fc-brainstorm/SKILL.md' 2>/dev/null || true)
 [ -z "$dup_classifier" ] || t33_err="$t33_err duplicated-classifier:$(echo "$dup_classifier" | tr '\n' ',')"
-[ -z "$t33_err" ] && ok "T33 static contract alarm: five need routes + bounded return-to-origin" \
+[ -z "$t33_err" ] && ok "T33 static contract alarm: six need routes + bounded return-to-origin" \
                    || bad "T33 need-composition prose contract" "missing:$t33_err"
+
+# ---------------------------------------------------------------- T62
+# fc-debug diagnoses an unexplained failure before anyone attempts a fix. Each
+# clause of its six behaviors is a literal sentence scoped to its own section,
+# so a stray mention elsewhere cannot satisfy it. As in T55, each removal
+# mutation must produce exactly its own diagnostic, and mutations run only
+# after the unmodified skill passes the control.
+t62_labels=(
+  record-caller record-expected-actual record-environment
+  reproduce trace-known-good one-hypothesis three-experiments
+  tracked-files-as-found no-masking no-commit no-delegation no-skill-invocation no-fixed-claim
+  return-evidence return-root-cause return-file-line return-rejected-hypotheses return-regression-recipe
+  blocked-with-evidence caller-pauses
+  counter-not-reset direct-offers-build-or-fix
+)
+t62_sections=(record record record investigate investigate investigate investigate
+  boundaries boundaries boundaries boundaries boundaries boundaries
+  report report report report report blocked blocked after after)
+t62_rules=(
+  'Record the caller and resume point.'
+  'Record expected vs. actual behavior.'
+  'Record the environment.'
+  'Reproduce the failure first.'
+  'Trace the failing boundary against known-good behavior.'
+  'Test one falsifiable hypothesis at a time.'
+  'Run at most three experiments.'
+  'Leave tracked files as found (scratch reproductions, or a scratch copy for instrumentation).'
+  'Never mask a failure.'
+  'Never commit.'
+  'Never delegate.'
+  'Never invoke another skill.'
+  'Never claim "fixed".'
+  'Return command/output evidence.'
+  'State the root cause and your confidence in it.'
+  'Cite `file:line` references.'
+  'List rejected hypotheses.'
+  'Give a regression-test recipe that the calling flow writes as its failing test.'
+  'No reproduction, no access, or experiments exhausted: return BLOCKED with the evidence.'
+  'The caller pauses.'
+  "A diagnosis does not reset the caller's three-fix counter."
+  'Invoked directly, fc-debug offers `/fc-build-or-fix` instead of launching it.'
+)
+t62_debug_contract() { # fc-debug SKILL.md text
+  local record investigate boundaries report blocked after section i errors=""
+  record=$(printf '%s\n' "$1" | sed -n '/^## Record$/,/^## /p')
+  investigate=$(printf '%s\n' "$1" | sed -n '/^## Investigate$/,/^## /p')
+  boundaries=$(printf '%s\n' "$1" | sed -n '/^## Boundaries$/,/^## /p')
+  report=$(printf '%s\n' "$1" | sed -n '/^## Report$/,/^## /p')
+  blocked=$(printf '%s\n' "$1" | sed -n '/^## Blocked$/,/^## /p')
+  after=$(printf '%s\n' "$1" | sed -n '/^## After the diagnosis$/,/^## /p')
+  for ((i=0; i<${#t62_rules[@]}; i++)); do
+    case "${t62_sections[$i]}" in
+      record) section="$record" ;;
+      investigate) section="$investigate" ;;
+      boundaries) section="$boundaries" ;;
+      report) section="$report" ;;
+      blocked) section="$blocked" ;;
+      after) section="$after" ;;
+    esac
+    printf '%s\n' "$section" | grep -qF "${t62_rules[$i]}" \
+      || errors="$errors ${t62_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t62_text=$(cat .claude/skills/fc-debug/SKILL.md 2>/dev/null)
+t62_err=$(t62_debug_contract "$t62_text")
+if [ -z "$t62_err" ]; then
+  for ((t62_i=0; t62_i<${#t62_rules[@]}; t62_i++)); do
+    t62_rule="${t62_rules[$t62_i]}"
+    t62_mut="${t62_text/"$t62_rule"/}"
+    t62_mut_out=$(t62_debug_contract "$t62_mut")
+    if [ "$t62_mut_out" = " ${t62_labels[$t62_i]}" ]; then
+      ok "T62 removal mutation: ${t62_labels[$t62_i]} rejected by its own check"
+    else
+      bad "T62 removal mutation: ${t62_labels[$t62_i]}" \
+        "got '${t62_mut_out:-<empty>}', want ' ${t62_labels[$t62_i]}'"
+    fi
+  done
+fi
+[ -z "$t62_err" ] && ok "T62 static contract alarm: fc-debug diagnoses without fixing and returns to its caller" \
+                   || bad "T62 fc-debug diagnosis contract" "missing:$t62_err"
 
 # ---------------------------------------------------------------- T34
 # Reject obsolete track/pin language from active shipped content, while leaving
