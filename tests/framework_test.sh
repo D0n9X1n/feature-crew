@@ -46,7 +46,7 @@ skip() {
   fi
 }
 
-SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship)
+SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-explain fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship)
 ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
 
 skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
@@ -262,31 +262,34 @@ t9_contract() { # skills root; prints one diagnostic per missing clause
 t9_err=$(t9_contract .claude/skills)
 [ -z "$t9_err" ] && ok "T9 all skills carry [what] + [use when] + [do NOT use for]" \
                  || bad "T9 skill description contract" "issues:$t9_err"
-# Negative checks on scratch copies: removing either clause from fc-debug's
-# description must fail this same check with exactly that clause's diagnostic.
-for t9_clause in use-when anti-trigger; do
-  case "$t9_clause" in
-    use-when)     t9_sed='/^description:/s/ Use when [^.]*\.//';       t9_want=' fc-debug:no-use-when' ;;
-    anti-trigger) t9_sed='/^description:/s/ Do NOT use for [^.]*\.//'; t9_want=' fc-debug:no-anti-trigger' ;;
-  esac
-  t9_mut=$(mktemp -d)
-  CLEANUP_PATHS+=("$t9_mut")
-  cp -R .claude/skills "$t9_mut/skills"
-  t9_target="$t9_mut/skills/fc-debug/SKILL.md"
-  if [ ! -f "$t9_target" ]; then
-    bad "T9 removal mutation: fc-debug $t9_clause" "mutation target fc-debug/SKILL.md missing"
-  elif sed "$t9_sed" "$t9_target" > "$t9_mut/mutant" && cmp -s "$t9_mut/mutant" "$t9_target"; then
-    bad "T9 removal mutation: fc-debug $t9_clause" "clause not found; mutation not applied"
-  else
-    cp "$t9_mut/mutant" "$t9_target"
-    t9_mut_out=$(t9_contract "$t9_mut/skills")
-    if [ "$t9_mut_out" = "$t9_want" ]; then
-      ok "T9 removal mutation: fc-debug $t9_clause rejected by its own check"
+# Negative checks on scratch copies: removing either clause from fc-debug's or
+# fc-explain's description must fail this same check with exactly that
+# clause's diagnostic.
+for t9_skill in fc-debug fc-explain; do
+  for t9_clause in use-when anti-trigger; do
+    case "$t9_clause" in
+      use-when)     t9_sed='/^description:/s/ Use when [^.]*\.//';       t9_want=" $t9_skill:no-use-when" ;;
+      anti-trigger) t9_sed='/^description:/s/ Do NOT use for [^.]*\.//'; t9_want=" $t9_skill:no-anti-trigger" ;;
+    esac
+    t9_mut=$(mktemp -d)
+    CLEANUP_PATHS+=("$t9_mut")
+    cp -R .claude/skills "$t9_mut/skills"
+    t9_target="$t9_mut/skills/$t9_skill/SKILL.md"
+    if [ ! -f "$t9_target" ]; then
+      bad "T9 removal mutation: $t9_skill $t9_clause" "mutation target $t9_skill/SKILL.md missing"
+    elif sed "$t9_sed" "$t9_target" > "$t9_mut/mutant" && cmp -s "$t9_mut/mutant" "$t9_target"; then
+      bad "T9 removal mutation: $t9_skill $t9_clause" "clause not found; mutation not applied"
     else
-      bad "T9 removal mutation: fc-debug $t9_clause" "got '${t9_mut_out:-<empty>}', want '$t9_want'"
+      cp "$t9_mut/mutant" "$t9_target"
+      t9_mut_out=$(t9_contract "$t9_mut/skills")
+      if [ "$t9_mut_out" = "$t9_want" ]; then
+        ok "T9 removal mutation: $t9_skill $t9_clause rejected by its own check"
+      else
+        bad "T9 removal mutation: $t9_skill $t9_clause" "got '${t9_mut_out:-<empty>}', want '$t9_want'"
+      fi
     fi
-  fi
-  rm -rf "$t9_mut"
+    rm -rf "$t9_mut"
+  done
 done
 
 # ---------------------------------------------------------------- T10
@@ -377,23 +380,26 @@ if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   t13_err=$(t13_contract "$tmp_prefix")
   [ -z "$t13_err" ] && ok "T13 all skills reach the install prefix" \
                     || bad "T13 skills not installed" "missing:$t13_err"
-  # Negative check on a scratch copy: omitting fc-debug's installed SKILL.md
-  # must fail this same check with exactly that skill's diagnostic.
-  t13_mut=$(mktemp -d)
-  CLEANUP_PATHS+=("$t13_mut")
-  cp -R "$tmp_prefix" "$t13_mut/prefix"
-  if [ ! -f "$t13_mut/prefix/skills/fc-debug/SKILL.md" ]; then
-    bad "T13 removal mutation: fc-debug SKILL.md" "mutation target not installed"
-  else
-    rm "$t13_mut/prefix/skills/fc-debug/SKILL.md"
-    t13_mut_out=$(t13_contract "$t13_mut/prefix")
-    if [ "$t13_mut_out" = " fc-debug" ]; then
-      ok "T13 removal mutation: omitted fc-debug SKILL.md rejected by its own check"
+  # Negative checks on scratch copies: omitting fc-debug's or fc-explain's
+  # installed SKILL.md must fail this same check with exactly that skill's
+  # diagnostic.
+  for t13_skill in fc-debug fc-explain; do
+    t13_mut=$(mktemp -d)
+    CLEANUP_PATHS+=("$t13_mut")
+    cp -R "$tmp_prefix" "$t13_mut/prefix"
+    if [ ! -f "$t13_mut/prefix/skills/$t13_skill/SKILL.md" ]; then
+      bad "T13 removal mutation: $t13_skill SKILL.md" "mutation target not installed"
     else
-      bad "T13 removal mutation: fc-debug SKILL.md" "got '${t13_mut_out:-<empty>}', want ' fc-debug'"
+      rm "$t13_mut/prefix/skills/$t13_skill/SKILL.md"
+      t13_mut_out=$(t13_contract "$t13_mut/prefix")
+      if [ "$t13_mut_out" = " $t13_skill" ]; then
+        ok "T13 removal mutation: omitted $t13_skill SKILL.md rejected by its own check"
+      else
+        bad "T13 removal mutation: $t13_skill SKILL.md" "got '${t13_mut_out:-<empty>}', want ' $t13_skill'"
+      fi
     fi
-  fi
-  rm -rf "$t13_mut"
+    rm -rf "$t13_mut"
+  done
 else
   bad "T13 skills not installed" "install.sh failed"
 fi
@@ -1375,6 +1381,78 @@ if [ -z "$t62_err" ]; then
 fi
 [ -z "$t62_err" ] && ok "T62 static contract alarm: fc-debug diagnoses without fixing and returns to its caller" \
                    || bad "T62 fc-debug diagnosis contract" "missing:$t62_err"
+
+# ---------------------------------------------------------------- T66
+# fc-explain explains an existing project with readable diagrams tied to code
+# evidence. Its eight behaviors and the Worker boundary suffix on every helper
+# prompt are literal sentences scoped to their own sections, and fc-research's
+# pointer to it must sit in fc-research's own "Do NOT use for" list, so a stray
+# mention elsewhere cannot satisfy either. As in T62, each removal mutation must
+# produce exactly its own diagnostic, and mutations run only after the
+# unmodified documents pass the control.
+t66_labels=(
+  infer-scope bottom-up-map default-views mermaid-only readable-diagrams
+  after-each-diagram verify-evidence chat-output
+  helper-worker-suffix research-pointer
+)
+t66_sections=(map map diagrams diagrams diagrams answer verify answer map research)
+t66_rules=(
+  'Run in the main conversation. Infer the scope (the whole project, a subsystem, or one flow) and ask only when it is genuinely ambiguous.'
+  'Build the component map with the bottom-up mapping contract in [design-check.md](../fc-build-or-fix/reference/design-check.md): read small scopes directly; for large ones use at most three read-only `Explore` helpers, each helper prompt ending with the Worker boundary suffix below. Keep the map for follow-ups and refresh its evidence before answering them.'
+  'Default to one overview (containers or building blocks) plus one evidenced key flow; add a context, component drill-down, or deployment view only when useful or requested.'
+  'Use fenced Mermaid only: `flowchart` for structure and `sequenceDiagram` for interactions. No experimental C4 or `architecture-beta`, and never ASCII art.'
+  'Keep each diagram professional and readable: a title, scope, and legend; one abstraction level; 5–12 nodes, split above 15; short responsibility labels; labeled directional arrows; consistent shapes; minimal styling and never color-only meaning; citations beside nodes, not inside them.'
+  'After each diagram give the takeaway, a short walkthrough, and a component table with file links. Separate verified facts, inferences, and unknowns, and end with where to start reading.'
+  'Trace every node and edge to evidence. Parse or render only with an already-installed renderer (never install one or upload source), with at most two fix attempts; otherwise state "not render-checked".'
+  'Answer in chat; write a repository file or publish a page only on request.'
+  '> Perform the assigned work yourself. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
+  "explaining a project's structure with diagrams (use /fc-explain)"
+)
+t66_explain_contract() { # fc-explain SKILL.md text, fc-research SKILL.md text
+  local map diagrams verify answer pointer section i errors=""
+  map=$(printf '%s\n' "$1" | sed -n '/^## Scope and map$/,/^## /p')
+  diagrams=$(printf '%s\n' "$1" | sed -n '/^## Diagrams$/,/^## /p')
+  verify=$(printf '%s\n' "$1" | sed -n '/^## Verify$/,/^## /p')
+  answer=$(printf '%s\n' "$1" | sed -n '/^## Answer$/,/^## /p')
+  # Only fc-research's own frontmatter "Do NOT use for" list counts.
+  pointer=$(printf '%s\n' "$2" | awk '/^---$/{c++; if(c==2) exit; next} c==1' \
+    | grep '^description:' | sed -n 's/.*Do NOT use for //p')
+  for ((i=0; i<${#t66_rules[@]}; i++)); do
+    case "${t66_sections[$i]}" in
+      map) section="$map" ;;
+      diagrams) section="$diagrams" ;;
+      verify) section="$verify" ;;
+      answer) section="$answer" ;;
+      research) section="$pointer" ;;
+    esac
+    printf '%s\n' "$section" | grep -qF -- "${t66_rules[$i]}" \
+      || errors="$errors ${t66_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t66_explain_text=$(cat .claude/skills/fc-explain/SKILL.md 2>/dev/null)
+t66_research_text=$(cat .claude/skills/fc-research/SKILL.md 2>/dev/null)
+t66_err=$(t66_explain_contract "$t66_explain_text" "$t66_research_text")
+if [ -z "$t66_err" ]; then
+  for ((t66_i=0; t66_i<${#t66_rules[@]}; t66_i++)); do
+    t66_rule="${t66_rules[$t66_i]}"
+    t66_explain_mut="$t66_explain_text"
+    t66_research_mut="$t66_research_text"
+    case "${t66_sections[$t66_i]}" in
+      research) t66_research_mut="${t66_research_mut/"$t66_rule"/}" ;;
+      *) t66_explain_mut="${t66_explain_mut/"$t66_rule"/}" ;;
+    esac
+    t66_mut_out=$(t66_explain_contract "$t66_explain_mut" "$t66_research_mut")
+    if [ "$t66_mut_out" = " ${t66_labels[$t66_i]}" ]; then
+      ok "T66 removal mutation: ${t66_labels[$t66_i]} rejected by its own check"
+    else
+      bad "T66 removal mutation: ${t66_labels[$t66_i]}" \
+        "got '${t66_mut_out:-<empty>}', want ' ${t66_labels[$t66_i]}'"
+    fi
+  done
+fi
+[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams" \
+                   || bad "T66 fc-explain explanation contract" "missing:$t66_err"
 
 # ---------------------------------------------------------------- T34
 # Reject obsolete track/pin language from active shipped content, while leaving
