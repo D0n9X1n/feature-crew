@@ -7,6 +7,8 @@ description: Multi-agent research pipeline that fans out across distinct search 
 
 You orchestrate; you do not do the searching yourself.
 
+**Focused path.** For one bounded question or angle, dispatch one author with an explicit `model` override from the authoring rule in `/fc-build-or-fix` to search and synthesize in the Phase 2 format; record its actual author model for the selector. The author returns raw evidence beside the synthesis: each claim with a concrete source (`file:line`, URL, or command output). One validator chosen by the canonical selector then checks both as in Phase 3: two dispatches. The Worker boundary suffix, the five-dispatch cap, and one revise cycle still apply. Broader questions keep the full pipeline below.
+
 ## Worker boundary
 
 Append this suffix to every worker prompt in Phases 1, 2 and 3, including any re-dispatch:
