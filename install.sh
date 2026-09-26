@@ -114,7 +114,21 @@ ensure_dir() {
   fi
 }
 
-# Install one agent file: prepend YAML frontmatter (name, description) if the
+# Frontmatter for one installed role agent: the single renderer that install,
+# ownership, and --check/--verify share, so all three agree byte for byte.
+# Quote the description: role descriptions contain ": " (e.g. "Feature-Crew
+# Architect: turns an approved spec into..."), and a plain YAML scalar may not.
+# Claude Code 2.1.220 tolerates the unquoted form, but that tolerance is
+# undocumented. Dispatched roles deny Agent and Skill because gate provenance
+# is observed only one dispatch deep; fc-pm runs as the main session and keeps
+# them. Keep in sync with Get-AgentBytes in install.ps1.
+agent_front() {
+  printf -- '---\nname: %s\ndescription: "%s"\n' "$1" "$2"
+  [ "$1" = fc-pm ] || printf -- 'disallowedTools: Agent, Skill\n'
+  printf -- '---\n\n'
+}
+
+# Install one agent file: prepend YAML frontmatter (agent_front) if the
 # source doesn't already have one, then write to dest.
 install_agent() {
   local src="$1" dest="$2" name="$3" desc="$4" hash
@@ -137,11 +151,7 @@ install_agent() {
   {
     # Only add frontmatter if the source file doesn't start with '---'
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      # Quote the description: role descriptions contain ": " (e.g. "Feature-Crew
-      # Architect: turns an approved spec into..."), and a plain YAML scalar may
-      # not. Claude Code 2.1.220 tolerates the unquoted form, but that tolerance
-      # is undocumented. Keep in sync with install.ps1.
-      printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$name" "$desc"
+      agent_front "$name" "$desc"
     fi
     cat "$src"
   } > "$dest"
@@ -370,7 +380,7 @@ installed_is_ours() {
   tmp="$(mktemp)"
   {
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$name" "$desc"
+      agent_front "$name" "$desc"
     fi
     cat "$src"
   } > "$tmp"
@@ -456,7 +466,7 @@ sha256_stdin() {
 # The exact bytes install_agent writes for a source agent.
 agent_bytes() {
   if ! head -n 1 "$1" | grep -q '^---$'; then
-    printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$2" "$3"
+    agent_front "$2" "$3"
   fi
   cat "$1"
 }

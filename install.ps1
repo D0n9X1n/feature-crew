@@ -187,8 +187,9 @@ function Resolve-AbsPath($p) {
   return [IO.Path]::GetFullPath($p)
 }
 
-# Shared by install and ownership: never decode agent bodies. Text readers
-# discard BOMs and can silently use the system ANSI code page in PowerShell 5.1.
+# The single agent renderer, shared by install, ownership, and -Check/-Verify:
+# never decode agent bodies. Text readers discard BOMs and can silently use the
+# system ANSI code page in PowerShell 5.1.
 function Get-AgentBytes($src, $name, $desc) {
   $body = [IO.File]::ReadAllBytes((Resolve-AbsPath $src))
   # Match install.sh's first-line predicate exactly: three dashes, LF or EOF.
@@ -196,7 +197,10 @@ function Get-AgentBytes($src, $name, $desc) {
     $body[2] -eq 45 -and ($body.Length -eq 3 -or $body[3] -eq 10))
   if ($hasFront) { return ,$body }
   # Quote descriptions containing ": " and encode only the new frontmatter.
-  $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
+  # Dispatched roles deny Agent and Skill; fc-pm runs as the main session.
+  # Keep in sync with agent_front() in install.sh.
+  $deny = if ($name -ceq 'fc-pm') { '' } else { "disallowedTools: Agent, Skill`n" }
+  $front = "---`nname: $name`ndescription: `"$desc`"`n${deny}---`n`n"
   $utf8 = New-Object Text.UTF8Encoding($false)
   return ,([byte[]]($utf8.GetBytes($front) + $body))
 }
