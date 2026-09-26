@@ -48,6 +48,13 @@ PUBLISHED_HASHES="${SCRIPT_DIR}/published.sha256"
 
 DEST_AGENTS="${PREFIX}/agents"
 DEST_SKILLS_DIR="${PREFIX}/skills"
+MANIFEST="${PREFIX}/feature-crew.sha256"
+MANIFEST_PRESENT=0
+MANIFEST_VALID=1
+MANIFEST_PATHS=()
+MANIFEST_HASHES=()
+NEXT_ENTRIES=()
+REMOVED_ROOTS=()
 
 # Map agent filename -> description. The subagent NAME is the filename without
 # .md, so source and installed names cannot drift. Role frontmatter carries no
@@ -99,9 +106,17 @@ ensure_dir() {
 # Install one agent file: prepend YAML frontmatter (name, description) if the
 # source doesn't already have one, then write to dest.
 install_agent() {
-  local src="$1" dest="$2" name="$3" desc="$4"
+  local src="$1" dest="$2" name="$3" desc="$4" hash
+  local rel="agents/$3.md"
   if [ -e "$dest" ] && [ "$FORCE" -ne 1 ]; then
     say "skip (exists): $dest  [use --force to overwrite]"
+    if [ "$DRY_RUN" -eq 0 ] && [ "$MANIFEST_VALID" -eq 1 ]; then
+      if hash=$(manifest_hash "$rel"); then
+        NEXT_ENTRIES+=("$hash  $rel")
+      elif installed_is_ours "$src" "$dest" "$name" "$desc"; then
+        record_written "$dest" "$rel"
+      fi
+    fi
     return 0
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -119,12 +134,14 @@ install_agent() {
     fi
     cat "$src"
   } > "$dest"
+  record_written "$dest" "$rel"
   say "installed: $dest"
 }
 
 install_skill() {
-  local src_dir="$1" dest_dir="$2"
+  local src_dir="$1" dest_dir="$2" skill manifest_rel hash
   src_dir=${src_dir%/}
+  skill=$(basename "$src_dir")
   ensure_dir "$dest_dir"
   # Copy SKILL.md and any other files within the skill directory.
   if [ ! -d "$src_dir" ]; then
@@ -134,12 +151,21 @@ install_skill() {
   # Keep this loop in the current shell so dry-run mkdir tracking persists.
   while IFS= read -r rel; do
     local s="$src_dir/$rel" d="$dest_dir/$rel"
+    manifest_rel="skills/$skill/$rel"
     if [ -e "$d" ] && [ "$FORCE" -ne 1 ]; then
       say "skip (exists): $d  [use --force to overwrite]"
+      if [ "$DRY_RUN" -eq 0 ] && [ "$MANIFEST_VALID" -eq 1 ]; then
+        if hash=$(manifest_hash "$manifest_rel"); then
+          NEXT_ENTRIES+=("$hash  $manifest_rel")
+        elif skill_file_is_ours "$s" "$d" "$manifest_rel"; then
+          record_written "$d" "$manifest_rel"
+        fi
+      fi
       continue
     fi
     ensure_dir "$(dirname "$d")"
     do_or_echo cp "$s" "$d"
+    record_written "$d" "$manifest_rel"
     [ "$DRY_RUN" -eq 1 ] || say "installed: $d"
   done < <(cd "$src_dir" && find . -type f -print | sed 's|^\./||' | sort)
 }
@@ -170,6 +196,119 @@ published_file() {
   [ -f "$PUBLISHED_HASHES" ] && [ -f "$file" ] || return 1
   hash="$(sha256_lf "$file")"
   grep -qxF "$hash  $rel" "$PUBLISHED_HASHES"
+}
+
+sha256_raw() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum < "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 < "$1" | cut -d' ' -f1
+  fi
+}
+
+load_manifest() {
+  local line rel i pattern='^[0-9a-f]{64}  (agents|skills)/.+$'
+  [ -e "$MANIFEST" ] || [ -L "$MANIFEST" ] || return 0
+  MANIFEST_PRESENT=1
+  if [ ! -f "$MANIFEST" ]; then MANIFEST_VALID=0; return 0; fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    rel=${line:66}
+    if [[ ! $line =~ $pattern ]]; then MANIFEST_VALID=0; fi
+    case "/$rel/" in *'/../'*|*$'\r'*|*\\*) MANIFEST_VALID=0 ;; esac
+    if [ "$MANIFEST_VALID" -eq 0 ]; then
+      MANIFEST_PATHS=(); MANIFEST_HASHES=()
+      return 0
+    fi
+    for ((i=0; i<${#MANIFEST_PATHS[@]}; i++)); do
+      [ "${MANIFEST_PATHS[$i]}" = "$rel" ] && break
+    done
+    MANIFEST_PATHS[$i]="$rel"
+    MANIFEST_HASHES[$i]="${line:0:64}"
+  done < "$MANIFEST"
+}
+
+manifest_hash() {
+  local i
+  for ((i=0; i<${#MANIFEST_PATHS[@]}; i++)); do
+    if [ "${MANIFEST_PATHS[$i]}" = "$1" ]; then
+      printf '%s\n' "${MANIFEST_HASHES[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A recorded mismatch is an edit, even if its bytes match an older release.
+historical_file_is_ours() {
+  local file="$1" rel="$2" hash
+  if hash=$(manifest_hash "$rel"); then
+    [ "$(sha256_raw "$file")" = "$hash" ]
+  else
+    published_file "$file" "$rel"
+  fi
+}
+
+skill_file_is_ours() {
+  local src="$1" dest="$2" rel="$3"
+  [ -f "$src" ] && [ -f "$dest" ] || return 1
+  cmp -s "$src" "$dest" || historical_file_is_ours "$dest" "$rel"
+}
+
+record_written() {
+  [ "$DRY_RUN" -eq 0 ] && [ "$MANIFEST_VALID" -eq 1 ] || return 0
+  NEXT_ENTRIES+=("$(sha256_raw "$1")  $2")
+}
+
+write_manifest_entries() {
+  if [ "${#NEXT_ENTRIES[@]}" -gt 0 ]; then
+    printf '%s\n' "${NEXT_ENTRIES[@]}" | sort -k2 > "$MANIFEST"
+  else
+    : > "$MANIFEST"
+  fi
+}
+
+install_manifest() {
+  if [ "$MANIFEST_VALID" -eq 0 ]; then
+    say "kept (not a Feature-Crew manifest): $MANIFEST"
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    say "DRY-RUN: write $MANIFEST"
+  else
+    write_manifest_entries
+    say "installed: $MANIFEST"
+  fi
+}
+
+uninstall_manifest() {
+  [ "$MANIFEST_PRESENT" -eq 1 ] || return 0
+  if [ "$MANIFEST_VALID" -eq 0 ]; then
+    say "kept (not a Feature-Crew manifest): $MANIFEST"
+    return 0
+  fi
+  local i rel root removed
+  NEXT_ENTRIES=()
+  for ((i=0; i<${#MANIFEST_PATHS[@]}; i++)); do
+    rel=${MANIFEST_PATHS[$i]}
+    [ -f "$PREFIX/$rel" ] || continue
+    removed=0
+    if [ "${#REMOVED_ROOTS[@]}" -gt 0 ]; then
+      for root in "${REMOVED_ROOTS[@]}"; do
+        case "$rel" in "$root"|"$root"/*) removed=1; break ;; esac
+      done
+    fi
+    [ "$removed" -eq 0 ] || continue
+    NEXT_ENTRIES+=("${MANIFEST_HASHES[$i]}  $rel")
+  done
+  if [ "${#NEXT_ENTRIES[@]}" -eq 0 ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      say "DRY-RUN: would remove $MANIFEST"
+    else
+      rm -f "$MANIFEST"
+      say "removed: $MANIFEST"
+    fi
+  else
+    [ "$DRY_RUN" -eq 1 ] || write_manifest_entries
+    say "kept (records the files kept above): $MANIFEST"
+  fi
 }
 
 keep_legacy() {
@@ -213,9 +352,7 @@ remove_legacy() {
   done
 }
 
-# Is the installed file byte-identical to what we would install right now?
-# Compares against a freshly generated copy, frontmatter included, so an agent
-# the user edited is not ours to delete.
+# Current generated bytes win; otherwise consult the recorded baseline first.
 installed_is_ours() {
   local src="$1" dest="$2" name="$3" desc="$4" tmp rc
   [ -f "$dest" ] || return 1
@@ -226,18 +363,13 @@ installed_is_ours() {
     fi
     cat "$src"
   } > "$tmp"
-  cmp -s "$tmp" "$dest"; rc=$?
+  rc=0
+  cmp -s "$tmp" "$dest" || rc=$?
   rm -f "$tmp"
-  return $rc
+  [ "$rc" -eq 0 ] || historical_file_is_ours "$dest" "agents/$name.md"
 }
 
 uninstall_paths() {
-  local removed_any=0
-  # Remove only files byte-identical to what we install. The fc- prefix makes
-  # a collision unlikely, not impossible -- and install deliberately SKIPS a
-  # pre-existing file ("skip (exists)"), so deleting it here would destroy work
-  # the install path just went out of its way to protect. A user who edited one
-  # of ours keeps it too; once edited it is partly their work.
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
     local base name desc dest
@@ -254,7 +386,7 @@ uninstall_paths() {
         rm -f "$dest"
         say "removed: $dest"
       fi
-      removed_any=1
+      REMOVED_ROOTS+=("agents/$name.md")
     else
       say "kept (yours — differs from what we install): $dest"
     fi
@@ -271,18 +403,14 @@ uninstall_paths() {
         say "not present: $dest"
         continue
       fi
-      # Every file we ship must be present and identical, and the directory
-      # must hold nothing else -- an extra file means the user put it there.
+      # Only files actually present matter; any unknown file protects the dir.
       differs=0
-      ( cd "$src" && find . -type f -print | sed 's|^\./||' | sort ) | while IFS= read -r rel; do
-        cmp -s "$src/$rel" "$dest/$rel" || exit 1
-      done || differs=1
-      if [ "$differs" -eq 0 ]; then
-        local ours theirs
-        ours=$( ( cd "$src"  && find . -type f | wc -l ) )
-        theirs=$( ( cd "$dest" && find . -type f | wc -l ) )
-        [ "$ours" -eq "$theirs" ] || differs=1
-      fi
+      while IFS= read -r rel; do
+        if ! skill_file_is_ours "$src/$rel" "$dest/$rel" "skills/$skill_name/$rel"; then
+          differs=1
+          break
+        fi
+      done < <(cd "$dest" && find . -type f -print | sed 's|^\./||' | sort)
       if [ "$differs" -eq 0 ]; then
         if [ "$DRY_RUN" -eq 1 ]; then
           say "DRY-RUN: would remove $dest"
@@ -290,12 +418,13 @@ uninstall_paths() {
           rm -rf "$dest"
           say "removed: $dest"
         fi
-        removed_any=1
+        REMOVED_ROOTS+=("skills/$skill_name")
       else
         say "kept (yours — differs from what we install): $dest"
       fi
     done
   fi
+  uninstall_manifest
   remove_legacy
 }
 
@@ -334,6 +463,7 @@ main_install() {
       skill_count=$((skill_count + 1))
     done
   fi
+  install_manifest
   remove_legacy
 
   say ""
@@ -347,6 +477,7 @@ main_install() {
 }
 
 
+load_manifest
 if [ "$UNINSTALL" -eq 1 ]; then
   say "feature-crew: uninstalling from $PREFIX"
   uninstall_paths

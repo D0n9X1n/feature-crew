@@ -96,6 +96,12 @@ $SrcAgents     = Join-Path $ScriptDir "agents"
 $SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
 $DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
+$Manifest = Join-Path $Prefix "feature-crew.sha256"
+$ManifestPresent = $false
+$ManifestValid = $true
+$ManifestEntries = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+$NextEntries = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+$RemovedRoots = New-Object 'System.Collections.Generic.List[string]'
 $EmDash = [char]0x2014
 $DryDirs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $PublishedHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -193,17 +199,28 @@ function Install-Agent($src, $dest, $name, $desc) {
 function Copy-Tree($srcDir, $destDir) {
   Ensure-Dir $destDir
   if (-not (Test-Path -LiteralPath $srcDir -PathType Container)) { return }
+  $skill = Split-Path -Leaf $srcDir
   Get-SortedChildren $srcDir -Recurse | ForEach-Object {
-    $rel = $_.FullName.Substring($srcDir.Length).TrimStart('\','/')
+    $rel = $_.FullName.Substring($srcDir.Length).TrimStart('\','/').Replace('\','/')
     $d   = Join-Path $destDir $rel
+    $manifestRel = 'skills/' + $skill + '/' + $rel
     if ((Test-Path -LiteralPath $d) -and (-not $Force)) {
-      Write-Host "skip (exists): $d  [use --force to overwrite]"; return
+      Write-Host "skip (exists): $d  [use --force to overwrite]"
+      if (-not $DryRun -and $ManifestValid) {
+        if ($ManifestEntries.ContainsKey($manifestRel)) {
+          $NextEntries[$manifestRel] = $ManifestEntries[$manifestRel]
+        } elseif (Test-SkillFileIsOurs $_.FullName $d $manifestRel) {
+          $NextEntries[$manifestRel] = Get-Sha256Raw $d
+        }
+      }
+      return
     }
     Ensure-Dir (Split-Path -Parent $d)
     if ($DryRun) {
       Write-Host "DRY-RUN: cp $($_.FullName) $d"
     } else {
       [IO.File]::Copy((Resolve-AbsPath $_.FullName), (Resolve-AbsPath $d), $true)
+      if ($ManifestValid) { $NextEntries[$manifestRel] = Get-Sha256Raw $d }
       Write-Host "installed: $d"
     }
   }
@@ -223,7 +240,16 @@ function Install-ClaudeGlobal {
     $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
     # Flat under ~/.claude/agents/ so they don't collide with personal agents.
     $destFile = Join-Path $DestAgents ($name + ".md")
+    $skipped = (Test-Path -LiteralPath $destFile) -and (-not $Force)
     Install-Agent $_.FullName $destFile $name $meta
+    if (-not $DryRun -and $ManifestValid) {
+      $rel = 'agents/' + $name + '.md'
+      if ($skipped -and $ManifestEntries.ContainsKey($rel)) {
+        $NextEntries[$rel] = $ManifestEntries[$rel]
+      } elseif (-not $skipped -or (Test-InstalledIsOurs $_.FullName $destFile $name $meta)) {
+        $NextEntries[$rel] = Get-Sha256Raw $destFile
+      }
+    }
     $count++
   }
 
@@ -237,6 +263,7 @@ function Install-ClaudeGlobal {
       $skillCount++
     }
   }
+  Write-InstallManifest
   Remove-Legacy
 
   Write-Host ""
@@ -269,6 +296,108 @@ function Get-Sha256Lf($path) {
 function Test-PublishedFile($file, $relativePath) {
   if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $false }
   return $PublishedHashes.Contains((Get-Sha256Lf $file) + '  ' + $relativePath)
+}
+
+function Get-Sha256Raw($path) {
+  $stream = [IO.File]::OpenRead((Resolve-AbsPath $path))
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString("x2") }) -join ""
+  } finally { $stream.Dispose(); $sha.Dispose() }
+}
+
+function Read-InstallManifest {
+  $script:ManifestPresent = Test-Path -LiteralPath $Manifest
+  if (-not $ManifestPresent) { return }
+  if (-not (Test-Path -LiteralPath $Manifest -PathType Leaf)) {
+    $script:ManifestValid = $false
+    return
+  }
+  $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Resolve-AbsPath $Manifest)))
+  if ($text.Length -eq 0) { return }
+  $lines = $text.Split([char]10)
+  for ($i = 0; $i -lt $lines.Length; $i++) {
+    $line = $lines[$i]
+    if ($i -eq $lines.Length - 1 -and $line.Length -eq 0) { break }
+    if ($line -cnotmatch '^[0-9a-f]{64}  (agents|skills)/.+$' -or
+        $line.Contains("`r") -or $line.Contains('\') -or $line -match '/\.\.(/|$)') {
+      $script:ManifestValid = $false
+      $ManifestEntries.Clear()
+      return
+    }
+    $ManifestEntries[$line.Substring(66)] = $line.Substring(0, 64)
+  }
+}
+
+# A recorded mismatch is an edit, even if its bytes match an older release.
+function Test-HistoricalFileIsOurs($file, $relativePath) {
+  if ($ManifestEntries.ContainsKey($relativePath)) {
+    return ((Get-Sha256Raw $file) -ceq $ManifestEntries[$relativePath])
+  }
+  return (Test-PublishedFile $file $relativePath)
+}
+
+function Test-SkillFileIsOurs($src, $dest, $relativePath) {
+  if (-not (Test-Path -LiteralPath $src -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $dest -PathType Leaf)) { return $false }
+  $expected = [IO.File]::ReadAllBytes((Resolve-AbsPath $src))
+  $actual = [IO.File]::ReadAllBytes((Resolve-AbsPath $dest))
+  if (Test-BytesEqual $expected $actual) { return $true }
+  return (Test-HistoricalFileIsOurs $dest $relativePath)
+}
+
+function Write-ManifestEntries {
+  $paths = New-Object 'System.Collections.Generic.List[string]'
+  foreach ($rel in $NextEntries.Keys) { $paths.Add($rel) }
+  $paths.Sort([StringComparer]::Ordinal)
+  $text = New-Object Text.StringBuilder
+  foreach ($rel in $paths) {
+    [void]$text.Append($NextEntries[$rel]).Append('  ').Append($rel).Append("`n")
+  }
+  $utf8 = New-Object Text.UTF8Encoding($false)
+  [IO.File]::WriteAllBytes((Resolve-AbsPath $Manifest), $utf8.GetBytes($text.ToString()))
+}
+
+function Write-InstallManifest {
+  if (-not $ManifestValid) {
+    Write-Host "kept (not a Feature-Crew manifest): $Manifest"
+  } elseif ($DryRun) {
+    Write-Host "DRY-RUN: write $Manifest"
+  } else {
+    Write-ManifestEntries
+    Write-Host "installed: $Manifest"
+  }
+}
+
+function Update-UninstallManifest {
+  if (-not $ManifestPresent) { return }
+  if (-not $ManifestValid) {
+    Write-Host "kept (not a Feature-Crew manifest): $Manifest"
+    return
+  }
+  $NextEntries.Clear()
+  foreach ($rel in $ManifestEntries.Keys) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Prefix $rel) -PathType Leaf)) { continue }
+    $removed = $false
+    foreach ($root in $RemovedRoots) {
+      if ($rel -ceq $root -or $rel.StartsWith($root + '/', [StringComparison]::Ordinal)) {
+        $removed = $true
+        break
+      }
+    }
+    if (-not $removed) { $NextEntries[$rel] = $ManifestEntries[$rel] }
+  }
+  if ($NextEntries.Count -eq 0) {
+    if ($DryRun) {
+      Write-Host "DRY-RUN: would remove $Manifest"
+    } else {
+      Remove-Item -LiteralPath $Manifest -Force
+      Write-Host "removed: $Manifest"
+    }
+  } else {
+    if (-not $DryRun) { Write-ManifestEntries }
+    Write-Host "kept (records the files kept above): $Manifest"
+  }
 }
 
 function Keep-Legacy($path) {
@@ -321,21 +450,17 @@ function Remove-Legacy {
   }
 }
 
-# Is the installed file byte-identical to what we would install right now?
-# Mirrors installed_is_ours() in install.sh.
+# Current generated bytes win; otherwise consult the recorded baseline first.
 function Test-InstalledIsOurs($src, $dest, $name, $desc) {
   if (-not (Test-Path -LiteralPath $dest -PathType Leaf)) { return $false }
   $expected = Get-AgentBytes $src $name $desc
   $actual = [IO.File]::ReadAllBytes((Resolve-AbsPath $dest))
-  return (Test-BytesEqual $expected $actual)
+  if (Test-BytesEqual $expected $actual) { return $true }
+  return (Test-HistoricalFileIsOurs $dest ('agents/' + $name + '.md'))
 }
 
 function Uninstall-ClaudeGlobal {
   Write-Host "feature-crew: uninstalling from $Prefix"
-  # Remove only files byte-identical to what we install. The fc- prefix makes a
-  # collision unlikely, not impossible -- and install deliberately SKIPS a
-  # pre-existing file, so deleting it here would destroy work the install path
-  # just protected. Keep in sync with install.sh.
   Get-SortedChildren $SrcAgents -Filter '*.md' | ForEach-Object {
     $meta = $AgentMeta[$_.Name]
     if (-not $meta) { $meta = "Feature-Crew agent." }
@@ -350,6 +475,7 @@ function Uninstall-ClaudeGlobal {
         Remove-Item -LiteralPath $d -Force
         Write-Host "removed: $d"
       }
+      $RemovedRoots.Add('agents/' + $name + '.md')
     } else {
       Write-Host "kept (yours $EmDash differs from what we install): $d"
     }
@@ -360,21 +486,15 @@ function Uninstall-ClaudeGlobal {
       if (-not (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf)) { return }
       $d = Join-Path $DestSkillsDir $_.Name
       if (-not (Test-Path -LiteralPath $d -PathType Container)) { Write-Host "not present: $d"; return }
-      # Every file we ship must be present and identical, and the directory
-      # must hold nothing else -- an extra file means the user put it there.
-      $ours = @(Get-SortedChildren $_.FullName -Recurse)
-      $theirs = @(Get-SortedChildren $d -Recurse)
-      $same = ($ours.Count -eq $theirs.Count)
-      if ($same) {
-        foreach ($f in $ours) {
-          $rel = $f.FullName.Substring($_.FullName.Length).TrimStart('\','/')
-          $t = Join-Path $d $rel
-          if (-not (Test-Path -LiteralPath $t -PathType Leaf)) { $same = $false; break }
-          $a = [IO.File]::ReadAllBytes((Resolve-AbsPath $f.FullName))
-          $b = [IO.File]::ReadAllBytes((Resolve-AbsPath $t))
-          if (-not (Test-BytesEqual $a $b)) {
-            $same = $false; break
-          }
+      # Only files actually present matter; any unknown file protects the dir.
+      $root = (Resolve-AbsPath $d).TrimEnd('\','/')
+      $same = $true
+      foreach ($f in @(Get-SortedChildren $d -Recurse)) {
+        $rel = $f.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
+        $source = Join-Path $_.FullName $rel
+        $manifestRel = 'skills/' + $_.Name + '/' + $rel
+        if (-not (Test-SkillFileIsOurs $source $f.FullName $manifestRel)) {
+          $same = $false; break
         }
       }
       if ($same) {
@@ -384,16 +504,19 @@ function Uninstall-ClaudeGlobal {
           Remove-Item -LiteralPath $d -Recurse -Force
           Write-Host "removed: $d"
         }
+        $RemovedRoots.Add('skills/' + $_.Name)
       } else {
         Write-Host "kept (yours $EmDash differs from what we install): $d"
       }
     }
   }
+  Update-UninstallManifest
   Remove-Legacy
 }
 
 # --- Main dispatch (mirrors install.sh) ---
 
+Read-InstallManifest
 if ($Uninstall) {
   Uninstall-ClaudeGlobal
   exit 0

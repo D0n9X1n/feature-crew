@@ -1728,7 +1728,7 @@ if [ "${#INSTALLERS[@]}" -ne 2 ]; then
 elif ! command -v python3 >/dev/null 2>&1; then
   skip "T45 installer output parity matrix (python3 unavailable)"
 else
-  for scenario in fresh reinstall dry-force dry-empty uninstall-dry uninstall install-v31 uninstall-dry-v31 edited-agent legacy-skill dot-install-v31 parent-round-trip; do
+  for scenario in fresh reinstall dry-force dry-empty uninstall-dry uninstall install-v31 uninstall-dry-v31 edited-agent legacy-skill dot-install-v31 parent-round-trip invalid-manifest; do
     case_err=""
     scenario_root="$installer_root/t45-$scenario"
     mkdir -p "$scenario_root"
@@ -1740,9 +1740,10 @@ else
       : > "$raw"
       flags=()
       case "$scenario" in
-        reinstall|dry-force|uninstall-dry|uninstall|edited-agent)
+        reinstall|dry-force|uninstall-dry|uninstall|edited-agent|invalid-manifest)
           run_installer "$engine" "$p"
           expect_installer_success "$engine/setup"
+          cat "$installer_root/run.out" >> "$raw"
           ;;
         install-v31|uninstall-dry-v31)
           seed_v31 "$p" || case_err="$case_err $engine/v3.1-fixture-failed"
@@ -1771,6 +1772,13 @@ else
         uninstall|parent-round-trip) flags=(--uninstall) ;;
         edited-agent)
           printf '\nmy edit\n' >> "$p/agents/fc-pm.md"
+          flags=(--uninstall)
+          ;;
+        invalid-manifest)
+          printf 'not a manifest\n' > "$p/feature-crew.sha256"
+          run_installer "$engine" "$p"
+          expect_installer_success "$engine/invalid-manifest-reinstall"
+          cat "$installer_root/run.out" >> "$raw"
           flags=(--uninstall)
           ;;
       esac
@@ -1837,6 +1845,464 @@ PS
   [ "$?" -eq 0 ] || case_err=" $t46_out"
   installer_result "T46 PowerShell uses literal paths, byte copies, and hidden-aware recursion"
 fi
+
+# --------------------------------------------------------- T47-T54 helpers
+# Reuse the real fallback runner and its strict-mode profile. Only historical
+# fixtures use git archive; copies of this clone must include uncommitted fixes.
+seed_v501() {
+  if [ ! -f "$installer_root/v5.0.1/install.sh" ]; then
+    mkdir -p "$installer_root/v5.0.1" || return 1
+    git -c core.autocrlf=false archive v5.0.1 | tar -x -C "$installer_root/v5.0.1" || return 1
+  fi
+  HOME="$installer_root/home" "$installer_bash" "$installer_root/v5.0.1/install.sh" --prefix "$1" --force \
+    > "$installer_root/seed.log" 2>&1
+}
+copy_installer_inputs() {
+  mkdir -p "$1/.claude" || return 1
+  cp "$installer_repo/install.sh" "$installer_repo/install.ps1" "$installer_repo/published.sha256" "$1/" || return 1
+  cp -R "$installer_repo/agents" "$1/agents" || return 1
+  cp -R "$installer_repo/.claude/skills" "$1/.claude/skills"
+}
+run_copied_installer() {
+  local installer_repo="$1"; shift
+  run_installer "$@"
+}
+raw_files_manifest() {
+  local hash rel
+  # Independent byte oracle: exact equality also checks lowercase hex, two
+  # spaces, the complete path set, ordinal order, no BOM, LF and trailing LF.
+  ( cd "$1" || exit 1
+    [ -d agents ] && [ -d skills ] || exit 1
+    while IFS= read -r rel; do
+      hash=$("${installer_hash[@]}" < "$rel" | cut -d' ' -f1) || exit 1
+      printf '%s  %s\n' "$hash" "$rel"
+    done < <(find agents skills -type f -print | LC_ALL=C sort)
+  )
+}
+check_manifest() {
+  # These are the checksum commands fc-update must run FROM the prefix.
+  ( cd "$1" || exit 1
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c feature-crew.sha256; else shasum -a 256 -c feature-crew.sha256; fi
+  )
+}
+expect_manifest_bytes() { # prefix, expected manifest, label
+  if [ ! -f "$1/feature-crew.sha256" ]; then
+    case_err="$case_err $3:manifest-missing"
+  elif ! cmp -s "$2" "$1/feature-crew.sha256"; then
+    case_err="$case_err $3:manifest-bytes-differ"
+  fi
+}
+expect_output_line() {
+  local count
+  count=$(printf '%s\n' "$installer_out" | grep -cxF -- "$1" || true)
+  [ "$count" -eq 1 ] || case_err="$case_err $2:line-count=$count(want-1)"
+}
+remaining_files() {
+  ( cd "$1" && find . -type f -print | sed 's|^\./||' | LC_ALL=C sort )
+}
+
+# ---------------------------------------------------------------- T47
+# The expected manifest is computed from files actually written, not sources:
+# agents have generated frontmatter and hashes must cover those bytes too.
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t47-$engine/absolute"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  raw_files_manifest "$p" > "$installer_root/t47-$engine.expected" || case_err="$case_err cannot-hash-installed-files"
+  expect_manifest_bytes "$p" "$installer_root/t47-$engine.expected" absolute
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err absolute:checksum-check-failed"
+  expect_output_line "installed: $p/feature-crew.sha256" manifest-installed
+
+  # run_installer captures in a subshell here so its relative --prefix is
+  # interpreted from the parent directory, for both shell and .NET file APIs.
+  ( cd "$installer_root/t47-$engine" || exit 1
+    run_installer "$engine" relative
+    exit "$installer_rc"
+  )
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+  expect_installer_success relative-install
+  expect_manifest_bytes "$installer_root/t47-$engine/relative" "$installer_root/t47-$engine.expected" relative
+  check_manifest "$installer_root/t47-$engine/relative" > "$installer_root/check.out" 2>&1 \
+    || case_err="$case_err relative:checksum-check-failed"
+
+  p="$installer_root/t47-$engine/dry-empty"
+  run_installer "$engine" "$p" --dry-run
+  expect_installer_success dry-install
+  expect_output_line "DRY-RUN: write $p/feature-crew.sha256" manifest-dry-write
+  [ ! -e "$p" ] || case_err="$case_err dry-run-created-prefix"
+  installer_result "T47 $engine writes a canonical raw-byte manifest, including relative prefixes and dry runs"
+done
+if [ "${#INSTALLERS[@]}" -eq 2 ]; then
+  case_err=""
+  cmp -s "$installer_root/t47-sh/absolute/feature-crew.sha256" "$installer_root/t47-ps1/absolute/feature-crew.sha256" \
+    || case_err=" manifests-missing-or-not-byte-identical"
+  installer_result "T47 install.sh and the PowerShell fallback write byte-identical manifests"
+else
+  skip "T47 manifest byte parity (pwsh unavailable; set PWSH)"
+fi
+
+# ---------------------------------------------------------------- T48
+# Reproduce #23 with v5.0.1's own installer. Counting the fixture's agents and
+# skill directories keeps the removal expectation tied to what it really wrote.
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t48-$engine/untouched"
+  case_err=""
+  if ! seed_v501 "$p"; then
+    bad "T48a $engine recognizes an untouched v5.0.1 install" "v5.0.1 installer fixture failed"
+    continue
+  fi
+  raw_files_manifest "$p" > "$installer_root/t48.expected" || case_err="$case_err cannot-hash-fixture"
+  snapshot_tree "$p" > "$installer_root/before"
+  { find "$p/agents" -maxdepth 1 -type f -print
+    find "$p/skills" -mindepth 1 -maxdepth 1 -type d -print
+  } | LC_ALL=C sort > "$installer_root/t48.paths"
+  want=$(wc -l < "$installer_root/t48.paths" | tr -d ' ')
+  [ "$want" -gt 0 ] || case_err="$case_err empty-fixture"
+  run_installer "$engine" "$p" --uninstall --dry-run
+  expect_installer_success dry-uninstall
+  count=$(printf '%s\n' "$installer_out" | grep -c '^kept (yours' || true)
+  [ "$count" -eq 0 ] || case_err="$case_err kept-lines=$count(want-0)"
+  printf '%s\n' "$installer_out" | sed -n 's/^DRY-RUN: would remove //p' | LC_ALL=C sort > "$installer_root/t48.removals"
+  count=$(wc -l < "$installer_root/t48.removals" | tr -d ' ')
+  [ "$count" -eq "$want" ] || case_err="$case_err removal-lines=$count(want-$want)"
+  cmp -s "$installer_root/t48.paths" "$installer_root/t48.removals" || case_err="$case_err removal-paths-differ"
+  printf '%s\n' "$installer_out" | grep -qF 'feature-crew.sha256' && case_err="$case_err unexpected-manifest-line"
+  snapshot_tree "$p" > "$installer_root/after"
+  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-run-changed-fixture"
+  run_installer "$engine" "$p"
+  expect_installer_success nonforce-install
+  expect_manifest_bytes "$p" "$installer_root/t48.expected" recognized-v501
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err recognized-v501:checksum-check-failed"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
+  installer_result "T48a $engine recognizes an untouched v5.0.1 install without blaming upstream changes"
+
+  p="$installer_root/t48-$engine/edited"
+  case_err=""
+  if ! seed_v501 "$p"; then
+    bad "T48b $engine keeps only the edited v5.0.1 agent" "v5.0.1 installer fixture failed"
+    continue
+  fi
+  printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
+  cp "$p/agents/fc-pm.md" "$installer_root/t48.edited"
+  raw_files_manifest "$p" | grep -v '  agents/fc-pm.md$' > "$installer_root/t48.expected"
+  snapshot_tree "$p" > "$installer_root/before"
+  run_installer "$engine" "$p" --uninstall --dry-run
+  expect_installer_success dry-uninstall
+  count=$(printf '%s\n' "$installer_out" | grep -c '^kept (yours' || true)
+  [ "$count" -eq 1 ] || case_err="$case_err kept-lines=$count(want-1)"
+  expect_output_line "kept (yours — differs from what we install): $p/agents/fc-pm.md" edited-agent
+  snapshot_tree "$p" > "$installer_root/after"
+  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-run-changed-fixture"
+  run_installer "$engine" "$p"
+  expect_installer_success nonforce-install
+  expect_manifest_bytes "$p" "$installer_root/t48.expected" excludes-unrecognized-edit
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  [ "$(remaining_files "$p")" = 'agents/fc-pm.md' ] || case_err="$case_err uninstall-did-not-keep-exactly-edited-agent"
+  cmp -s "$installer_root/t48.edited" "$p/agents/fc-pm.md" || case_err="$case_err edited-agent-changed"
+  installer_result "T48b $engine keeps only the edited v5.0.1 agent, without recording its edit as a baseline"
+done
+
+# ---------------------------------------------------------------- T49
+# An untagged install can be recognized only by its recorded baseline. Include
+# CRLF in the changed skill so normalizing its manifest hash would be detected.
+t49_source="$installer_root/t49-source"
+if ! copy_installer_inputs "$t49_source"; then
+  bad "T49 untagged manifest-bearing fixture" "cannot copy this working tree's installer inputs"
+else
+  printf '\nUntagged agent change.\n' >> "$t49_source/agents/fc-pm.md"
+  printf '\r\nUntagged skill change.\r\n' >> "$t49_source/.claude/skills/fc-review/SKILL.md"
+  for engine in "${INSTALLERS[@]}"; do
+    p="$installer_root/t49-$engine"
+    case_err=""
+    run_copied_installer "$t49_source" "$engine" "$p" --force
+    expect_installer_success untagged-install
+    raw_files_manifest "$p" > "$installer_root/t49.expected" || case_err="$case_err cannot-hash-untagged-files"
+    expect_manifest_bytes "$p" "$installer_root/t49.expected" untagged-baseline
+    snapshot_tree "$p" > "$installer_root/before"
+    run_installer "$engine" "$p" --uninstall --dry-run
+    expect_installer_success dry-uninstall
+    count=$(printf '%s\n' "$installer_out" | grep -c '^kept (yours' || true)
+    [ "$count" -eq 0 ] || case_err="$case_err kept-lines=$count(want-0)"
+    expect_output_line "DRY-RUN: would remove $p/feature-crew.sha256" dry-manifest-removal
+    snapshot_tree "$p" > "$installer_root/after"
+    cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-run-changed-untagged-install"
+    installer_result "T49 $engine recognizes an untagged manifest-bearing agent and skill"
+  done
+fi
+
+# ---------------------------------------------------------------- T49b
+# Retiring a managed path drops its record, not the installed file itself.
+t49b_source="$installer_root/t49b-source"
+if ! copy_installer_inputs "$t49b_source"; then
+  bad "T49b retired-agent fixture" "cannot copy this working tree's installer inputs"
+else
+  printf '# Fixture-only retired agent\n' > "$t49b_source/agents/fc-retired.md"
+  for engine in "${INSTALLERS[@]}"; do
+    case_err=""
+    for variant in nonforce force; do
+      p="$installer_root/t49b-$engine-$variant"
+      run_copied_installer "$t49b_source" "$engine" "$p" --force
+      expect_installer_success "$variant:fixture-install"
+      if ! cp "$p/agents/fc-retired.md" "$installer_root/t49b.retired"; then
+        case_err="$case_err $variant:retired-agent-snapshot-missing"
+        continue
+      fi
+      hash=$("${installer_hash[@]}" < "$installer_root/t49b.retired" | cut -d' ' -f1)
+      grep -qxF "$hash  agents/fc-retired.md" "$p/feature-crew.sha256" 2>/dev/null \
+        || case_err="$case_err $variant:fixture-manifest-missing-retired-entry"
+      if [ "$variant" = force ]; then run_installer "$engine" "$p" --force
+      else run_installer "$engine" "$p"; fi
+      expect_installer_success "$variant:current-install"
+      raw_files_manifest "$p" | grep -v '  agents/fc-retired\.md$' > "$installer_root/t49b.expected" \
+        || case_err="$case_err $variant:cannot-hash-current-files"
+      expect_manifest_bytes "$p" "$installer_root/t49b.expected" "$variant:current-paths-only"
+      check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err $variant:checksum-check-failed"
+      cmp -s "$installer_root/t49b.retired" "$p/agents/fc-retired.md" || case_err="$case_err $variant:retired-agent-changed"
+    done
+    installer_result "T49b $engine reinstall drops stale manifest entries without changing retired files, with and without force"
+  done
+fi
+
+# ---------------------------------------------------------------- T50
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t50a-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  raw_files_manifest "$p" | grep '  agents/fc-pm.md$' > "$installer_root/t50.expected"
+  printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
+  cp "$p/agents/fc-pm.md" "$installer_root/t50.edited"
+  run_installer "$engine" "$p"
+  expect_installer_success nonforce-install
+  grep '  agents/fc-pm.md$' "$p/feature-crew.sha256" > "$installer_root/t50.entry" 2>/dev/null
+  cmp -s "$installer_root/t50.expected" "$installer_root/t50.entry" || case_err="$case_err nonforce:original-baseline-not-retained"
+  for attempt in 1 2; do
+    run_installer "$engine" "$p" --uninstall
+    expect_installer_success "uninstall-$attempt"
+    cmp -s "$installer_root/t50.edited" "$p/agents/fc-pm.md" || case_err="$case_err uninstall-$attempt:edit-changed"
+    expect_output_line "kept (yours — differs from what we install): $p/agents/fc-pm.md" "uninstall-$attempt:edited-agent"
+    expect_output_line "kept (records the files kept above): $p/feature-crew.sha256" "uninstall-$attempt:kept-manifest"
+    expect_manifest_bytes "$p" "$installer_root/t50.expected" "uninstall-$attempt:original-baseline"
+  done
+  installer_result "T50a $engine never adopts an edited agent as its baseline across reinstall and repeated uninstall"
+
+  p="$installer_root/t50b-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  raw_files_manifest "$p" | grep '  agents/fc-pm.md$' > "$installer_root/t50.expected"
+  if ! seed_v501 "$installer_root/t50b-$engine-old"; then
+    bad "T50b $engine manifest takes precedence over an older published agent" "v5.0.1 installer fixture failed"
+  else
+    old="$installer_root/t50b-$engine-old/agents/fc-pm.md"
+    cmp -s "$old" "$p/agents/fc-pm.md" && case_err="$case_err old-agent-fixture-matches-current-version"
+    cp "$old" "$p/agents/fc-pm.md"
+    run_installer "$engine" "$p"
+    expect_installer_success nonforce-install
+    run_installer "$engine" "$p" --uninstall
+    expect_installer_success uninstall
+    cmp -s "$old" "$p/agents/fc-pm.md" || case_err="$case_err older-published-edit-was-removed"
+    expect_output_line "kept (yours — differs from what we install): $p/agents/fc-pm.md" older-published-edit
+    expect_output_line "kept (records the files kept above): $p/feature-crew.sha256" kept-manifest
+    expect_manifest_bytes "$p" "$installer_root/t50.expected" original-baseline
+    installer_result "T50b $engine manifest takes precedence over an older published agent after non-force reinstall"
+  fi
+
+  p="$installer_root/t50c-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  raw_files_manifest "$p" | grep '  skills/fc-build-or-fix/' > "$installer_root/t50.expected"
+  printf '\nMY SKILL EDIT\n' >> "$p/skills/fc-build-or-fix/SKILL.md"
+  snapshot_tree "$p/skills/fc-build-or-fix" > "$installer_root/t50.skill"
+  for attempt in 1 2; do
+    run_installer "$engine" "$p" --uninstall
+    expect_installer_success "uninstall-$attempt"
+    expect_output_line "kept (yours — differs from what we install): $p/skills/fc-build-or-fix" "uninstall-$attempt:edited-skill"
+    snapshot_tree "$p/skills/fc-build-or-fix" > "$installer_root/after" 2>/dev/null
+    cmp -s "$installer_root/t50.skill" "$installer_root/after" || case_err="$case_err uninstall-$attempt:skill-not-kept-whole"
+    expect_output_line "kept (records the files kept above): $p/feature-crew.sha256" "uninstall-$attempt:kept-manifest"
+    expect_manifest_bytes "$p" "$installer_root/t50.expected" "uninstall-$attempt:skill-baselines"
+  done
+  installer_result "T50c $engine keeps an edited skill whole and retains its original manifest entries"
+
+  # Guard: this already passed before manifests existed; T47 separately proves
+  # that the fresh install really creates the manifest that must disappear.
+  p="$installer_root/t50d-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  [ -z "$(remaining_files "$p")" ] || case_err="$case_err untouched-install-left-files"
+  installer_result "T50d $engine untouched install uninstalls every file, including its manifest (guard)"
+
+  p="$installer_root/t50e-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  rm "$p/skills/fc-build-or-fix/reference/meta-work-cap.md" || case_err="$case_err missing-file-fixture-failed"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  [ ! -d "$p/skills/fc-build-or-fix" ] || case_err="$case_err missing-shipped-file-blocks-skill-removal"
+  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
+  installer_result "T50e $engine a missing shipped file does not protect an otherwise untouched skill"
+done
+
+# ---------------------------------------------------------------- T51
+# Execute fc-update's predicate, not a lookalike: equal manifests AND successful
+# verification. Checking cmp alone accepts an install whose files were deleted.
+for engine in "${INSTALLERS[@]}"; do
+  case_err=""
+  scratch="$installer_root/t51-$engine/scratch"
+  p="$installer_root/t51-$engine/current"
+  run_installer "$engine" "$scratch"
+  expect_installer_success scratch-install
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err untouched:manifests-missing-or-different"
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err untouched:checksum-check-failed"
+  rm "$p/agents/fc-pm.md" || case_err="$case_err deletion-fixture-failed"
+  cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err deleted:manifest-missing-or-changed"
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 && case_err="$case_err deleted:checksum-check-falsely-passed"
+
+  p="$installer_root/t51-$engine/edited"
+  run_installer "$engine" "$p"
+  expect_installer_success fresh-install
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err before-edit:checksum-check-failed"
+  printf '\nMY SKILL EDIT\n' >> "$p/skills/fc-review/SKILL.md"
+  cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err edited:manifest-missing-or-changed"
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 && case_err="$case_err edited:checksum-check-falsely-passed"
+
+  p="$installer_root/t51-$engine/old"
+  if ! seed_v501 "$p"; then
+    case_err="$case_err v501-fixture-failed"
+  else
+    run_installer "$engine" "$p"
+    expect_installer_success nonforce-install
+    # cmp exit 2 (missing manifests) is NOT evidence that versions differ.
+    cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256"
+    rc=$?
+    [ "$rc" -eq 1 ] || case_err="$case_err old-vs-current:cmp-exit=$rc(want-1)"
+    check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err recognized-v501:checksum-check-failed"
+    run_installer "$engine" "$p" --force
+    expect_installer_success force-install
+    cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err forced:manifests-missing-or-different"
+    check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err forced:checksum-check-failed"
+  fi
+  installer_result "T51 $engine up-to-date means identical manifests AND every recorded file present and unchanged"
+done
+
+# ---------------------------------------------------------------- T52
+# These malformed fixtures use real installed-file hashes, independently of
+# whether the installer can write a manifest yet. That keeps all three RED
+# probes live rather than silently skipping CRLF/traversal when it is absent.
+for engine in "${INSTALLERS[@]}"; do
+  for malformed in text crlf parent-segment; do
+    case_err=""
+    p="$installer_root/t52-$engine-$malformed"
+    run_installer "$engine" "$p"
+    expect_installer_success install
+    raw_files_manifest "$p" > "$installer_root/t52.valid" || case_err="$case_err cannot-hash-installed-files"
+    case "$malformed" in
+      text) printf 'not a manifest\n' > "$p/feature-crew.sha256" ;;
+      crlf) awk '{ printf "%s\r\n", $0 }' "$installer_root/t52.valid" > "$p/feature-crew.sha256" ;;
+      parent-segment) sed 's|  agents/fc-pm.md$|  agents/../fc-pm.md|' "$installer_root/t52.valid" > "$p/feature-crew.sha256" ;;
+    esac
+    cp "$p/feature-crew.sha256" "$installer_root/t52.invalid"
+    for action in install uninstall; do
+      if [ "$action" = install ]; then run_installer "$engine" "$p"
+      else run_installer "$engine" "$p" --uninstall; fi
+      expect_installer_success "$action"
+      expect_output_line "kept (not a Feature-Crew manifest): $p/feature-crew.sha256" "$action:invalid-manifest"
+      cmp -s "$installer_root/t52.invalid" "$p/feature-crew.sha256" || case_err="$case_err $action:invalid-manifest-changed"
+    done
+    [ "$(remaining_files "$p")" = 'feature-crew.sha256' ] || case_err="$case_err uninstall-did-not-leave-only-invalid-manifest"
+    installer_result "T52 $engine preserves a $malformed manifest while treating it as absent"
+  done
+done
+# ------------------------------------------------------------- T52empty
+# Zero lines is valid: install rewrites it; uninstall removes it when empty.
+for engine in "${INSTALLERS[@]}"; do
+  case_err=""
+  p="$installer_root/t52-$engine-empty"
+  mkdir -p "$p"
+  : > "$p/feature-crew.sha256"
+  snapshot_tree "$p" > "$installer_root/before"
+  run_installer "$engine" "$p" --dry-run
+  expect_installer_success dry-install
+  expect_output_line "DRY-RUN: write $p/feature-crew.sha256" dry-empty-manifest-write
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err dry-install:empty-manifest-rejected"
+  snapshot_tree "$p" > "$installer_root/after"
+  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-install:tree-changed"
+
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  expect_output_line "installed: $p/feature-crew.sha256" empty-manifest-rewritten
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err install:empty-manifest-rejected"
+  raw_files_manifest "$p" > "$installer_root/t52-empty.expected" || case_err="$case_err cannot-hash-installed-files"
+  expect_manifest_bytes "$p" "$installer_root/t52-empty.expected" empty-replaced-with-canonical-manifest
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err checksum-check-failed"
+
+  : > "$p/feature-crew.sha256"
+  snapshot_tree "$p" > "$installer_root/before"
+  run_installer "$engine" "$p" --uninstall --dry-run
+  expect_installer_success dry-uninstall
+  expect_output_line "DRY-RUN: would remove $p/feature-crew.sha256" dry-empty-manifest-removal
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err dry-uninstall:empty-manifest-rejected"
+  snapshot_tree "$p" > "$installer_root/after"
+  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-uninstall:tree-changed"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  expect_output_line "removed: $p/feature-crew.sha256" empty-manifest-removed
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err uninstall:empty-manifest-rejected"
+  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
+  installer_result "T52empty $engine accepts and rewrites an empty manifest, then removes it without dry-run mutation"
+done
+if [ "${#INSTALLERS[@]}" -eq 1 ]; then
+  for n in 47 48a 48b 49 49b 50a 50b 50c 50d 50e 51 52-text 52-crlf 52-parent-segment 52empty; do
+    skip "T$n ps1 manifest regression (pwsh unavailable; set PWSH)"
+  done
+fi
+
+# ---------------------------------------------------------------- T53
+# Prose alarms cannot prove a reader's interpretation. Pin the executable
+# commands and scope each policy check to its step, rather than the whole file.
+case_err=""
+s=.claude/skills/fc-update/SKILL.md
+pull=$(sed -n '/^## 2 /,/^## 3 /p' "$s")
+edit_check=$(sed -n '/^## 3 /,/^## 4 /p' "$s")
+install_step=$(sed -n '/^## 5 /,/^## 6 /p' "$s")
+verify=$(sed -n '/^## 6 /,/^## What/p' "$s")
+checksum_command='if command -v sha256sum >/dev/null 2>&1; then sha256sum -c feature-crew.sha256; else shasum -a 256 -c feature-crew.sha256; fi'
+grep -qF 'feature-crew.sha256' "$s" || case_err="$case_err manifest-not-named"
+printf '%s\n' "$pull" | grep -qF 'mktemp -d' || case_err="$case_err scratch-prefix-missing"
+printf '%s\n' "$pull" | grep -qE 'install\.sh.*--prefix' || case_err="$case_err scratch-install-missing"
+printf '%s\n' "$pull" | grep -qE 'cmp -s .*feature-crew\.sha256.*feature-crew\.sha256' || case_err="$case_err scratch-manifest-cmp-missing"
+for step in "$pull" "$verify"; do
+  printf '%s\n' "$step" | grep -qF "$checksum_command" || case_err="$case_err checksum-command-missing-in-predicate-or-verify"
+  printf '%s\n' "$step" | grep -qE 'cd .*([Pp][Rr][Ee][Ff][Ii][Xx]|\.claude)' || case_err="$case_err checksum-not-run-from-prefix"
+done
+printf '%s\n' "$pull" | grep -qiF 'If the pull was a no-op, say so and stop' && case_err="$case_err no-op-pull-still-stops"
+printf '%s\n' "$edit_check" | grep -qF './install.sh --uninstall --dry-run' || case_err="$case_err ownership-aware-edit-check-missing"
+printf '%s\n' "$edit_check" | grep -qiE 'untagged.*(cannot|can.not).*edit' || case_err="$case_err untagged-install-ambiguity-missing"
+printf '%s\n' "$edit_check" | grep -qiE 'pre.manifest|without a manifest|no manifest' || case_err="$case_err pre-manifest-boundary-missing"
+printf '%s\n' "$edit_check" | grep -qiE 'offer.*(backup|back.*up).*(every|each).*file|every.*file.*(backup|back.*up)' || case_err="$case_err backup-not-offered-for-every-listed-file"
+printf '%s\n' "$install_step" | grep -qiE 'Legacy cleanup removes files.*build-or-fix/.*research/.*agents/feature-crew/.*content matches.*published.*anything else is kept and reported' \
+  || case_err="$case_err per-file-legacy-cleanup-policy-missing"
+installer_result "T53 fc-update checks installed state after any pull and offers backups for every uncertain file"
+
+# ---------------------------------------------------------------- T54
+case_err=""
+sed -n '/^## Updating$/,/^## Credits$/p' README.md | grep -qF 'feature-crew.sha256' || case_err="$case_err update-paragraph-does-not-name-manifest"
+count=$(wc -l < README.md | tr -d ' ')
+[ "$count" -eq 94 ] || case_err="$case_err README-lines=$count(want-94)"
+installer_result "T54 README explains the install manifest without gaining lines"
 
 echo
 if [ "$SKIP" -gt 0 ]; then
