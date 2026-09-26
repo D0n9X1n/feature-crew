@@ -27,7 +27,7 @@ Typical angles:
 
 Reserve one dispatch each for synthesis and validation before search; the default budget leaves at most three search workers. Dispatch them in one message, parallel tool calls. Give each this prompt, followed by the mandatory Worker boundary suffix:
 
-> Return raw findings only. Each finding: a 1–2 sentence claim and a concrete source — `file:line`, URL, or command output. Do not synthesize, do not recommend. Cap 400 words. If a search returns nothing relevant, say so explicitly rather than padding. Say when you could not verify something instead of guessing.
+> Return raw findings only. Each finding: a 1–2 sentence claim and a concrete source — `file:line`, URL, or command output. Do not synthesize, do not recommend. If a search returns nothing relevant, say so explicitly rather than padding. Say when you could not verify something instead of guessing.
 
 ## Phase 2 — synthesize
 
@@ -40,7 +40,7 @@ One `general-purpose` agent with an explicit `model` override from the authoring
 > 3. **Open questions** — what the searches did not answer.
 > 4. **Sources** — numbered, with `file:line` or URL.
 >
-> Do not invent claims. Surface disagreements between inputs rather than averaging them. ≤600 words.
+> Do not invent claims. Surface disagreements between inputs rather than averaging them. Keep it concise.
 
 ## Phase 3 — validate
 

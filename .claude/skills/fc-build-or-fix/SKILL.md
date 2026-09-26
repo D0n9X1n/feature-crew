@@ -107,7 +107,7 @@ Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 
 ## One-clue mode
 
-Every QA dispatch in Standard and Complex reports one result: **PASS**, **CRITICAL** (bug/security/data loss with `file:line` and repro), or **IMPORTANT** (design problem/missing test/unclear behavior with `file:line`). One finding, not a list.
+Every QA dispatch in Standard and Complex reports one verdict: **PASS**, **CRITICAL** (bug/security/data loss with `file:line` and repro), or **IMPORTANT** (design problem/missing test/unclear behavior with `file:line`). List every blocking finding, each CRITICAL and each unmet or untested requirement, because each one blocks on its own; otherwise report the single most material finding.
 
 ## Cost telemetry
 

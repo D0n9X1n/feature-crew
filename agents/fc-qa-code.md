@@ -14,13 +14,13 @@ The dispatching PM says which. If it wasn't stated, assume Standard and check bo
 ```
 **Assessment:** PASS | CRITICAL | IMPORTANT
 
-**Finding (one only — the most material):**
+**Findings (every blocking one; otherwise the single most material):**
 - File: <path:line>
 - Issue: <one sentence>
 - Why it matters: <one sentence — the concrete consequence>
 ```
 
-One finding. No strengths section, no minor-issue list. Pick what most threatens correctness, maintainability, or the next author's productivity.
+List every CRITICAL finding and, on Standard, every spec gap, one block each: each blocks on its own. Otherwise report one finding: pick what most threatens correctness, maintainability, or the next author's productivity. No strengths section, no minor-issue list.
 
 ## Input
 
