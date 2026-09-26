@@ -73,12 +73,12 @@ REMOVED_ROOTS=()
 # author provenance. Keep in sync with $AgentMeta in install.ps1.
 agent_meta() {
   case "$1" in
-    fc-pm.md)         echo "Feature-Crew Product Manager: selects Just Do It/Standard/Complex and orchestrates the pipeline." ;;
-    fc-architect.md)  echo "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines)." ;;
-    fc-developer.md)  echo "Feature-Crew Developer: implements one task TDD-style against an approved plan." ;;
-    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode)." ;;
-    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode)." ;;
-    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review before merging Complex work." ;;
+    fc-pm.md)         echo "Feature-Crew Product Manager role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent: it collects user approvals, and gate provenance is observed only one dispatch deep." ;;
+    fc-architect.md)  echo "Feature-Crew Architect: turns an approved spec into a bounded implementation plan (<=500 lines). Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions." ;;
+    fc-developer.md)  echo "Feature-Crew Developer: implements one planned task TDD-style. Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests." ;;
+    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: checks an implementation against its approved spec (one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review." ;;
+    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: reviews a diff in one-clue mode, spec and quality on Standard, quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review." ;;
+    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review of Complex work before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review." ;;
     *)                echo "Feature-Crew agent." ;;
   esac
 }
