@@ -614,12 +614,34 @@ else
   t20_err="$t20_err attack6-not-applied"
 fi
 
+# Attacks 7/8: function skipping must not weaken the original column-0 guard.
+# Insert exactly once at the entry to the install function, before any work.
+for t20_attack in 7 8; do
+  case "$t20_attack" in
+    7) t20_terminator='exit 0' ;;
+    8) t20_terminator='throw "gutted"' ;;
+  esac
+  if [ "$(grep -cxF 'function Install-ClaudeGlobal {' install.ps1)" -ne 1 ]; then
+    t20_err="$t20_err attack$t20_attack-target-not-unique"
+    continue
+  fi
+  awk -v terminator="$t20_terminator" '
+    { print }
+    $0 == "function Install-ClaudeGlobal {" { print terminator }
+  ' install.ps1 > "$mut/attack$t20_attack.ps1"
+  if [ "$(awk '/^function Install-ClaudeGlobal \{$/ { getline; print }' "$mut/attack$t20_attack.ps1")" = "$t20_terminator" ]; then
+    ps1_operative_ok "$mut/attack$t20_attack.ps1" && t20_err="$t20_err attack$t20_attack-undetected"
+  else
+    t20_err="$t20_err attack$t20_attack-not-applied"
+  fi
+done
+
 # Control: the real installers must still pass, or the check is just broken.
 ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
 sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
 
 rm -rf "$mut"
-[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (6 mutations + 2 controls)" \
+[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (8 mutations + 2 controls)" \
                   || bad "T20 mutation test" "issues:$t20_err"
 
 # ---------------------------------------------------------------- T21
