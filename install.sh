@@ -9,7 +9,10 @@
 #   ./install.sh --force               # overwrite existing files
 #   ./install.sh --dry-run             # print what would happen, change nothing
 #   ./install.sh --uninstall           # remove files this script installs
+#   ./install.sh --check               # read-only: report whether an update is needed
+#   ./install.sh --verify              # read-only: verify the install against this clone
 #   ./install.sh --prefix DIR          # use DIR instead of ~/.claude
+# --check/--verify exit 0 when current/verified, 1 on any mismatch, 2 on an error.
 
 set -euo pipefail
 export LC_ALL=C
@@ -17,6 +20,8 @@ export LC_ALL=C
 FORCE=0
 DRY_RUN=0
 UNINSTALL=0
+CHECK=0
+VERIFY=0
 PREFIX="${HOME}/.claude"
 
 while [ $# -gt 0 ]; do
@@ -24,6 +29,8 @@ while [ $# -gt 0 ]; do
     --force)         FORCE=1 ;;
     --dry-run)       DRY_RUN=1 ;;
     --uninstall)     UNINSTALL=1 ;;
+    --check)         CHECK=1 ;;
+    --verify)        VERIFY=1 ;;
     --prefix)
       if [ "$#" -lt 2 ]; then
         echo "Missing value for --prefix" >&2
@@ -32,13 +39,17 @@ while [ $# -gt 0 ]; do
       shift; PREFIX="$1"
       ;;
     -h|--help)
-      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
+if [ $((CHECK + VERIFY)) -gt 0 ] && [ $((CHECK + VERIFY + FORCE + DRY_RUN + UNINSTALL)) -gt 1 ]; then
+  printf '%s\n' "--check and --verify cannot be combined with each other, --force, --uninstall, or --dry-run" >&2
+  exit 2
+fi
 
 # Resolve the directory this script lives in (portable; no realpath dependency).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -427,6 +438,195 @@ uninstall_paths() {
   uninstall_manifest
   remove_legacy
 }
+
+# --- Read-only --check / --verify ---------------------------------------------
+# Compare the prefix with what this clone would install, using the same
+# ownership order as install and uninstall: current bytes, then the recorded
+# baseline, then published hashes only when no baseline exists. Never create
+# the prefix, rewrite the manifest, or clean anything up. Mirrored in install.ps1.
+
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  else
+    shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# The exact bytes install_agent writes for a source agent.
+agent_bytes() {
+  if ! head -n 1 "$1" | grep -q '^---$'; then
+    printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$2" "$3"
+  fi
+  cat "$1"
+}
+
+# A model key in role-agent frontmatter would bypass the dispatch-time
+# selector. Only the leading --- block counts; body prose may say "model:".
+agent_has_model() {
+  awk 'NR == 1 { sub(/\r$/, ""); if ($0 != "---") exit 1; next }
+       { sub(/\r$/, "") } $0 == "---" { exit 1 } /^model:/ { found = 1; exit }
+       END { exit !found }' "$1"
+}
+
+# Classify one expected file and record its expected manifest entry.
+check_file() {
+  local rel="$1" want="$2" file="$PREFIX/$1" got
+  CHECK_ENTRIES+=("$want  $rel")
+  if [ ! -e "$file" ]; then
+    STATE=missing
+  elif [ ! -f "$file" ]; then
+    STATE=uncertain
+  else
+    got=$(sha256_raw "$file")
+    if [ "$got" = "$want" ]; then
+      STATE=current
+    elif historical_file_is_ours "$file" "$rel"; then
+      STATE=outdated
+    else
+      STATE=uncertain
+    fi
+  fi
+  case "$STATE" in
+    missing) CHECK_MISSING+=("$rel") ;;
+    outdated) CHECK_OUTDATED+=("$rel") ;;
+    uncertain) CHECK_UNCERTAIN+=("$rel") ;;
+  esac
+}
+
+check_manifest_text() {
+  if [ "${#CHECK_ENTRIES[@]}" -gt 0 ]; then
+    printf '%s\n' "${CHECK_ENTRIES[@]}" | sort -k2
+  fi
+}
+
+check_report() { # label, prefix-relative paths...
+  local label="$1" rel; shift
+  [ "$#" -gt 0 ] || return 0
+  printf '%s\n' "$@" | sort | while IFS= read -r rel; do say "$label: $rel"; done
+}
+
+# An unreadable source is an operational error, never a mismatch: a glob or a
+# process substitution drops a failed walk, so every walk checks its status.
+# The path is named relative to the installer directory, so both engines print
+# the same line however each resolved its own directory. Mirrored by
+# Read-Source in install.ps1.
+source_error() {
+  local rel="${1#"$SCRIPT_DIR"/}"
+  say "ERROR: cannot read installer source ($rel)" >&2
+  exit 2
+}
+
+source_list() { # dir, find predicates...; sets SOURCE_LIST
+  local dir="$1"; shift
+  SOURCE_LIST=$(cd "$dir" 2>/dev/null && find . "$@" -print 2>/dev/null | sed 's|^\./||' | sort) \
+    || source_error "$dir"
+}
+
+check_install() {
+  local src base name rel want ok bad agents=0 agents_ok=0 skills=0 skills_ok=0
+  if [ ! -d "$SRC_AGENTS" ]; then
+    say "ERROR: cannot find agents/ next to the installer ($SRC_AGENTS)" >&2
+    exit 2
+  fi
+  if [ "$MANIFEST_VALID" -eq 0 ]; then
+    say "ERROR: not a Feature-Crew manifest (left untouched): $MANIFEST" >&2
+    exit 2
+  fi
+  # Read the historical-hash table now: published_file reads it only for a file
+  # that differs, so an unreadable table would otherwise go unnoticed.
+  if [ -f "$PUBLISHED_HASHES" ] && ! cat "$PUBLISHED_HASHES" > /dev/null 2>&1; then
+    source_error "$PUBLISHED_HASHES"
+  fi
+  CHECK_ENTRIES=()
+  CHECK_MISSING=()
+  CHECK_OUTDATED=()
+  CHECK_UNCERTAIN=()
+  CHECK_STALE=()
+  CHECK_MODEL=()
+  source_list "$SRC_AGENTS" -maxdepth 1
+  for src in "$SRC_AGENTS"/*.md; do
+    [ -e "$src" ] || continue
+    base=$(basename "$src")
+    name=${base%.md}
+    rel="agents/$name.md"
+    want=$(agent_bytes "$src" "$name" "$(agent_meta "$base")" 2>/dev/null | sha256_stdin) || source_error "$src"
+    check_file "$rel" "$want"
+    agents=$((agents + 1))
+    if [ "$VERIFY" -eq 1 ] && [ -f "$PREFIX/$rel" ] && agent_has_model "$PREFIX/$rel"; then
+      CHECK_MODEL+=("$rel")
+    elif [ "$STATE" = current ]; then
+      agents_ok=$((agents_ok + 1))
+    fi
+  done
+  if [ -d "$SRC_SKILLS_DIR" ]; then
+    source_list "$SRC_SKILLS_DIR" -maxdepth 1
+    for src in "$SRC_SKILLS_DIR"/*/; do
+      src=${src%/}
+      [ -d "$src" ] || continue
+      # Walk before the SKILL.md test: an unreadable directory is an error, not a non-skill.
+      source_list "$src" -type f
+      [ -f "$src/SKILL.md" ] || continue
+      name=$(basename "$src")
+      skills=$((skills + 1))
+      ok=1
+      while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        want=$(sha256_raw "$src/$rel" 2>/dev/null) || source_error "$src/$rel"
+        check_file "skills/$name/$rel" "$want"
+        [ "$STATE" = current ] || ok=0
+      done < <(printf '%s\n' "$SOURCE_LIST")
+      skills_ok=$((skills_ok + ok))
+    done
+  fi
+  # fc-* entries this clone no longer ships linger; report them, never delete.
+  for src in "$DEST_AGENTS"/fc-*.md; do
+    [ -f "$src" ] || continue
+    base=$(basename "$src")
+    [ -f "$SRC_AGENTS/$base" ] || CHECK_STALE+=("agents/$base")
+  done
+  for src in "$DEST_SKILLS_DIR"/fc-*/; do
+    [ -d "$src" ] || continue
+    name=$(basename "$src")
+    [ -f "$SRC_SKILLS_DIR/$name/SKILL.md" ] || CHECK_STALE+=("skills/$name")
+  done
+  if [ "$MANIFEST_PRESENT" -eq 0 ]; then
+    CHECK_MISSING+=("feature-crew.sha256")
+  elif ! check_manifest_text | cmp -s - "$MANIFEST"; then
+    CHECK_OUTDATED+=("feature-crew.sha256")
+  fi
+
+  if [ "$VERIFY" -eq 1 ]; then say "feature-crew: verifying $PREFIX"; else say "feature-crew: checking $PREFIX"; fi
+  check_report missing ${CHECK_MISSING[@]+"${CHECK_MISSING[@]}"}
+  check_report outdated ${CHECK_OUTDATED[@]+"${CHECK_OUTDATED[@]}"}
+  check_report uncertain ${CHECK_UNCERTAIN[@]+"${CHECK_UNCERTAIN[@]}"}
+  check_report stale ${CHECK_STALE[@]+"${CHECK_STALE[@]}"}
+  bad=$(( ${#CHECK_MISSING[@]} + ${#CHECK_OUTDATED[@]} + ${#CHECK_UNCERTAIN[@]} ))
+  if [ "$VERIFY" -eq 1 ]; then
+    check_report "model key" ${CHECK_MODEL[@]+"${CHECK_MODEL[@]}"}
+    bad=$((bad + ${#CHECK_MODEL[@]}))
+    say "agents: $agents_ok/$agents verified"
+    say "skills: $skills_ok/$skills verified"
+    if [ "$bad" -eq 0 ]; then say "verify: ok"; exit 0; fi
+    say "verify: failed"
+    exit 1
+  fi
+  if [ "$bad" -eq 0 ]; then say "check: current"; exit 0; fi
+  say "check: update-needed"
+  exit 1
+}
+
+# Read-only modes run before the install and uninstall dispatch below. Any
+# operational failure exits 2, never 1, so it cannot read as a mismatch.
+if [ "$CHECK" -eq 1 ] || [ "$VERIFY" -eq 1 ]; then
+  set -E
+  trap 'exit 2' ERR
+  # Bash 3.2 does not apply errexit to a loop whose input redirection fails,
+  # so read the manifest once here, before load_manifest loops over it.
+  if [ -f "$MANIFEST" ]; then cat "$MANIFEST" > /dev/null; fi
+  load_manifest
+  check_install
+fi
 
 main_install() {
   if [ ! -d "$SRC_AGENTS" ]; then

@@ -149,7 +149,8 @@ tmp_prefix="$(mktemp -d)"
 T15_PROBE=".claude/skills/t15-probe-$$"
 T21_SCRIPT="./t21-noguard-$$.sh"
 CLEANUP_PATHS=("$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT")
-cleanup() { rm -rf "${CLEANUP_PATHS[@]}"; }
+# T63 locks source fixtures with chmod 000; unlock first so an abort cannot strand them.
+cleanup() { chmod -R u+rwX "${CLEANUP_PATHS[@]}" 2>/dev/null; rm -rf "${CLEANUP_PATHS[@]}"; }
 trap cleanup EXIT
 if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   t5_err=""
@@ -2492,7 +2493,7 @@ raw_files_manifest() {
   )
 }
 check_manifest() {
-  # These are the checksum commands fc-update must run FROM the prefix.
+  # Independent checksum oracle run FROM the prefix; fc-update uses --check.
   ( cd "$1" || exit 1
     if command -v sha256sum >/dev/null 2>&1; then sha256sum -c feature-crew.sha256; else shasum -a 256 -c feature-crew.sha256; fi
   )
@@ -2776,29 +2777,40 @@ for engine in "${INSTALLERS[@]}"; do
 done
 
 # ---------------------------------------------------------------- T51
-# Execute fc-update's predicate, not a lookalike: equal manifests AND successful
-# verification. Checking cmp alone accepts an install whose files were deleted.
+# Execute the installers' own read-only modes, which replaced fc-update's inline
+# predicate: current means an equal manifest AND every installed file hashed.
+# A deleted, edited, or older install needs an update; neither mode writes.
+t51_run() { # engine, prefix, want-exit, label, flags...
+  local engine="$1" prefix="$2" want="$3" label="$4"; shift 4
+  snapshot_tree "$prefix" > "$installer_root/t51.before" 2>/dev/null
+  run_installer "$engine" "$prefix" "$@"
+  [ "$installer_rc" -eq "$want" ] || case_err="$case_err $label:exit=$installer_rc(want-$want)"
+  snapshot_tree "$prefix" > "$installer_root/t51.after" 2>/dev/null
+  cmp -s "$installer_root/t51.before" "$installer_root/t51.after" || case_err="$case_err $label:prefix-changed"
+}
 for engine in "${INSTALLERS[@]}"; do
   case_err=""
-  scratch="$installer_root/t51-$engine/scratch"
   p="$installer_root/t51-$engine/current"
-  run_installer "$engine" "$scratch"
-  expect_installer_success scratch-install
   run_installer "$engine" "$p"
   expect_installer_success install
-  cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err untouched:manifests-missing-or-different"
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err untouched:checksum-check-failed"
+  t51_run "$engine" "$p" 0 untouched-check --check
+  expect_output_line 'check: current' untouched-check
+  t51_run "$engine" "$p" 0 untouched-verify --verify
+  expect_output_line 'verify: ok' untouched-verify
   rm "$p/agents/fc-pm.md" || case_err="$case_err deletion-fixture-failed"
-  cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err deleted:manifest-missing-or-changed"
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 && case_err="$case_err deleted:checksum-check-falsely-passed"
+  t51_run "$engine" "$p" 1 deleted-check --check
+  expect_output_line 'missing: agents/fc-pm.md' deleted-check
+  expect_output_line 'check: update-needed' deleted-check
+  t51_run "$engine" "$p" 1 deleted-verify --verify
+  expect_output_line 'verify: failed' deleted-verify
 
   p="$installer_root/t51-$engine/edited"
   run_installer "$engine" "$p"
   expect_installer_success fresh-install
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err before-edit:checksum-check-failed"
   printf '\nMY SKILL EDIT\n' >> "$p/skills/fc-review/SKILL.md"
-  cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err edited:manifest-missing-or-changed"
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 && case_err="$case_err edited:checksum-check-falsely-passed"
+  t51_run "$engine" "$p" 1 edited-check --check
+  expect_output_line 'uncertain: skills/fc-review/SKILL.md' edited-check
+  expect_output_line 'check: update-needed' edited-check
 
   p="$installer_root/t51-$engine/old"
   if ! seed_v501 "$p"; then
@@ -2806,17 +2818,17 @@ for engine in "${INSTALLERS[@]}"; do
   else
     run_installer "$engine" "$p"
     expect_installer_success nonforce-install
-    # cmp exit 2 (missing manifests) is NOT evidence that versions differ.
-    cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256"
-    rc=$?
-    [ "$rc" -eq 1 ] || case_err="$case_err old-vs-current:cmp-exit=$rc(want-1)"
-    check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err recognized-v501:checksum-check-failed"
+    t51_run "$engine" "$p" 1 old-check --check
+    expect_output_line 'outdated: feature-crew.sha256' old-check
+    expect_output_line 'check: update-needed' old-check
     run_installer "$engine" "$p" --force
     expect_installer_success force-install
-    cmp -s "$scratch/feature-crew.sha256" "$p/feature-crew.sha256" || case_err="$case_err forced:manifests-missing-or-different"
-    check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err forced:checksum-check-failed"
+    t51_run "$engine" "$p" 0 forced-check --check
+    expect_output_line 'check: current' forced-check
+    t51_run "$engine" "$p" 0 forced-verify --verify
+    expect_output_line 'verify: ok' forced-verify
   fi
-  installer_result "T51 $engine up-to-date means identical manifests AND every recorded file present and unchanged"
+  installer_result "T51 $engine --check/--verify: current means an equal manifest AND every installed file hashed"
 done
 
 # ---------------------------------------------------------------- T52
@@ -2892,31 +2904,652 @@ if [ "${#INSTALLERS[@]}" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------- T53
-# Prose alarms cannot prove a reader's interpretation. Pin the executable
-# commands and scope each policy check to its step, rather than the whole file.
+# Prose alarms cannot prove a reader's interpretation. fc-update delegates its
+# predicate to the installers, so pin its commands and consent rules as literal
+# sentences within its Flow; removing any one must fail with its own label.
+t53_labels=(
+  dirty-clone-refused ff-only-pull check-after-any-pull check-exit-codes current-reports-stale
+  uncertain-listed backup-offered consent-before-force never-decides force-install
+  verify-once errors-stop malformed-manifest-untouched windows-equivalent accepted-limit
+)
+t53_rules=(
+  'Run `git status --short`; if the clone is dirty, stop and ask, never stash or discard its work.'
+  'Run `git pull --ff-only` and summarize what arrived.'
+  'Always run `./install.sh --check` next, even when the pull was a no-op.'
+  'It is read-only and exits 0 when current, 1 when an update is needed, and 2 on any error.'
+  'If it reports `check: current`, report its `stale:` lines with the manual `rm` for each, then stop.'
+  'Otherwise list every `uncertain:` file, including files inside skill directories.'
+  'Offer a backup of each (`cp <file> <file>.bak`).'
+  'Get explicit consent before running `--force`.'
+  'Never decide backups or overwrites for the user.'
+  'Run `./install.sh --force` and report its `kept` lines.'
+  'Then run `./install.sh --verify` once and paste its output, with the manual `rm` for each `stale:` line.'
+  'Any error stops the flow.'
+  'Report a malformed manifest and leave it untouched; never rewrite it to pass the check.'
+  'On native Windows without Git Bash, use `.\install.ps1` with `-Check`, `-Force`, and `-Verify`.'
+  'Accepted limit: a file edited between `--check` and `--force` is not asked about again (single-user local window).'
+)
+t53_contract() { # SKILL.md text
+  local flow i at last=-1 errors=""
+  flow=$(printf '%s\n' "$1" | sed -n '/^## Flow$/,/^## /p')
+  for ((i=0; i<${#t53_rules[@]}; i++)); do
+    case "$flow" in
+      *"${t53_rules[$i]}"*) ;;
+      *) errors="$errors ${t53_labels[$i]}" ;;
+    esac
+  done
+  # Check, then consent, then --force, then --verify: among the rules present.
+  for i in 2 7 9 10; do
+    case "$flow" in *"${t53_rules[$i]}"*) ;; *) continue ;; esac
+    at="${flow%%"${t53_rules[$i]}"*}"
+    if [ "${#at}" -le "$last" ]; then errors="$errors check-consent-force-verify-order"; break; fi
+    last=${#at}
+  done
+  printf '%s\n' "$errors"
+}
 case_err=""
 s=.claude/skills/fc-update/SKILL.md
-pull=$(sed -n '/^## 2 /,/^## 3 /p' "$s")
-edit_check=$(sed -n '/^## 3 /,/^## 4 /p' "$s")
-install_step=$(sed -n '/^## 5 /,/^## 6 /p' "$s")
-verify=$(sed -n '/^## 6 /,/^## What/p' "$s")
-checksum_command='if command -v sha256sum >/dev/null 2>&1; then sha256sum -c feature-crew.sha256; else shasum -a 256 -c feature-crew.sha256; fi'
-grep -qF 'feature-crew.sha256' "$s" || case_err="$case_err manifest-not-named"
-printf '%s\n' "$pull" | grep -qF 'mktemp -d' || case_err="$case_err scratch-prefix-missing"
-printf '%s\n' "$pull" | grep -qE 'install\.sh.*--prefix' || case_err="$case_err scratch-install-missing"
-printf '%s\n' "$pull" | grep -qE 'cmp -s .*feature-crew\.sha256.*feature-crew\.sha256' || case_err="$case_err scratch-manifest-cmp-missing"
-for step in "$pull" "$verify"; do
-  printf '%s\n' "$step" | grep -qF "$checksum_command" || case_err="$case_err checksum-command-missing-in-predicate-or-verify"
-  printf '%s\n' "$step" | grep -qE 'cd .*([Pp][Rr][Ee][Ff][Ii][Xx]|\.claude)' || case_err="$case_err checksum-not-run-from-prefix"
+t53_text=$(cat "$s")
+t53_out=$(t53_contract "$t53_text")
+case_err="$case_err$t53_out"
+# The predicate lives in the installers now; an inline copy here would drift.
+grep -qE 'sha256sum -c|shasum -a 256 -c|cmp -s|mktemp -d' "$s" && case_err="$case_err inline-predicate-returned"
+grep -qiF 'If the pull was a no-op, say so and stop' "$s" && case_err="$case_err no-op-pull-still-stops"
+count=$(wc -l < "$s" | tr -d ' ')
+[ "$count" -le 40 ] || case_err="$case_err fc-update-lines=$count(want-<=40)"
+if [ -z "$t53_out" ]; then
+  for ((t53_i=0; t53_i<${#t53_rules[@]}; t53_i++)); do
+    t53_mut_out=$(t53_contract "${t53_text/"${t53_rules[$t53_i]}"/}")
+    if [ "$t53_mut_out" = " ${t53_labels[$t53_i]}" ]; then
+      ok "T53 removal mutation: ${t53_labels[$t53_i]} rejected by its own check"
+    else
+      bad "T53 removal mutation: ${t53_labels[$t53_i]}" "got '${t53_mut_out:-<empty>}', want ' ${t53_labels[$t53_i]}'"
+    fi
+  done
+fi
+installer_result "T53 fc-update runs --check after any pull, asks consent before --force, then --verify once"
+
+# ---------------------------------------------------------------- T63
+# The installers' read-only --check/--verify modes replaced fc-update's inline
+# predicate. Run both engines over each ownership state, compare the whole
+# ordered output and exit code, and snapshot the prefix, HOME and cwd: these
+# modes never write. Removing hashing, manifest comparison, or the model-key
+# check must fail with that mutation's own diagnostic, not merely some failure.
+t63_root="$installer_root/t63"
+t63_cwd="$t63_root/cwd"
+mkdir -p "$t63_cwd" "$t63_root/parity"
+t63_usage='--check and --verify cannot be combined with each other, --force, --uninstall, or --dry-run'
+t63_shipped=$( { for t63_f in agents/*.md; do printf '%s\n' "$t63_f"; done
+  for t63_d in .claude/skills/*/; do
+    [ -f "${t63_d}SKILL.md" ] || continue
+    ( cd "$t63_d" && find . -type f -print | sed "s|^\./|skills/$(basename "$t63_d")/|" )
+  done; } | LC_ALL=C sort)
+t63_agents=$(printf '%s\n' "$t63_shipped" | grep -c '^agents/')
+t63_skills=$(printf '%s\n' "$t63_shipped" | grep -c '^skills/[^/]*/SKILL\.md$')
+t63_record=1
+t63_via=""
+t63_detail=""
+t63_normalize() { # prefix, source, captured output
+  T63_P="$1" T63_S="$2" awk '
+    function swap(s, from, to,   out, i) {
+      out = ""
+      while (from != "" && (i = index(s, from)) > 0) {
+        out = out substr(s, 1, i - 1) to
+        s = substr(s, i + length(from))
+      }
+      return out s
+    }
+    { sub(/\r$/, ""); print swap(swap($0, ENVIRON["T63_P"], "<P>"), ENVIRON["T63_S"], "<SRC>") }
+  ' "$3"
+}
+t63_expect() { printf '%s\n' "$@" > "$t63_root/expected"; }
+# Start an engine the way a user does: by relative path, from $t63_via.
+t63_run_relative() { # engine, prefix, flags...
+  local engine="$1" prefix="$2"; shift 2
+  if [ "$engine" = sh ]; then
+    ( cd "$t63_via" && HOME="$installer_root/home" "$installer_bash" install.sh --prefix "$prefix" "$@" ) \
+      > "$installer_root/run.out" 2>&1
+  else
+    ( cd "$t63_via" && env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+        POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+        "$PWSH_BIN" -NonInteractive -File install.ps1 --prefix "$prefix" "$@" ) > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+}
+t63_run() { # engine, prefix, want-exit, label, installer directory, flags...; relative when t63_via is set
+  local engine="$1" prefix="$2" want="$3" label="$4" installer_repo="$5"; shift 5
+  snapshot_tree "$prefix" > "$t63_root/before" 2>/dev/null
+  if [ -n "$t63_via" ]; then
+    t63_run_relative "$engine" "$prefix" "$@"
+  else
+    run_installer_at "$t63_cwd" "$engine" "$prefix" "$@"
+  fi
+  [ "$installer_rc" -eq "$want" ] || case_err="$case_err $label:exit=$installer_rc(want-$want)"
+  t63_normalize "$prefix" "$installer_repo" "$installer_root/run.out" > "$t63_root/actual"
+  if ! cmp -s "$t63_root/expected" "$t63_root/actual"; then
+    case_err="$case_err $label:output-differs"
+    [ -n "$t63_detail" ] || t63_detail="$label: $(diff "$t63_root/expected" "$t63_root/actual" | grep -m 1 '^[<>]')"
+  fi
+  snapshot_tree "$prefix" > "$t63_root/after" 2>/dev/null
+  cmp -s "$t63_root/before" "$t63_root/after" || case_err="$case_err $label:prefix-changed"
+  [ ! -e "$installer_root/home/.claude" ] || case_err="$case_err $label:HOME-install-created"
+  [ -z "$(ls -A "$t63_cwd")" ] || case_err="$case_err $label:cwd-changed"
+  if [ "$t63_record" -eq 1 ]; then
+    { printf 'exit=%s\n' "$installer_rc"; cat "$t63_root/actual"; } > "$t63_root/parity/$engine-$label"
+  fi
+}
+t63_result() {
+  if [ -z "$case_err" ]; then
+    ok "$1"
+  else
+    bad "$1" "issues:$case_err"
+    [ -z "$t63_detail" ] || printf '        first difference: %s\n' "$t63_detail"
+  fi
+  t63_detail=""
+}
+# Lock one source path, run both modes, then restore it. t63_run never aborts,
+# so the restore always runs; cleanup unlocks too if the suite dies mid-case.
+t63_lock_pair() { # engine, prefix, source path to lock, path the error names, label
+  local mode=644
+  [ -d "$t63_fixture/$3" ] && mode=755
+  t63_expect "ERROR: cannot read installer source ($4)"
+  chmod 000 "$t63_fixture/$3"
+  t63_run "$1" "$2" 2 "$5-check" "$t63_fixture" --check
+  t63_run "$1" "$2" 2 "$5-verify" "$t63_fixture" --verify
+  chmod "$mode" "$t63_fixture/$3"
+}
+t63_pin_model() { # copied installer inputs: pin one role agent; add body prose to another
+  { printf -- '---\nname: fc-qa-code\ndescription: "Pinned fixture."\nmodel: opus\n---\n\n'
+    cat "$1/agents/fc-qa-code.md"
+  } > "$t63_root/pin.tmp" && mv "$t63_root/pin.tmp" "$1/agents/fc-qa-code.md" &&
+  printf '\nmodel: in body prose is not a frontmatter key.\n' >> "$1/agents/fc-pm.md"
+}
+t63_published_oracle() { # prefix without a manifest; independent expected --check
+  local rel hash name missing="" outdated="" uncertain="" stale=""
+  while IFS= read -r rel; do
+    if [ ! -e "$1/$rel" ]; then
+      missing="$missing$rel"$'\n'
+    elif ! cmp -s "$1/$rel" "$t63_root/sh/fresh/$rel"; then
+      hash=$(tr -d '\r' < "$1/$rel" | "${installer_hash[@]}" | cut -d' ' -f1)
+      if grep -qxF "$hash  $rel" published.sha256; then outdated="$outdated$rel"$'\n'
+      else uncertain="$uncertain$rel"$'\n'; fi
+    fi
+  done <<< "$t63_shipped"
+  # A v5.0.1 fc-* name this clone no longer ships would be a stale warning.
+  for rel in "$1"/agents/fc-*.md; do
+    [ -f "$rel" ] || continue
+    name=${rel##*/}
+    [ -f "agents/$name" ] || stale="${stale}agents/$name"$'\n'
+  done
+  for rel in "$1"/skills/fc-*/; do
+    [ -d "$rel" ] || continue
+    name=$(basename "$rel")
+    [ -f ".claude/skills/$name/SKILL.md" ] || stale="${stale}skills/$name"$'\n'
+  done
+  printf '%s\n' 'feature-crew: checking <P>'
+  printf '%sfeature-crew.sha256\n' "$missing" | LC_ALL=C sort | sed 's/^/missing: /'
+  printf '%s' "$outdated" | LC_ALL=C sort | sed 's/^/outdated: /'
+  printf '%s' "$uncertain" | LC_ALL=C sort | sed 's/^/uncertain: /'
+  printf '%s' "$stale" | LC_ALL=C sort | sed 's/^/stale: /'
+  printf '%s\n' 'check: update-needed'
+}
+t63_can_lock=0
+printf 'probe\n' > "$t63_root/lock-probe"
+chmod 000 "$t63_root/lock-probe"
+cat "$t63_root/lock-probe" > /dev/null 2>&1 || t63_can_lock=1
+chmod 644 "$t63_root/lock-probe"
+[ ! -e "$installer_root/home/.claude" ] || bad "T63 precondition" "$installer_root/home/.claude already exists"
+
+for engine in "${INSTALLERS[@]}"; do
+  base="$t63_root/$engine"
+  mkdir -p "$base"
+
+  case_err=""
+  p="$base/absent"
+  { printf '%s\n' 'feature-crew: checking <P>'
+    printf '%s\n' feature-crew.sha256 "$t63_shipped" | LC_ALL=C sort | sed 's/^/missing: /'
+    printf '%s\n' 'check: update-needed'; } > "$t63_root/expected"
+  t63_run "$engine" "$p" 1 absent-check "$installer_repo" --check
+  { printf '%s\n' 'feature-crew: verifying <P>'
+    printf '%s\n' feature-crew.sha256 "$t63_shipped" | LC_ALL=C sort | sed 's/^/missing: /'
+    printf '%s\n' "agents: 0/$t63_agents verified" "skills: 0/$t63_skills verified" 'verify: failed'
+  } > "$t63_root/expected"
+  t63_run "$engine" "$p" 1 absent-verify "$installer_repo" --verify
+  [ ! -e "$p" ] || case_err="$case_err absent:prefix-created"
+  t63_result "T63 $engine absent prefix: every shipped file and the manifest missing, nothing created"
+
+  case_err=""
+  p="$base/fresh"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  t63_expect 'feature-crew: checking <P>' 'check: current'
+  t63_run "$engine" "$p" 0 fresh-check "$installer_repo" --check
+  t63_expect 'feature-crew: verifying <P>' "agents: $t63_agents/$t63_agents verified" \
+    "skills: $t63_skills/$t63_skills verified" 'verify: ok'
+  t63_run "$engine" "$p" 0 fresh-verify "$installer_repo" --verify
+  t63_result "T63 $engine fresh install: check current and verify ok"
+
+  case_err=""
+  p="$base/missing"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  rm "$p/agents/fc-pm.md" "$p/skills/fc-build-or-fix/reference/meta-work-cap.md" || case_err="$case_err fixture-failed"
+  t63_expect 'feature-crew: checking <P>' 'missing: agents/fc-pm.md' \
+    'missing: skills/fc-build-or-fix/reference/meta-work-cap.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 missing-check "$installer_repo" --check
+  t63_expect 'feature-crew: verifying <P>' 'missing: agents/fc-pm.md' \
+    'missing: skills/fc-build-or-fix/reference/meta-work-cap.md' \
+    "agents: $((t63_agents - 1))/$t63_agents verified" "skills: $((t63_skills - 1))/$t63_skills verified" 'verify: failed'
+  t63_run "$engine" "$p" 1 missing-verify "$installer_repo" --verify
+  t63_result "T63 $engine missing files are listed prefix-relative and sorted"
+
+  case_err=""
+  p="$base/edited"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  printf '\nMY EDIT\n' >> "$p/skills/fc-review/SKILL.md"
+  t63_expect 'feature-crew: checking <P>' 'uncertain: skills/fc-review/SKILL.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 edited-check "$installer_repo" --check
+  t63_expect 'feature-crew: verifying <P>' 'uncertain: skills/fc-review/SKILL.md' \
+    "agents: $t63_agents/$t63_agents verified" "skills: $((t63_skills - 1))/$t63_skills verified" 'verify: failed'
+  t63_run "$engine" "$p" 1 edited-verify "$installer_repo" --verify
+  t63_result "T63 $engine an edited file is uncertain, never current"
+
+  case_err=""
+  p="$base/bom-crlf"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  { printf '\357\273\277'; cat "$p/agents/fc-pm.md"; } > "$t63_root/bom" && mv "$t63_root/bom" "$p/agents/fc-pm.md"
+  awk '{ printf "%s\r\n", $0 }' "$p/skills/fc-review/SKILL.md" > "$t63_root/crlf" && mv "$t63_root/crlf" "$p/skills/fc-review/SKILL.md"
+  t63_expect 'feature-crew: checking <P>' 'uncertain: agents/fc-pm.md' \
+    'uncertain: skills/fc-review/SKILL.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 bom-crlf-check "$installer_repo" --check
+  t63_result "T63 $engine BOM-only and CRLF-only edits are uncertain: hashes cover raw bytes"
+
+  case_err=""
+  p="$base/recorded"
+  t63_fixture="$t63_root/recorded-src"
+  if [ ! -d "$t63_fixture" ]; then
+    copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-copy-failed"
+    printf '\nUntagged agent change.\n' >> "$t63_fixture/agents/fc-pm.md"
+    printf '\r\nUntagged skill change.\r\n' >> "$t63_fixture/.claude/skills/fc-review/SKILL.md"
+  fi
+  run_copied_installer "$t63_fixture" "$engine" "$p" --force
+  expect_installer_success untagged-install
+  t63_expect 'feature-crew: checking <P>' 'outdated: agents/fc-pm.md' 'outdated: feature-crew.sha256' \
+    'outdated: skills/fc-review/SKILL.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 recorded-check "$installer_repo" --check
+  t63_result "T63 $engine the recorded baseline marks older bytes outdated, CRLF included"
+
+  case_err=""
+  p="$base/published"
+  if ! seed_v501 "$p"; then
+    case_err="$case_err v501-fixture-failed"
+  else
+    printf '\nMY EDIT\n' >> "$p/agents/fc-architect.md"
+    awk '{ printf "%s\r\n", $0 }' "$p/skills/fc-grill-me/SKILL.md" > "$t63_root/crlf" && mv "$t63_root/crlf" "$p/skills/fc-grill-me/SKILL.md"
+    [ ! -e "$p/feature-crew.sha256" ] || case_err="$case_err v501-wrote-a-manifest"
+    t63_published_oracle "$p" > "$t63_root/expected"
+    grep -qxF 'outdated: skills/fc-grill-me/SKILL.md' "$t63_root/expected" || case_err="$case_err oracle-lost-crlf-outdated"
+    grep -qxF 'uncertain: agents/fc-architect.md' "$t63_root/expected" || case_err="$case_err oracle-lost-uncertain"
+    t63_run "$engine" "$p" 1 published-check "$installer_repo" --check
+  fi
+  t63_result "T63 $engine without a manifest, CR-normalized published hashes mark older files outdated"
+
+  case_err=""
+  p="$base/precedence"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  if [ ! -f "$t63_root/v501-pm.md" ]; then
+    { seed_v501 "$t63_root/v501" && cp "$t63_root/v501/agents/fc-pm.md" "$t63_root/v501-pm.md"; } \
+      || case_err="$case_err v501-fixture-failed"
+  fi
+  cmp -s "$t63_root/v501-pm.md" "$p/agents/fc-pm.md" && case_err="$case_err v501-agent-matches-current"
+  cp "$t63_root/v501-pm.md" "$p/agents/fc-pm.md" || case_err="$case_err fixture-failed"
+  t63_expect 'feature-crew: checking <P>' 'uncertain: agents/fc-pm.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 precedence-baseline "$installer_repo" --check
+  rm -f "$p/feature-crew.sha256"
+  t63_expect 'feature-crew: checking <P>' 'missing: feature-crew.sha256' 'outdated: agents/fc-pm.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 precedence-published "$installer_repo" --check
+  t63_result "T63 $engine a recorded baseline outranks published hashes, which apply only without one"
+
+  case_err=""
+  p="$base/manifests"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  cp "$p/feature-crew.sha256" "$t63_root/valid.sha256"
+  grep -v '  agents/fc-pm\.md$' "$t63_root/valid.sha256" > "$p/feature-crew.sha256"
+  t63_expect 'feature-crew: checking <P>' 'outdated: feature-crew.sha256' 'check: update-needed'
+  t63_run "$engine" "$p" 1 incomplete-check "$installer_repo" --check
+  { cat "$t63_root/valid.sha256"; printf '%064d  agents/fc-forged.md\n' 0; } > "$p/feature-crew.sha256"
+  t63_run "$engine" "$p" 1 forged-entry-check "$installer_repo" --check
+  : > "$p/feature-crew.sha256"
+  t63_run "$engine" "$p" 1 empty-check "$installer_repo" --check
+  # A forged baseline passes sha256sum -c, yet the install is still not current.
+  printf '\nMY EDIT\n' >> "$p/skills/fc-review/SKILL.md"
+  t63_hash=$("${installer_hash[@]}" < "$p/skills/fc-review/SKILL.md" | cut -d' ' -f1)
+  sed "s|^[0-9a-f]\{64\}  skills/fc-review/SKILL\.md\$|$t63_hash  skills/fc-review/SKILL.md|" \
+    "$t63_root/valid.sha256" > "$p/feature-crew.sha256"
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err forged-baseline-not-checksum-clean"
+  t63_expect 'feature-crew: checking <P>' 'outdated: feature-crew.sha256' \
+    'outdated: skills/fc-review/SKILL.md' 'check: update-needed'
+  t63_run "$engine" "$p" 1 forged-baseline-check "$installer_repo" --check
+  t63_result "T63 $engine forged, incomplete, and empty manifests never read as current"
+
+  case_err=""
+  p="$base/malformed"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  cp "$p/feature-crew.sha256" "$t63_root/valid.sha256"
+  for t63_kind in text crlf parent-segment bom directory; do
+    rm -rf "$p/feature-crew.sha256"
+    case "$t63_kind" in
+      text) printf 'not a manifest\n' > "$p/feature-crew.sha256" ;;
+      crlf) awk '{ printf "%s\r\n", $0 }' "$t63_root/valid.sha256" > "$p/feature-crew.sha256" ;;
+      parent-segment) sed 's|  agents/fc-pm\.md$|  agents/../fc-pm.md|' "$t63_root/valid.sha256" > "$p/feature-crew.sha256" ;;
+      bom) { printf '\357\273\277'; cat "$t63_root/valid.sha256"; } > "$p/feature-crew.sha256" ;;
+      directory) mkdir "$p/feature-crew.sha256" ;;
+    esac
+    t63_expect 'ERROR: not a Feature-Crew manifest (left untouched): <P>/feature-crew.sha256'
+    t63_run "$engine" "$p" 2 "malformed-$t63_kind-check" "$installer_repo" --check
+    t63_run "$engine" "$p" 2 "malformed-$t63_kind-verify" "$installer_repo" --verify
+  done
+  t63_result "T63 $engine malformed manifests (text, CRLF, traversal, BOM, directory) exit 2 untouched"
+
+  case_err=""
+  p="$base/stale"
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  mkdir -p "$p/skills/fc-retired" "$p/skills/fc-scratch" "$p/skills/personal"
+  printf 'retired\n' > "$p/skills/fc-retired/SKILL.md"
+  printf 'retired agent\n' > "$p/agents/fc-retired.md"
+  printf 'mine\n' > "$p/agents/personal.md"
+  cp "$installer_root/personal" "$p/skills/fc-review/.notes.md"
+  t63_expect 'feature-crew: checking <P>' 'stale: agents/fc-retired.md' 'stale: skills/fc-retired' \
+    'stale: skills/fc-scratch' 'check: current'
+  t63_run "$engine" "$p" 0 stale-check "$installer_repo" --check
+  t63_expect 'feature-crew: verifying <P>' 'stale: agents/fc-retired.md' 'stale: skills/fc-retired' \
+    'stale: skills/fc-scratch' "agents: $t63_agents/$t63_agents verified" \
+    "skills: $t63_skills/$t63_skills verified" 'verify: ok'
+  t63_run "$engine" "$p" 0 stale-verify "$installer_repo" --verify
+  t63_result "T63 $engine stale fc-* leftovers are warnings: reported, kept, and no update"
+
+  case_err=""
+  p="$base/model"
+  t63_fixture="$t63_root/model-src"
+  if [ ! -d "$t63_fixture" ]; then
+    { copy_installer_inputs "$t63_fixture" && t63_pin_model "$t63_fixture"; } || case_err="$case_err fixture-failed"
+  fi
+  run_copied_installer "$t63_fixture" "$engine" "$p" --force
+  expect_installer_success pinned-install
+  t63_expect 'feature-crew: checking <P>' 'check: current'
+  t63_run "$engine" "$p" 0 model-check "$t63_fixture" --check
+  t63_expect 'feature-crew: verifying <P>' 'model key: agents/fc-qa-code.md' \
+    "agents: $((t63_agents - 1))/$t63_agents verified" "skills: $t63_skills/$t63_skills verified" 'verify: failed'
+  t63_run "$engine" "$p" 1 model-verify "$t63_fixture" --verify
+  t63_result "T63 $engine verify rejects a model key in role-agent frontmatter, not model prose"
+
+  case_err=""
+  p="$base/fresh"
+  t63_fixture="$t63_root/no-agents-src"
+  if [ ! -d "$t63_fixture" ]; then
+    { copy_installer_inputs "$t63_fixture" && rm -rf "$t63_fixture/agents"; } || case_err="$case_err fixture-failed"
+  fi
+  t63_expect 'ERROR: cannot find agents/ next to the installer (<SRC>/agents)'
+  t63_run "$engine" "$p" 2 no-agents-check "$t63_fixture" --check
+  if [ "$t63_can_lock" -eq 1 ]; then
+    for t63_locked in agents/fc-pm.md feature-crew.sha256; do
+      snapshot_tree "$p" > "$t63_root/locked-before"
+      chmod 000 "$p/$t63_locked"
+      run_installer_at "$t63_cwd" "$engine" "$p" --verify
+      chmod 644 "$p/$t63_locked"
+      [ "$installer_rc" -eq 2 ] || case_err="$case_err unreadable-$t63_locked:exit=$installer_rc(want-2)"
+      printf '%s\n' "$installer_out" | grep -qE '^(missing|outdated|uncertain|stale|check|verify):' \
+        && case_err="$case_err unreadable-$t63_locked:reported-a-verdict"
+      snapshot_tree "$p" > "$t63_root/locked-after"
+      cmp -s "$t63_root/locked-before" "$t63_root/locked-after" || case_err="$case_err unreadable-$t63_locked:prefix-changed"
+    done
+  fi
+  t63_result "T63 $engine operational errors (no agents/ source, unreadable file) exit 2 without a verdict"
+
+  # An unreadable source is an operational error on every walk, never a
+  # mismatch: exit 2 and one ERROR line naming the unreadable path relative to
+  # the source root, identical from both engines however they were started.
+  if [ "$t63_can_lock" -eq 1 ]; then
+    case_err=""
+    p="$base/fresh"
+    t63_fixture="$t63_root/locked-src"
+    if [ ! -d "$t63_fixture" ]; then
+      copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-failed"
+    fi
+    for t63_locked in agents agents/fc-pm.md .claude/skills .claude/skills/fc-review \
+        .claude/skills/fc-build-or-fix/reference .claude/skills/fc-review/SKILL.md; do
+      t63_lock_pair "$engine" "$p" "$t63_locked" "${t63_locked%/reference}" \
+        "source-$(printf '%s' "${t63_locked#.claude/}" | tr '/.' '--')"
+    done
+    t63_result "T63 $engine an unreadable source (agents, skills, a skill, a nested dir, a file) exits 2 identically"
+
+    # Every file is current, so only an eager read of the table can fail.
+    case_err=""
+    t63_lock_pair "$engine" "$p" published.sha256 published.sha256 source-published
+    t63_result "T63 $engine an unreadable published.sha256 exits 2 in both modes, even when every file is current"
+
+    # Through a symlinked directory sh keeps the logical path and pwsh the
+    # resolved one, so only a source-relative path prints the same from both.
+    case_err=""
+    [ -L "$t63_root/locked-link" ] || ln -s "$t63_fixture" "$t63_root/locked-link" || case_err="$case_err link-failed"
+    t63_via="$t63_root/locked-link"
+    t63_lock_pair "$engine" "$p" .claude/skills/fc-build-or-fix/reference .claude/skills/fc-build-or-fix linked-reference
+    t63_via=""
+    t63_result "T63 $engine run by relative path through a symlinked directory names the same source-relative path"
+  fi
+
+  case_err=""
+  p="$base/absent"
+  for t63_pair in '--check --verify' '--check --force' '--verify --uninstall' '--check --dry-run' '--verify --force'; do
+    t63_expect "$t63_usage"
+    # shellcheck disable=SC2086 # split the flag pair on purpose
+    t63_run "$engine" "$p" 2 "usage-${t63_pair// /}" "$installer_repo" $t63_pair
+  done
+  if [ "$engine" = ps1 ]; then
+    t63_expect "$t63_usage"
+    t63_run "$engine" "$p" 2 usage-native "$installer_repo" -Check -Force
+  fi
+  t63_result "T63 $engine --check/--verify with each other, --force, --uninstall, or --dry-run is a usage error"
 done
-printf '%s\n' "$pull" | grep -qiF 'If the pull was a no-op, say so and stop' && case_err="$case_err no-op-pull-still-stops"
-printf '%s\n' "$edit_check" | grep -qF './install.sh --uninstall --dry-run' || case_err="$case_err ownership-aware-edit-check-missing"
-printf '%s\n' "$edit_check" | grep -qiE 'untagged.*(cannot|can.not).*edit' || case_err="$case_err untagged-install-ambiguity-missing"
-printf '%s\n' "$edit_check" | grep -qiE 'pre.manifest|without a manifest|no manifest' || case_err="$case_err pre-manifest-boundary-missing"
-printf '%s\n' "$edit_check" | grep -qiE 'offer.*(backup|back.*up).*(every|each).*file|every.*file.*(backup|back.*up)' || case_err="$case_err backup-not-offered-for-every-listed-file"
-printf '%s\n' "$install_step" | grep -qiE 'Legacy cleanup removes files.*build-or-fix/.*research/.*agents/feature-crew/.*content matches.*published.*anything else is kept and reported' \
-  || case_err="$case_err per-file-legacy-cleanup-policy-missing"
-installer_result "T53 fc-update checks installed state after any pull and offers backups for every uncertain file"
+[ "$t63_can_lock" -eq 1 ] || skip "T63 unreadable prefix and source exit 2 (file permissions not enforced for this user)"
+
+if [ "${#INSTALLERS[@]}" -eq 2 ]; then
+  case_err=""
+  t63_count=0
+  for t63_f in "$t63_root"/parity/sh-*; do
+    [ -f "$t63_f" ] || continue
+    t63_label=${t63_f##*/sh-}
+    t63_count=$((t63_count + 1))
+    cmp -s "$t63_f" "$t63_root/parity/ps1-$t63_label" || case_err="$case_err $t63_label"
+  done
+  [ "$t63_count" -gt 0 ] || case_err="$case_err no-runs-recorded"
+  t63_result "T63 exit-code and output parity: install.sh and the PowerShell fallback agree on all $t63_count runs"
+
+  # Delegation: a Git-layout stub records argv and returns a chosen exit.
+  t63_git="$t63_root/git"
+  mkdir -p "$t63_git/cmd" "$t63_git/bin"
+  printf '#!/bin/sh\nexit 0\n' > "$t63_git/cmd/git"
+  chmod +x "$t63_git/cmd/git"
+  t63_delegate() { # stub exit, install.ps1 arguments...
+    local code="$1"; shift
+    cat > "$t63_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' "\$@" > "$t63_root/git-args"
+exit $code
+STUB
+    chmod +x "$t63_git/bin/bash.exe"
+    rm -f "$t63_root/git-args"
+    ( cd "$t63_cwd" && env -i HOME="$installer_root/home" PATH="$t63_git/cmd" \
+        POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+        "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" "$@" ) > "$t63_root/delegate.out" 2>&1
+    installer_rc=$?
+  }
+  case_err=""
+  p="$t63_root/delegated"
+  t63_delegate 1 -Check -Prefix "$p"
+  [ "$installer_rc" -eq 1 ] || case_err="$case_err check:exit=$installer_rc(want-1)"
+  [ "$(tail -n +2 "$t63_root/git-args" 2>/dev/null)" = "--check"$'\n'"--prefix"$'\n'"$p" ] \
+    || case_err="$case_err check:argv-not-forwarded"
+  grep -qF 'using the PowerShell installer' "$t63_root/delegate.out" && case_err="$case_err check:fell-back"
+  t63_delegate 2 --verify --prefix "$p"
+  [ "$installer_rc" -eq 2 ] || case_err="$case_err verify:exit=$installer_rc(want-2)"
+  [ "$(tail -n +2 "$t63_root/git-args" 2>/dev/null)" = "--verify"$'\n'"--prefix"$'\n'"$p" ] \
+    || case_err="$case_err verify:argv-not-forwarded"
+  grep -qF 'using the PowerShell installer' "$t63_root/delegate.out" && case_err="$case_err verify:fell-back"
+  t63_delegate 0 -Check -Force -Prefix "$p"
+  [ "$installer_rc" -eq 2 ] || case_err="$case_err conflict:exit=$installer_rc(want-2)"
+  [ ! -e "$t63_root/git-args" ] || case_err="$case_err conflict:delegated-before-rejecting"
+  grep -qxF -- "$t63_usage" "$t63_root/delegate.out" || case_err="$case_err conflict:usage-missing"
+  [ ! -e "$p" ] || case_err="$case_err prefix-created"
+  t63_result "T63 ps1 forwards -Check/--verify to Git Bash, propagates exits 1 and 2, and rejects conflicts first"
+else
+  skip "T63 ps1 check/verify parity and Git Bash delegation (pwsh unavailable; set PWSH)"
+fi
+
+case_err=""
+t63_flags=$(grep '^Flags:' README.md)
+for t63_flag in --check --verify -Check -Verify; do
+  printf '%s\n' "$t63_flags" | grep -qF -- "\`$t63_flag\`" || case_err="$case_err README-missing:$t63_flag"
+done
+HOME="$installer_root/home" "$installer_bash" "$installer_repo/install.sh" --help > "$t63_root/help.out" 2>&1 \
+  || case_err="$case_err sh-help-failed"
+for t63_flag in --check --verify; do
+  grep -qF -- "$t63_flag" "$t63_root/help.out" || case_err="$case_err sh-help-missing:$t63_flag"
+done
+if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
+  ( cd "$t63_cwd" && env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --help ) > "$t63_root/help.out" 2>&1 \
+    || case_err="$case_err ps1-help-failed"
+  for t63_flag in --check -Check --verify -Verify; do
+    grep -qF -- "$t63_flag" "$t63_root/help.out" || case_err="$case_err ps1-help-missing:$t63_flag"
+  done
+fi
+t63_result "T63 README Flags line and both installers' help name --check/-Check and --verify/-Verify"
+
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  skip "T63 native Windows check/verify workflow steps (PyYAML unavailable)"
+elif t63_out=$(python3 - <<'PY'
+import pathlib, sys, yaml
+doc = yaml.safe_load(pathlib.Path('.github/workflows/test.yml').read_text())
+jobs = doc.get('jobs', {})
+errors = []
+for job in ('framework', 'powershell', 'powershell-delegation'):
+    if job not in jobs or jobs[job].get('name', job) != job:
+        errors.append('job-renamed-or-missing:' + job)
+script = str(doc.get('env', {}).get('TEST_CHECK_VERIFY', ''))
+for token in ('-Check', '-Verify', '--check', '--verify', '-Check -Force', 'Get-Command bash, git',
+              'check: update-needed', 'verify: ok', 'feature-crew.sha256', '$global:LASTEXITCODE',
+              'stale: agents/fc-retired.md', 'stale: skills/fc-retired', 'removed a stale entry'):
+    if token not in script:
+        errors.append('check-verify-script-missing:' + token)
+def runs(job, shell, masked):
+    for step in jobs.get(job, {}).get('steps', []):
+        text = str(step.get('run', ''))
+        if step.get('shell') != shell or '$env:TEST_CHECK_VERIFY' not in text:
+            continue
+        mask = text.find('$env:MASK_BASH')
+        engine = str(step.get('env', {}).get('FC_CHECK_ENGINE', ''))
+        if masked and engine == 'fallback' and -1 < mask < text.find('$env:TEST_CHECK_VERIFY'):
+            return True
+        if not masked and engine == 'git-bash' and mask == -1:
+            return True
+    return False
+for shell in ('pwsh', 'powershell'):
+    if not runs('powershell', shell, True):
+        errors.append('masked-fallback-step-missing:' + shell)
+    if not runs('powershell-delegation', shell, False):
+        errors.append('delegation-step-missing:' + shell)
+print(' '.join(errors))
+sys.exit(bool(errors))
+PY
+); then
+  ok "T63 native Windows runs -Check/-Verify, stale warnings included, in the masked fallback and through Git Bash, pwsh and PowerShell 5.1"
+else
+  bad "T63 native Windows check/verify workflow steps" "issues:$t63_out"
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "T63 check/verify mutation replay (python3 unavailable)"
+else
+  t63_record=0
+  for engine in "${INSTALLERS[@]}"; do
+    for t63_variant in hashing manifest model-key; do
+      case_err=""
+      t63_fixture="$t63_root/mut-$engine-$t63_variant-src"
+      p="$t63_root/mut-$engine-$t63_variant"
+      copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-copy-failed"
+      case "$t63_variant" in
+        hashing)
+          run_installer "$engine" "$p"
+          printf '\nMY EDIT\n' >> "$p/skills/fc-review/SKILL.md"
+          t63_mode=--check
+          t63_expect 'feature-crew: checking <P>' 'uncertain: skills/fc-review/SKILL.md' 'check: update-needed' ;;
+        manifest)
+          run_installer "$engine" "$p"
+          grep -v '  agents/fc-pm\.md$' "$p/feature-crew.sha256" > "$t63_root/incomplete" \
+            && mv "$t63_root/incomplete" "$p/feature-crew.sha256"
+          t63_mode=--check
+          t63_expect 'feature-crew: checking <P>' 'outdated: feature-crew.sha256' 'check: update-needed' ;;
+        model-key)
+          t63_pin_model "$t63_fixture" || case_err="$case_err pin-failed"
+          run_copied_installer "$t63_fixture" "$engine" "$p" --force
+          t63_mode=--verify
+          t63_expect 'feature-crew: verifying <P>' 'model key: agents/fc-qa-code.md' \
+            "agents: $((t63_agents - 1))/$t63_agents verified" "skills: $t63_skills/$t63_skills verified" 'verify: failed' ;;
+      esac
+      expect_installer_success fixture-install
+      t63_run "$engine" "$p" 1 "$t63_variant-control" "$t63_fixture" "$t63_mode"
+      if [ -n "$case_err" ]; then
+        t63_result "T63 $engine $t63_variant mutation replay (control must pass first)"
+        continue
+      fi
+      if ! t63_mut=$(python3 - "$engine" "$t63_variant" "$t63_fixture/install.$engine" 2>&1 <<'PY'
+import pathlib, sys
+engine, variant, path = sys.argv[1:]
+old, new = {
+    ('sh', 'hashing'): (b'    if [ "$got" = "$want" ]; then\n', b'    if true; then\n'),
+    ('ps1', 'hashing'): (b"  if ((Get-Sha256Raw $file) -ceq $want) { return 'current' }\n",
+                         b"  if ($true) { return 'current' }\n"),
+    ('sh', 'manifest'): (b'  elif ! check_manifest_text | cmp -s - "$MANIFEST"; then\n', b'  elif false; then\n'),
+    ('ps1', 'manifest'): (b'  } elseif (-not (Test-BytesEqual $bytes ([IO.File]::ReadAllBytes((Resolve-AbsPath $Manifest))))) {\n',
+                          b'  } elseif ($false) {\n'),
+    ('sh', 'model-key'): (b'    if [ "$VERIFY" -eq 1 ] && [ -f "$PREFIX/$rel" ] && agent_has_model "$PREFIX/$rel"; then\n',
+                          b'    if false; then\n'),
+    ('ps1', 'model-key'): (b'    if ($Verify -and (Test-Path -LiteralPath $dest -PathType Leaf) -and (Test-AgentHasModelKey $dest)) {\n',
+                           b'    if ($false) {\n'),
+}[engine, variant]
+target = pathlib.Path(path)
+source = target.read_bytes()
+assert source.count(old) == 1, 'check/verify mutation target missing or ambiguous'
+mutant = source.replace(old, new, 1)
+assert mutant != source and old not in mutant, 'check/verify mutation not applied'
+target.write_bytes(mutant)
+PY
+      ); then
+        bad "T63 $engine $t63_variant mutation replay" "$t63_mut"
+        continue
+      fi
+      case_err=""
+      t63_run "$engine" "$p" 1 "$t63_variant" "$t63_fixture" "$t63_mode"
+      t63_detail=""
+      if [ "$case_err" = " $t63_variant:exit=0(want-1) $t63_variant:output-differs" ]; then
+        ok "T63 $engine $t63_variant mutation applied and rejected:$case_err"
+      else
+        bad "T63 $engine $t63_variant mutation replay" \
+          "expected ' $t63_variant:exit=0(want-1) $t63_variant:output-differs', got '${case_err:-<no rejection>}'"
+      fi
+    done
+  done
+  t63_record=1
+fi
 
 # ---------------------------------------------------------------- T54
 case_err=""

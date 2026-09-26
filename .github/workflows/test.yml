@@ -62,6 +62,95 @@ env:
     }
     # GitHub appends exit $LASTEXITCODE; the expected --bogus exit must not fail CI.
     exit 0
+  # Read-only -Check/-Verify on native Windows. FC_CHECK_ENGINE names the engine
+  # that must answer (the masked PowerShell fallback, or Git Bash by delegation);
+  # every read-only run must leave the prefix exactly as it was.
+  TEST_CHECK_VERIFY: |
+    Set-StrictMode -Version Latest
+    $engine = $env:FC_CHECK_ENGINE
+    $marker = '/agents/fc-pm.md'
+    if ($engine -eq 'fallback') {
+      if (@(Get-Command bash, git -ErrorAction SilentlyContinue).Count) { throw "Git/Bash still resolves; the fallback would be skipped" }
+      $marker = '\agents\fc-pm.md'
+    } elseif ($engine -eq 'git-bash') {
+      if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw "git does not resolve; nothing to delegate to" }
+    } else {
+      throw "unknown FC_CHECK_ENGINE '$engine'"
+    }
+    $installer = Join-Path $env:GITHUB_WORKSPACE "install.ps1"
+    $prefix = Join-Path $env:RUNNER_TEMP ("fc-check-" + $engine + "-" + $PSVersionTable.PSVersion.Major)
+    if (Test-Path -LiteralPath $prefix) { throw "check/verify fixture prefix is not fresh" }
+    function Snapshot-Check {
+      if (-not (Test-Path -LiteralPath $prefix)) { return '<absent>' }
+      $entries = @(Get-ChildItem -LiteralPath $prefix -Recurse -Force | ForEach-Object {
+        $relative = $_.FullName.Substring($prefix.Length)
+        if ($_.PSIsContainer) { 'D ' + $relative }
+        else { 'F ' + $relative + ' ' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($_.FullName)) }
+      })
+      return (($entries | Sort-Object) -join "`n")
+    }
+    # Exit 0/1 runs write only stdout, so capturing them is safe.
+    function Assert-ReadOnly([int]$want, [string[]]$wantLines, [scriptblock]$run) {
+      $before = Snapshot-Check
+      $global:LASTEXITCODE = 0
+      $lines = @(& $run | ForEach-Object { "$_" })
+      $code = $global:LASTEXITCODE
+      if ($code -ne $want) { throw "'$run' exited $code instead of $want" }
+      foreach ($line in $wantLines) {
+        if ($lines -cnotcontains $line) { throw "'$run' output lacks '$line'" }
+      }
+      if ((Snapshot-Check) -cne $before) { throw "'$run' changed the prefix" }
+    }
+    # Exit-2 runs write stderr. Leave delegated native stderr uncaptured so
+    # Windows PowerShell 5.1 cannot turn it into a terminating error.
+    function Invoke-Uncaptured([scriptblock]$run) {
+      $ErrorActionPreference = 'Continue'
+      $global:LASTEXITCODE = 0
+      & $run | Out-Host
+      return $global:LASTEXITCODE
+    }
+    Assert-ReadOnly 1 @('missing: agents/fc-pm.md', 'check: update-needed') { & $installer -Check -Prefix $prefix 6>&1 }
+    Assert-ReadOnly 1 @('missing: feature-crew.sha256', 'verify: failed') { & $installer --verify --prefix $prefix 6>&1 }
+    if (Test-Path -LiteralPath $prefix) { throw "read-only runs created the prefix" }
+    $global:LASTEXITCODE = 0
+    $installed = @(& $installer -Prefix $prefix 6>&1 | ForEach-Object { "$_" })
+    if ($global:LASTEXITCODE -ne 0) { throw "fixture install exited $global:LASTEXITCODE" }
+    if (-not @($installed | Where-Object { $_.EndsWith($marker, [StringComparison]::Ordinal) }).Count) {
+      throw "install output lacks '$marker'; the wrong engine ran"
+    }
+    $agents = @(Get-ChildItem agents -Filter *.md).Count
+    $skills = @(Get-ChildItem .claude\skills -Directory |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") }).Count
+    Assert-ReadOnly 0 @('check: current') { & $installer --check --prefix $prefix 6>&1 }
+    Assert-ReadOnly 0 @("agents: $agents/$agents verified", "skills: $skills/$skills verified", 'verify: ok') {
+      & $installer -Verify -Prefix $prefix 6>&1
+    }
+    # fc-* leftovers this clone no longer ships are warnings: reported, kept, and no update.
+    $stale = @('stale: agents/fc-retired.md', 'stale: skills/fc-retired')
+    $staleAgent = Join-Path $prefix "agents\fc-retired.md"
+    $staleSkill = Join-Path $prefix "skills\fc-retired\SKILL.md"
+    [IO.File]::WriteAllText($staleAgent, "retired agent`n")
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $staleSkill))
+    [IO.File]::WriteAllText($staleSkill, "retired`n")
+    Assert-ReadOnly 0 ($stale + 'check: current') { & $installer -Check -Prefix $prefix 6>&1 }
+    Assert-ReadOnly 0 ($stale + 'verify: ok') { & $installer --verify --prefix $prefix 6>&1 }
+    if (-not ((Test-Path -LiteralPath $staleAgent -PathType Leaf) -and (Test-Path -LiteralPath $staleSkill -PathType Leaf))) {
+      throw "read-only runs removed a stale entry"
+    }
+    $skill = Join-Path $prefix "skills\fc-review\SKILL.md"
+    [IO.File]::WriteAllBytes($skill, [byte[]]([IO.File]::ReadAllBytes($skill) + [Text.Encoding]::UTF8.GetBytes("`nMY EDIT`n")))
+    Assert-ReadOnly 1 @('uncertain: skills/fc-review/SKILL.md', 'check: update-needed') { & $installer -Check -Prefix $prefix 6>&1 }
+    $before = Snapshot-Check
+    $code = Invoke-Uncaptured { & $installer -Check -Force -Prefix $prefix }
+    if ($code -ne 2) { throw "-Check -Force exited $code instead of 2" }
+    if ((Snapshot-Check) -cne $before) { throw "-Check -Force changed the prefix" }
+    [IO.File]::WriteAllText((Join-Path $prefix "feature-crew.sha256"), "not a manifest`n")
+    $before = Snapshot-Check
+    $code = Invoke-Uncaptured { & $installer -Verify -Prefix $prefix }
+    if ($code -ne 2) { throw "-Verify on a malformed manifest exited $code instead of 2" }
+    if ((Snapshot-Check) -cne $before) { throw "-Verify rewrote a malformed manifest" }
+    # GitHub appends exit $LASTEXITCODE; the expected exit-2 runs must not fail CI.
+    exit 0
 
 jobs:
   framework:
@@ -261,6 +350,24 @@ jobs:
         if: ${{ !cancelled() }}
         shell: powershell
         run: Invoke-Expression $env:TEST_MANIFEST_FALLBACK
+
+      - name: Read-only check and verify in the masked fallback (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          FC_CHECK_ENGINE: fallback
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Invoke-Expression $env:TEST_CHECK_VERIFY
+
+      - name: Read-only check and verify in the masked fallback (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        env:
+          FC_CHECK_ENGINE: fallback
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Invoke-Expression $env:TEST_CHECK_VERIFY
 
       - name: Confirm bash masking works
         shell: pwsh
@@ -882,6 +989,20 @@ jobs:
         if: ${{ !cancelled() }}
         shell: powershell
         run: Invoke-Expression $env:TEST_GNU_FLAGS
+
+      - name: Read-only check and verify through Git Bash (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          FC_CHECK_ENGINE: git-bash
+        run: Invoke-Expression $env:TEST_CHECK_VERIFY
+
+      - name: Read-only check and verify through Git Bash (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        env:
+          FC_CHECK_ENGINE: git-bash
+        run: Invoke-Expression $env:TEST_CHECK_VERIFY
 
       - name: Strict-mode native flags with Git Bash (pwsh)
         if: ${{ !cancelled() }}
