@@ -2542,6 +2542,111 @@ if [ "${#INSTALLERS[@]}" -eq 1 ]; then
   done
 fi
 
+# ---------------------------------------------------------------- T60
+# U3 checks ownership per installed skill file, not by file count. An unknown
+# file or an edit to a shipped file must protect the whole skill. Replace only
+# that predicate in a root-local copy, then require actual deletion to prove
+# this same guard rejects the bypass; a setup failure or nonzero exit is not RED.
+t60_skill_ownership() { # engine, fixture root, scenario, uninstall script
+  local engine="$1" fixture="$2" scenario="$3" script="$4"
+  local prefix="$fixture/prefix" skill personal
+  case_err=""
+  mkdir -p "$fixture" || { case_err="fixture-directory-failed"; return; }
+  run_installer "$engine" "$prefix"
+  expect_installer_success install
+  skill="$prefix/skills/fc-build-or-fix"
+  [ -f "$skill/SKILL.md" ] || case_err="$case_err missing-skill"
+  [ -z "$case_err" ] || return
+  if [ "$scenario" = extra-file ]; then
+    personal="$skill/personal-notes.txt"
+    [ ! -e "$personal" ] || { case_err="personal-file-already-shipped"; return; }
+    cp "$installer_root/personal" "$personal" || case_err="$case_err personal-file-fixture-failed"
+  else
+    personal="$skill/SKILL.md"
+    printf '\nMY SKILL EDIT\n' >> "$personal" || case_err="$case_err edited-file-fixture-failed"
+  fi
+  cp "$personal" "$fixture/personal" || case_err="$case_err personal-snapshot-failed"
+  snapshot_tree "$skill" > "$fixture/before" || case_err="$case_err before-snapshot-failed"
+  [ -z "$case_err" ] || return
+  if [ "$engine" = sh ]; then
+    HOME="$installer_root/home" "$installer_bash" "$script" --prefix "$prefix" --uninstall \
+      > "$installer_root/run.out" 2>&1
+  else
+    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$script" --prefix "$prefix" --uninstall \
+      > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+  expect_installer_success uninstall
+  if [ ! -f "$personal" ]; then
+    case_err="$case_err uninstall:personal-file-deleted"
+  elif ! cmp -s "$fixture/personal" "$personal"; then
+    case_err="$case_err uninstall:personal-bytes-changed"
+  fi
+  if [ ! -d "$skill" ]; then
+    case_err="$case_err uninstall:skill-deleted"
+  else
+    snapshot_tree "$skill" > "$fixture/after" || case_err="$case_err after-snapshot-failed"
+    cmp -s "$fixture/before" "$fixture/after" || case_err="$case_err uninstall:skill-tree-changed"
+  fi
+}
+for engine in "${INSTALLERS[@]}"; do
+  for variant in control ownership-bypass; do
+    t60_script="$installer_repo/install.$engine"
+    if [ "$variant" = ownership-bypass ]; then
+      if ! command -v python3 >/dev/null 2>&1; then
+        for scenario in extra-file edited-shipped-file; do
+          skip "T60 $engine $scenario ownership-bypass replay (python3 unavailable)"
+        done
+        continue
+      fi
+      t60_script="$installer_repo/t60-$engine-ownership-bypass-$$.$engine"
+      CLEANUP_PATHS+=("$t60_script")
+      if ! t60_mutation_out=$(python3 - "$engine" "$t60_script" 2>&1 <<'PY'
+import pathlib, re, sys
+engine, output = sys.argv[1:]
+pattern, body = {
+    'sh': (rb'^skill_file_is_ours\(\) \{\n(.*?)^\}', b'  return 0\n'),
+    'ps1': (rb'^function Test-SkillFileIsOurs\(\$src, \$dest, \$relativePath\) \{\n(.*?)^\}',
+            b'  return $true\n'),
+}[engine]
+source = pathlib.Path('install.' + engine).read_bytes()
+matches = list(re.finditer(pattern, source, re.M | re.S))
+assert len(matches) == 1, 'skill ownership predicate missing or ambiguous'
+match = matches[0]
+assert match.group(1) != body, 'skill ownership predicate already bypassed'
+mutant = source[:match.start(1)] + body + source[match.end(1):]
+assert mutant != source and list(re.finditer(pattern, mutant, re.M | re.S))[0].group(1) == body, 'ownership mutation not applied'
+pathlib.Path(output).write_bytes(mutant)
+PY
+      ); then
+        bad "T60 $engine ownership-bypass replay" "$t60_mutation_out"
+        continue
+      fi
+    fi
+    for scenario in extra-file edited-shipped-file; do
+      t60_skill_ownership "$engine" "$installer_root/t60-$engine-$variant-$scenario" "$scenario" "$t60_script"
+      if [ "$variant" = control ]; then
+        installer_result "T60 $engine $scenario preserves personal bytes and the whole skill"
+      elif [ "$case_err" = ' uninstall:personal-file-deleted uninstall:skill-deleted' ]; then
+        ok "T60 $engine $scenario ownership-bypass applied and rejected:$case_err"
+      else
+        bad "T60 $engine $scenario ownership-bypass replay" "expected personal-file and skill deletion, got '${case_err:-<no rejection>}'"
+      fi
+    done
+    [ "$variant" = control ] || rm -f "$t60_script"
+  done
+done
+if [ "${#INSTALLERS[@]}" -eq 1 ]; then
+  for variant in control ownership-bypass; do
+    for scenario in extra-file edited-shipped-file; do
+      skip "T60 ps1 $scenario $variant (pwsh unavailable; set PWSH)"
+    done
+  done
+fi
+
 echo
 if [ "$SKIP" -gt 0 ]; then
   echo "== ${PASS} passed, ${FAIL} failed, ${SKIP} SKIPPED (coverage incomplete) =="
