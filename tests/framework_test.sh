@@ -4669,6 +4669,76 @@ else
   installer_result "T64 behavior: with push.default=matching and a stale local base, the documented push moves only the feature ref"
 fi
 
+# ---------------------------------------------------------------- T67
+# T67: the wiki publisher mirrors wiki/ exactly, and its test catches drift.
+# scripts/test-wiki-publish.sh (also a named CI step) holds the checks. Each
+# replay removes one rule from a scratch copy; the copy's test must fail with
+# that rule's diagnostic, and the unmutated control must pass.
+if [ ! -f scripts/test-wiki-publish.sh ]; then
+  bad "T67 wiki publisher test exists" "scripts/test-wiki-publish.sh is missing"
+elif ! t67_out=$(bash scripts/test-wiki-publish.sh 2>&1 < /dev/null); then
+  bad "T67 wiki publisher test passes on the real tree" "$t67_out"
+else
+  t67_dir=$(mktemp -d)
+  # Replace the first literal occurrence, and fail when it is absent, so a
+  # replay can never pass by changing nothing.
+  t67_sub() {
+    python3 - "$@" <<'PY'
+import sys
+path, old, new = sys.argv[1:4]
+text = open(path, encoding="utf-8").read()
+if old not in text:
+    sys.exit("t67: pattern not found in " + path)
+open(path, "w", encoding="utf-8").write(text.replace(old, new, 1))
+PY
+  }
+  t67_missed=""
+  t67_count=0
+  while IFS='|' read -r t67_name t67_expect t67_cmd; do
+    [ -n "$t67_name" ] || continue
+    rm -rf -- "$t67_dir/copy"
+    mkdir -p "$t67_dir/copy/.github/workflows"
+    cp -R scripts wiki CLAUDE.md "$t67_dir/copy/"
+    cp .github/workflows/publish-wiki.yml "$t67_dir/copy/.github/workflows/"
+    if ! ( cd "$t67_dir/copy" && eval "$t67_cmd" ) < /dev/null > /dev/null 2>&1; then
+      t67_missed="$t67_missed $t67_name(apply)"
+      continue
+    fi
+    t67_msg=$(bash "$t67_dir/copy/scripts/test-wiki-publish.sh" 2>&1 < /dev/null) && t67_rc=0 || t67_rc=$?
+    if [ "$t67_name" = control ]; then
+      [ "$t67_rc" -eq 0 ] || t67_missed="$t67_missed control"
+    elif [ "$t67_rc" -eq 0 ] || ! printf '%s\n' "$t67_msg" | grep -Fq -- "$t67_expect"; then
+      t67_missed="$t67_missed $t67_name"
+    else
+      t67_count=$((t67_count + 1))
+    fi
+  done <<'T67'
+control||true
+push-line|workflow is missing: HEAD:master|t67_sub .github/workflows/publish-wiki.yml 'push origin HEAD:master' 'push origin'
+fresh-main|workflow is missing: ref: main|t67_sub .github/workflows/publish-wiki.yml 'ref: main' 'ref: ${{ github.sha }}'
+paths-filter|filters main pushes|t67_sub .github/workflows/publish-wiki.yml 'branches: [main]' $'branches: [main]\n    paths: ["wiki/**"]'
+unpinned-action|not pinned to a full commit SHA|t67_sub .github/workflows/publish-wiki.yml '@3d3c42e5aac5ba805825da76410c181273ba90b1' '@v7'
+permission-swap|default permissions must be contents: read|t67_sub .github/workflows/publish-wiki.yml 'contents: read' 'contents: SWAP' && t67_sub .github/workflows/publish-wiki.yml 'contents: write' 'contents: read' && t67_sub .github/workflows/publish-wiki.yml 'contents: SWAP' 'contents: write'
+job-guard|publish job must run only on main|t67_sub .github/workflows/publish-wiki.yml "if: github.ref == 'refs/heads/main'" 'if: true'
+serialized|serialized without cancellation|t67_sub .github/workflows/publish-wiki.yml 'cancel-in-progress: false' 'cancel-in-progress: true'
+stale-deletion|retained a deleted page|t67_sub scripts/publish-wiki.sh ' -delete' ''
+nested-deletion|touched a nested destination page|t67_sub scripts/publish-wiki.sh ' -maxdepth 1' ''
+nested-copy|copied a nested source page|t67_sub scripts/publish-wiki.sh 'pages=("$source_dir"/*.md)' 'pages=("$source_dir"/*.md "$source_dir"/*/*.md)'
+branch-guard|not on master|t67_sub scripts/publish-wiki.sh '== "master" ]] ||' '== "master" ]] || true ||'
+canonical-rule|makes wiki/ canonical|t67_sub CLAUDE.md 'only source of truth' 'primary source'
+verify-rule|post-merge publish check|t67_sub CLAUDE.md 'confirm the `Publish wiki` run' 'watch the wiki'
+broken-link|missing page: Missing-Page|printf '\n[Gone](Missing-Page)\n' >> wiki/Home.md
+md-link|link wiki pages by page name|printf '\n[Home](Home.md)\n' >> wiki/Home.md
+home-coverage|Home does not link to Architecture|t67_sub wiki/Home.md '](Architecture)' '](Development-and-Release)'
+T67
+  rm -rf -- "$t67_dir"
+  if [ -z "$t67_missed" ]; then
+    ok "T67 wiki publisher mirrors wiki/ exactly; ${t67_count} removal replays each fail with their diagnostic"
+  else
+    bad "T67 wiki publisher replays" "not caught:$t67_missed"
+  fi
+fi
+
 echo
 if [ "$SKIP" -gt 0 ]; then
   echo "== ${PASS} passed, ${FAIL} failed, ${SKIP} SKIPPED (coverage incomplete) =="

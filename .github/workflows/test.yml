@@ -185,6 +185,11 @@ jobs:
           pwsh --version
           bash tests/framework_test.sh
 
+      - name: Test wiki publisher
+        # The publisher's own checks, named in the CI log; T67 also runs them.
+        timeout-minutes: 5
+        run: bash scripts/test-wiki-publish.sh
+
       - name: Verify installer against a clean prefix
         run: |
           set -euo pipefail
