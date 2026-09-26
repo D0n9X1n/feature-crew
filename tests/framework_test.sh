@@ -280,10 +280,12 @@ ps1_operative_ok() {
     /^[[:space:]]*<#/ { block_comment = 1 }
     block_comment { if (/#>/) block_comment = 0; next }
     /^[[:space:]]*#/ { next }
+    /^Install-ClaudeGlobal[[:space:]]*$/ { exit }
+    # Retain the original column-0 guard even inside function bodies.
+    /^(throw|exit)([[:space:]]|$)/ { bad = 1; exit }
     tolower($0) ~ /^function[[:space:]]/ { in_function = 1 }
     in_function { if (/^}/) in_function = 0; next }
-    /^Install-ClaudeGlobal[[:space:]]*$/ { exit }
-    tolower($0) ~ /(^|[^[:alnum:]_$.-])throw([^[:alnum:]_-]|$)/ || /^exit([[:space:]]|$)/ { bad = 1; exit }
+    tolower($0) ~ /(^|[^[:alnum:]_$.-])throw([^[:alnum:]_-]|$)/ { bad = 1; exit }
     END { exit bad }
   ' "$f"
 }
