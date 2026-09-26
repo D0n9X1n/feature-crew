@@ -1342,8 +1342,66 @@ STUB
     t35_unchanged
     t35_result "T35l typed $t35_style force/uninstall flags reach Git-layout bash"
   done
+
+  # Exit 3 means Git Bash ran the installer and reported failure, not that bash
+  # was unavailable. Reuse this guard on confirmed scratch mutations as well.
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' ran > "$t35_root/o-git-ran"
+exit 3
+STUB
+  for t35_variant in control exit-zero fallback; do
+    t35_script="$t35_repo/install.ps1"
+    if [ "$t35_variant" != control ]; then
+      if ! command -v python3 >/dev/null 2>&1; then
+        skip "T35o $t35_variant mutation replay (python3 unavailable)"
+        continue
+      fi
+      # Like T21, keep the copy beside agents/ so an erroneous fallback really
+      # installs files instead of failing for an unrelated missing-source error.
+      t35_script="$t35_repo/t35o-$t35_variant-$$.ps1"
+      CLEANUP_PATHS+=("$t35_script")
+      if ! t35_mutation_out=$(python3 - "$t35_variant" "$t35_script" 2>&1 <<'PY'
+import pathlib, sys
+old, new = {
+    'exit-zero': (b'    exit $bashExitCode\n', b'    exit 0\n'),
+    'fallback': (b'  if ($bashExitCode -ne 126 -and $bashExitCode -ne 127) {',
+                 b'  if ($bashExitCode -eq 0) {'),
+}[sys.argv[1]]
+source = pathlib.Path('install.ps1').read_bytes()
+assert source.count(old) == 1, 'delegation mutation target missing or ambiguous'
+mutant = source.replace(old, new, 1)
+assert mutant != source and old not in mutant, 'delegation mutation not applied'
+pathlib.Path(sys.argv[2]).write_bytes(mutant)
+PY
+      ); then
+        bad "T35o $t35_variant mutation replay" "$t35_mutation_out"
+        continue
+      fi
+    fi
+    rm -f "$t35_marker" "$t35_root/o-git-ran"
+    t35_prefix="$t35_root/o-$t35_variant-prefix"
+    t35_run "o-$t35_variant" "$t35_git/cmd:$t35_decoy" -File "$t35_script" --prefix "$t35_prefix"
+    t35_expect_rc 3
+    [ -e "$t35_root/o-git-ran" ] || t35_err="$t35_err Git-bash-not-run"
+    [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+    grep -qF 'using the PowerShell installer' "$t35_case/stderr" && t35_err="$t35_err unexpected-fallback-warning"
+    t35_unchanged
+    if [ "$t35_variant" = control ]; then
+      t35_result "T35o delegated exit 3 propagates without a fallback warning or installed files"
+    else
+      t35_expected=' exit=0(want-3)'
+      [ "$t35_variant" = fallback ] && t35_expected="$t35_expected unexpected-fallback-warning prefix-created"
+      if [ "$t35_err" = "$t35_expected" ]; then
+        ok "T35o $t35_variant mutation applied and rejected:$t35_err"
+      else
+        bad "T35o $t35_variant mutation replay" "expected '$t35_expected', got '${t35_err:-<no rejection>}'"
+      fi
+      rm -f "$t35_script"
+    fi
+  done
 else
-  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native; do
+  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native o o-exit-zero o-fallback; do
     skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
   done
 fi
@@ -2384,6 +2442,104 @@ PY
   else
     bad "T58 release workflow gate" "issues:$t58_out"
   fi
+fi
+
+# ---------------------------------------------------------------- T59
+# T44/T45 compare dry-run output over untouched installs. They do not prove a
+# forced dry run preserves edits. Snapshot every path and byte, including any
+# manifest, and use the same behavioral guard on originals and four mutants.
+t59_dry_force() { # engine, fixture root, installer to exercise in the dry run
+  local engine="$1" fixture="$2" script="$3"
+  local prefix="$fixture/prefix"
+  case_err=""
+  mkdir -p "$fixture" || { case_err="fixture-directory-failed"; return; }
+  run_installer "$engine" "$prefix"
+  expect_installer_success install
+  [ -f "$prefix/agents/fc-pm.md" ] || case_err="$case_err missing-agent"
+  [ -f "$prefix/skills/fc-review/SKILL.md" ] || case_err="$case_err missing-skill"
+  [ -z "$case_err" ] || return
+  printf '\nMY AGENT EDIT\n' >> "$prefix/agents/fc-pm.md" || case_err="$case_err agent-edit-failed"
+  printf '\nMY SKILL EDIT\n' >> "$prefix/skills/fc-review/SKILL.md" || case_err="$case_err skill-edit-failed"
+  cp "$prefix/agents/fc-pm.md" "$fixture/agent" || case_err="$case_err agent-snapshot-failed"
+  cp "$prefix/skills/fc-review/SKILL.md" "$fixture/skill" || case_err="$case_err skill-snapshot-failed"
+  snapshot_tree "$prefix" > "$fixture/before" || case_err="$case_err before-snapshot-failed"
+  [ -z "$case_err" ] || return
+  if [ "$engine" = sh ]; then
+    HOME="$installer_root/home" "$installer_bash" "$script" --prefix "$prefix" --dry-run --force \
+      > "$installer_root/run.out" 2>&1
+  else
+    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$script" --prefix "$prefix" --dry-run --force \
+      > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+  expect_installer_success dry-run
+  cmp -s "$fixture/agent" "$prefix/agents/fc-pm.md" || case_err="$case_err dry-run:agent-changed"
+  cmp -s "$fixture/skill" "$prefix/skills/fc-review/SKILL.md" || case_err="$case_err dry-run:skill-changed"
+  snapshot_tree "$prefix" > "$fixture/after" || case_err="$case_err after-snapshot-failed"
+  cmp -s "$fixture/before" "$fixture/after" || case_err="$case_err dry-run:tree-changed"
+}
+for engine in "${INSTALLERS[@]}"; do
+  for variant in control agent-return skill-copy; do
+    t59_script="$installer_repo/install.$engine"
+    if [ "$variant" != control ]; then
+      if ! command -v python3 >/dev/null 2>&1; then
+        skip "T59 $engine $variant mutation replay (python3 unavailable)"
+        continue
+      fi
+      # Like T21, root-local copies find the real sources. Register before
+      # writing so failures cannot leave a mutant in the working tree.
+      t59_script="$installer_repo/t59-$engine-$variant-$$.$engine"
+      CLEANUP_PATHS+=("$t59_script")
+      if ! t59_mutation_out=$(python3 - "$engine" "$variant" "$t59_script" 2>&1 <<'PY'
+import pathlib, sys
+engine, variant, output = sys.argv[1:]
+old, new = {
+    ('sh', 'agent-return'): (
+        b'    say "DRY-RUN: install $src -> $dest  (name: $name)"\n    return 0\n',
+        b'    say "DRY-RUN: install $src -> $dest  (name: $name)"\n'),
+    ('ps1', 'agent-return'): (
+        b'    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return\n',
+        b'    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"\n'),
+    ('sh', 'skill-copy'): (b'    do_or_echo cp "$s" "$d"\n', b'    cp "$s" "$d"\n'),
+    ('ps1', 'skill-copy'): (
+        b'    if ($DryRun) {\n      Write-Host "DRY-RUN: cp $($_.FullName) $d"\n',
+        b'    if ($false) {\n      Write-Host "DRY-RUN: cp $($_.FullName) $d"\n'),
+}[engine, variant]
+source = pathlib.Path('install.' + engine).read_bytes()
+assert source.count(old) == 1, 'dry-run mutation target missing or ambiguous'
+mutant = source.replace(old, new, 1)
+assert mutant != source and old not in mutant, 'dry-run mutation not applied'
+pathlib.Path(output).write_bytes(mutant)
+PY
+      ); then
+        bad "T59 $engine $variant mutation replay" "$t59_mutation_out"
+        continue
+      fi
+    fi
+    t59_dry_force "$engine" "$installer_root/t59-$engine-$variant" "$t59_script"
+    if [ "$variant" = control ]; then
+      installer_result "T59 $engine --dry-run --force preserves edited agent, skill, and the whole install"
+    else
+      case "$variant" in
+        agent-return) t59_expected=' dry-run:agent-changed dry-run:tree-changed' ;;
+        skill-copy) t59_expected=' dry-run:skill-changed dry-run:tree-changed' ;;
+      esac
+      if [ "$case_err" = "$t59_expected" ]; then
+        ok "T59 $engine $variant mutation applied and rejected:$case_err"
+      else
+        bad "T59 $engine $variant mutation replay" "expected '$t59_expected', got '${case_err:-<no rejection>}'"
+      fi
+      rm -f "$t59_script"
+    fi
+  done
+done
+if [ "${#INSTALLERS[@]}" -eq 1 ]; then
+  for variant in control agent-return skill-copy; do
+    skip "T59 ps1 $variant dry-run guard (pwsh unavailable; set PWSH)"
+  done
 fi
 
 echo

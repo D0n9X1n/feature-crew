@@ -144,6 +144,43 @@ jobs:
           $body = [Convert]::ToBase64String($installed, $front.Length, $installed.Length - $front.Length)
           if ($body -cne [Convert]::ToBase64String($original)) { throw "$($src.Name) body altered on install" }
         }
+      TEST_DRY_RUN_FORCE: |
+        Set-StrictMode -Version Latest
+        Invoke-Expression $env:MASK_BASH
+        $prefix = Join-Path $env:RUNNER_TEMP ("fc-dry-force-" + $PSVersionTable.PSVersion.Major)
+        if (Test-Path -LiteralPath $prefix) { throw "dry-run fixture prefix is not fresh" }
+        $installer = Join-Path $env:GITHUB_WORKSPACE "install.ps1"
+        $LASTEXITCODE = 0
+        & $installer -Prefix $prefix
+        if ($LASTEXITCODE -ne 0) { throw "dry-run fixture install exited $LASTEXITCODE" }
+        $agent = Join-Path $prefix "agents\fc-pm.md"
+        $skill = Join-Path $prefix "skills\fc-review\SKILL.md"
+        foreach ($file in @($agent, $skill)) {
+          $edited = [byte[]]([IO.File]::ReadAllBytes($file) + [Text.Encoding]::UTF8.GetBytes("`nMY EDIT`n"))
+          [IO.File]::WriteAllBytes($file, $edited)
+        }
+        $agentBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($agent))
+        $skillBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($skill))
+        function Snapshot-DryForce($dir) {
+          $entries = @(Get-ChildItem -LiteralPath $dir -Recurse -Force | ForEach-Object {
+            $relative = $_.FullName.Substring($dir.Length)
+            if ($_.PSIsContainer) { 'D ' + $relative }
+            else { 'F ' + $relative + ' ' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($_.FullName)) }
+          })
+          return (($entries | Sort-Object) -join "`n")
+        }
+        # Include every byte and path, including the manifest when present.
+        $before = Snapshot-DryForce $prefix
+        $LASTEXITCODE = 0
+        & $installer -Prefix $prefix -DryRun -Force
+        if ($LASTEXITCODE -ne 0) { throw "-DryRun -Force exited $LASTEXITCODE" }
+        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($agent)) -cne $agentBefore) {
+          throw "-DryRun -Force changed the edited agent"
+        }
+        if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($skill)) -cne $skillBefore) {
+          throw "-DryRun -Force changed the edited skill"
+        }
+        if ((Snapshot-DryForce $prefix) -cne $before) { throw "-DryRun -Force changed the install tree" }
       CAPTURE_MANIFEST_TOOLS: |
         # Capture Git's own executables BEFORE masking; never select WSL bash.
         $gitPath = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
@@ -426,6 +463,16 @@ jobs:
           $skills = @(Get-ChildItem -LiteralPath (Join-Path $prefix "skills") -Filter fc-* -Directory -Force -EA SilentlyContinue)
           if ($skills.Count -ne 0) { throw "uninstall left $($skills.Count) skill(s)" }
           if (Test-Path -LiteralPath (Join-Path $prefix "feature-crew.sha256")) { throw "uninstall left its manifest" }
+
+      - name: Forced dry run preserves edited files (pwsh fallback)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: Invoke-Expression $env:TEST_DRY_RUN_FORCE
+
+      - name: Forced dry run preserves edited files (Windows PowerShell 5.1 fallback)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: Invoke-Expression $env:TEST_DRY_RUN_FORCE
 
       - name: GNU-style flags in the PowerShell fallback (pwsh)
         if: ${{ !cancelled() }}
