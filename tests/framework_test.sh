@@ -832,7 +832,7 @@ t61_docs=(
 t61_labels=(
   top-down bottom-up-map reconcile-paths fitness-gate fitness-one-job fitness-home
   fitness-interface fitness-change fitness-testable component-map
-  second-opinion-mandatory second-opinion-parallel second-opinion-selector second-opinion-blind
+  second-opinion-mandatory second-opinion-parallel second-opinion-selector second-opinion-dispatcher second-opinion-blind
   second-opinion-brief second-opinion-one-round comparison-table input-not-author
   audit-not-replaced fail-closed super-straightforward complex-never-exempt waivers-do-not-waive
   parallel-design-exception standard-component-map standard-design-check
@@ -843,7 +843,7 @@ t61_labels=(
 )
 t61_sections=(
   both both both fitness fitness fitness fitness fitness fitness fitness
-  second second second second second second second second second second second second second
+  second second second second second second second second second second second second second second
   dispatch standard standard step5 step5 step6 phase1 output output review report qa lead dev
 )
 t61_rules=(
@@ -860,6 +860,7 @@ t61_rules=(
   'Mandatory unless the design is super straightforward.'
   'When the first design starts, dispatch a blind second designer in parallel'
   "choosing its model with the canonical selector from the first author's recorded model."
+  'Only the dispatching session sends it; the architect never does.'
   'Give it the same brief but not the first design.'
   'It leads with the bottom-up view and returns at most 300 words — a component map and key decisions, never artifact text.'
   'One round only.'

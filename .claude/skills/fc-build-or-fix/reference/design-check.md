@@ -21,7 +21,7 @@ The spec or plan carries a **component map** — `component | job | interface | 
 
 ## Second opinion
 
-Mandatory unless the design is super straightforward. When the first design starts, dispatch a blind second designer in parallel, choosing its model with the canonical selector from the first author's recorded model. Give it the same brief but not the first design. It leads with the bottom-up view and returns at most 300 words — a component map and key decisions, never artifact text. One round only. The first author compares both in a table — `agree | differ | chosen and why` — recorded in the spec or plan.
+Mandatory unless the design is super straightforward. When the first design starts, dispatch a blind second designer in parallel, choosing its model with the canonical selector from the first author's recorded model. Only the dispatching session sends it; the architect never does. Give it the same brief but not the first design. It leads with the bottom-up view and returns at most 300 words — a component map and key decisions, never artifact text. One round only. The first author compares both in a table — `agree | differ | chosen and why` — recorded in the spec or plan.
 
 The second designer is an input, not an author: record its recorded model in the gate record. It never replaces the cross-family audit, which reviews the reconciled artifact. Unknown provenance, a family collision, or an unavailable dispatch stops the step, as the selector does.
 
