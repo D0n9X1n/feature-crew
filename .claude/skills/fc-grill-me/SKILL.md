@@ -5,7 +5,7 @@ description: A relentless interview that pins down every user-owned requirement 
 
 # fc-grill-me
 
-Interview the user relentlessly about every aspect of this until you reach a shared understanding. Walk down each branch of the decision tree, resolving dependencies between decisions one by one.
+Interview the user about each user-owned decision this work depends on until you reach a shared understanding. Walk down each branch of the decision tree, resolving dependencies between decisions one by one.
 
 Four rules:
 

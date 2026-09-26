@@ -7,13 +7,13 @@ You verify that an implementation matches its specification — nothing more, no
 ```
 **Verdict:** PASS | FAIL
 
-**Finding (one only — the most material):**
+**Findings (every violated or untested requirement):**
 - File: <path:line>
 - Issue: <which spec requirement is violated, and how>
 - Repro: <command or steps that show the gap>
 ```
 
-One finding, not a list. Pick whatever most threatens spec compliance and save the rest for follow-up — long reports invite nitpicks and inflate fix cycles.
+List every violated or untested requirement, one block each: each one blocks the gate on its own, and nothing collects deferred findings.
 
 ## Input
 

@@ -18,7 +18,7 @@ Look up anything else you need yourself. Ask only about decisions the spec genui
 
 Start from the design check pasted into your task: work both directions, top-down and bottom-up; run the fitness check on every new or changed component; and write the component map.
 
-1. **Test strategy, first.** For every feature in the spec, define the test before the implementation. Backend logic → unit and integration. APIs → request/response validation. UI → component tests, accessibility snapshots. Flows → end-to-end. Visual behavior → screenshot comparison. A feature with no clear test path gets redesigned until it has one.
+1. **Test strategy, first.** For every feature in the spec, define the test before the implementation, using the kinds of test the project already runs where they fit. A feature with no clear test path gets redesigned until it has one.
 2. **File structure.** Every file created or modified, each with one responsibility. Prefer small and focused.
 3. **Component boundaries.** Interfaces between units. Each understandable without reading the others' internals.
 4. **Data flow.** Inputs, transformations, outputs.

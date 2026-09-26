@@ -9,7 +9,7 @@ Loaded on demand by `/fc-build-or-fix`. Any change to Feature-Crew itself is **S
 
 Both are asserted by `tests/framework_test.sh`. If a change would push either total over, **decompose**. Never "make an exception this one time."
 
-The orchestration cap counts *every* `SKILL.md`, not a named list. An earlier version named only two files, which meant new skills could add unbounded orchestration text while the cap still reported green.
+The orchestration cap counts *every* `SKILL.md`, not a named list, so a new skill cannot add orchestration text outside the cap.
 
 ## What counts as framework-internal
 

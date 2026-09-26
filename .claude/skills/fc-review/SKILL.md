@@ -33,7 +33,7 @@ Two or three, matched to the artifact. More lenses produce longer reports, not b
 - **Test quality** — do the tests verify behavior or mocks? Would they catch a regression?
 - **Security** — only when the artifact touches auth, secrets, input handling, or persistence.
 
-Run lenses as parallel subagents when the diff is large. One lens per agent, each in one-clue mode.
+Run lenses as parallel subagents when the diff is large. One lens per agent; each returns every finding that has a failure scenario, most severe first.
 Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author. For a human or unknown author, request `sonnet` and label the review advisory with independence unverified. Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family. Zero usable lenses makes the review unavailable, never PASS.
 
 ## 3 — Report
@@ -52,7 +52,7 @@ End with a verdict:
 - **CRITICAL** — correctness, security, or data-loss defect. Merging causes harm.
 - **IMPORTANT** — real problem, not a blocker on its own.
 
-Cap the report at the top **5** findings. Say how many you dropped.
+Report every finding that has a failure scenario; keep lower-severity ones to one line each.
 
 ## Rules
 

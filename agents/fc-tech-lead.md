@@ -41,7 +41,7 @@ Each section: findings, or an explicit "no issues" — not silence.
 
 ## Rules
 
-- Thorough but pragmatic. If it is genuinely good, approve quickly.
+- If the work is genuinely good, approve quickly.
 - Do not re-report what spec and code reviewers already caught. Your value is what they could not see.
 - Be specific about what must change and why.
 - Critical issues block the merge. Important issues should be fixed. Minor issues get noted for follow-up.

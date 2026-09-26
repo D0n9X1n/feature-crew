@@ -110,10 +110,13 @@ fi
 # All six installed ROLE agents must resolve with no model key. Hard-gate
 # reviewers receive an explicit model override at dispatch time from the
 # artifact-author selector; frontmatter pins would bypass that provenance rule.
+# The five dispatched roles must also deny Agent and Skill: gate provenance is
+# observed only one dispatch deep, and a prose ban cannot stop nesting. fc-pm
+# runs as the main session and carries no deny list.
 #
 # This parses YAML rather than grepping lines: duplicate keys resolve silently
 # to the last value, so reject duplicate keys outright before checking the
-# resolved mapping.
+# resolved mapping. Keys may be camelCase (disallowedTools).
 validate_role_frontmatter() {
   python3 - "$1" <<'PY'
 import sys, re, glob, os, yaml
@@ -128,12 +131,22 @@ for f in sorted(glob.glob(sys.argv[1] + "/agents/*.md")):
     if not m:
         errs.append(f"{name}:no-frontmatter"); continue
     block = m.group(1)
-    keys = [ln.split(":", 1)[0] for ln in block.splitlines() if re.match(r"^[a-z-]+:", ln)]
+    keys = [ln.split(":", 1)[0] for ln in block.splitlines() if re.match(r"^[A-Za-z][A-Za-z-]*:", ln)]
     if len(keys) != len(set(keys)):
         errs.append(f"{name}:duplicate-keys"); continue
     d = yaml.safe_load(block) or {}
     if "model" in d:
         errs.append(f"{name}:model={d['model']!r}-must-be-absent")
+    raw = d.get("disallowedTools") or ""
+    denied = {str(t).strip() for t in (raw if isinstance(raw, list) else str(raw).split(","))}
+    if name == "fc-pm":
+        if "disallowedTools" in d:
+            errs.append(f"{name}:main-session-role-denies-tools")
+    else:
+        if "Agent" not in denied:
+            errs.append(f"{name}:can-delegate")
+        if "Skill" not in denied:
+            errs.append(f"{name}:can-invoke-skills")
 for name in sorted(roles - seen):
     errs.append(f"{name}:missing")
 for name in sorted(seen - roles):
@@ -167,14 +180,16 @@ if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
       f="$tmp_prefix/agents/$a.md"
       if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
       elif head -12 "$f" | grep -q '^model:'; then t5_err="$t5_err $a:model-present"
+      elif [ "$a" != fc-pm ] && ! head -6 "$f" | grep -qx 'disallowedTools: Agent, Skill'; then t5_err="$t5_err $a:can-delegate"
+      elif [ "$a" = fc-pm ] && head -6 "$f" | grep -q '^disallowedTools:'; then t5_err="$t5_err $a:main-session-role-denies-tools"
       fi
     done
     skip "T5 no YAML parser — duplicate-key override unverified"
   fi
   if [ -z "$t5_err" ]; then
-    ok "T5 all six installed role agents resolve with no model key"
+    ok "T5 role agents carry no model key; exactly the five dispatched roles deny Agent and Skill"
   else
-    bad "T5 installed role-agent model frontmatter" "issues:$t5_err"
+    bad "T5 installed role-agent frontmatter" "issues:$t5_err"
   fi
 else
   bad "T5 installed role-agent model frontmatter" "install.sh failed against temp prefix"
@@ -1209,6 +1224,16 @@ echo "$selector" | grep -qiE 'this session.s record.*sonnet.*author.s family.*mo
   || t32_err="$t32_err recorded-sonnet-collision-not-rerouted"
 echo "$selector" | grep -qF '(reference/gate-provenance.md)' \
   || t32_err="$t32_err provenance-reference-not-linked"
+# A hard-gate reviewer that delegates hides models from its own record, and
+# the child-record link is observed only one dispatch deep, so any Agent,
+# Skill, or Workflow call in the review record fails the gate. Stated once.
+echo "$selector" | grep -qiE 'recorded reviewer model and the reviewer record.s tool calls.*any `Agent`, `Skill`, or `Workflow` call.*GATE UNSATISFIED' \
+  || t32_err="$t32_err reviewer-delegation-not-fail-closed"
+t32_calls=$(git grep -cF "reviewer record's tool calls" -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
+[ "$t32_calls" = "1" ] || t32_err="$t32_err reviewer-delegation-rule-stated-${t32_calls}-times"
+# The delegated-reviewer predicate is stated once, in the canonical rule; other docs link to it.
+t32_pred=$(git grep -cF '`Agent`, `Skill`, or `Workflow`' -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
+[ "$t32_pred" = "1" ] || t32_err="$t32_err reviewer-delegation-predicate-stated-${t32_pred}-times"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
 
@@ -1241,6 +1266,29 @@ PY
     else
       t5_mut_rc=$?
       bad "T5 duplicate-key mutation" "validator exited $t5_mut_rc: ${t5_mut_out:-<no diagnostic>}"
+    fi
+  fi
+  # A permissive deny key ahead of the generated one: a first-wins parser would
+  # let the role delegate, PyYAML keeps the last. Reject the ambiguity itself.
+  if ! bash install.sh --prefix "$t5_mut" --force >/dev/null 2>&1; then
+    bad "T5 duplicate deny-key mutation" "install.sh failed"
+  else
+    python3 - "$t5_mut/agents/fc-tech-lead.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace("description:", "disallowedTools: Read\ndescription:", 1)
+open(p, "w", encoding="utf-8").write(s)
+PY
+    if t5_mut_out=$(validate_role_frontmatter "$t5_mut" 2>&1); then
+      if [ "$t5_mut_out" = "fc-tech-lead:duplicate-keys" ]; then
+        ok "T5 duplicate deny-key mutation returns expected diagnostic"
+      else
+        bad "T5 duplicate deny-key mutation" "got '${t5_mut_out:-<empty>}', want 'fc-tech-lead:duplicate-keys'"
+      fi
+    else
+      t5_mut_rc=$?
+      bad "T5 duplicate deny-key mutation" "validator exited $t5_mut_rc: ${t5_mut_out:-<no diagnostic>}"
     fi
   fi
   rm -rf "$t5_mut"
@@ -1750,10 +1798,11 @@ echo "$refute" | grep -qiE 'each refuter.*explicit.*`model` override.*selector.*
 # clauses to the lens section; each removal mutation must produce exactly its
 # own diagnostic, and runs only after the unmodified skill passes the control.
 t57_lens_labels=(
-  lens-selector-model lens-unknown-author-advisory lens-recorded-model-exclusion
+  lens-every-finding lens-selector-model lens-unknown-author-advisory lens-recorded-model-exclusion
   lens-zero-usable-unavailable
 )
 t57_lens_rules=(
+  'One lens per agent; each returns every finding that has a failure scenario, most severe first.'
   'Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author.'
   'For a human or unknown author, request `sonnet` and label the review advisory with independence unverified.'
   'Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family.'
@@ -1766,6 +1815,8 @@ t57_lens_contract() { # review text
     printf '%s\n' "$lenses" | grep -qF "${t57_lens_rules[$i]}" \
       || errors="$errors ${t57_lens_labels[$i]}"
   done
+  # A one-clue lens would cap the uncapped report at one finding per lens.
+  printf '%s\n' "$lenses" | grep -qi 'one-clue' && errors="$errors lens-one-clue-returned"
   printf '%s\n' "$errors"
 }
 t57_review_text=$(cat .claude/skills/fc-review/SKILL.md)
@@ -1858,6 +1909,120 @@ if [ -z "$t65_err" ]; then
 fi
 [ -z "$t65_err" ] && ok "T65 static contract alarm: feedback checks, resumable checkpoints, runtime proof" \
                    || bad "T65 run-discipline contract" "missing:$t65_err"
+
+# ---------------------------------------------------------------- T70
+# v5.2.1 prompt audit: QA and review reports list every blocking finding,
+# worker length caps become guidance, cost telemetry records dispatch tokens
+# and recorded models, and routing descriptions say when not to use a role.
+# Section-scoped like T61: each clause counts only in its own section, the
+# wording it replaced must stay gone, and after the unmodified documents pass,
+# removing one clause must produce exactly its own diagnostic.
+t70_err=""
+t70_doc_bof=.claude/skills/fc-build-or-fix/SKILL.md
+t70_doc_qacode=agents/fc-qa-code.md
+t70_doc_qaspec=agents/fc-qa-spec.md
+t70_doc_review=.claude/skills/fc-review/SKILL.md
+t70_doc_research=.claude/skills/fc-research/SKILL.md
+t70_doc_brainstorm=.claude/skills/fc-brainstorm/SKILL.md
+t70_doc_complex=.claude/skills/fc-build-or-fix/reference/complex-track.md
+t70_doc_meta=.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
+t70_doc_grill=.claude/skills/fc-grill-me/SKILL.md
+t70_doc_lead=agents/fc-tech-lead.md
+t70_doc_architect=agents/fc-architect.md
+t70_doc_install=install.sh
+t70_docs=(bof qacode qaspec review research brainstorm complex meta grill lead architect install)
+# label|doc|section start|section end|clause
+t70_rules=(
+  'bof-description-routes|bof|^name: fc-build-or-fix$|^---$|Do NOT use for an open question whose primary need is facts (look them up, or use /fc-research), an approach (use /fc-brainstorm), or review of an artifact this pipeline did not produce (use /fc-review).'
+  'qa-verdict-lists-blockers|bof|^## One-clue mode$|^## |List every blocking finding, each CRITICAL and each unmet or untested requirement, because each one blocks on its own; otherwise report the single most material finding.'
+  'qa-code-lists-blockers|qacode|^## Report format$|^## |List every CRITICAL finding and, on Standard, every spec gap, one block each: each blocks on its own.'
+  'qa-spec-lists-violations|qaspec|^## Report format$|^## |List every violated or untested requirement, one block each: each one blocks the gate on its own, and nothing collects deferred findings.'
+  'review-reports-every-finding|review|^## 3 — Report$|^## |Report every finding that has a failure scenario; keep lower-severity ones to one line each.'
+  'research-worker-no-padding|research|^## Phase 1|^## |Do not synthesize, do not recommend. If a search returns nothing relevant, say so explicitly rather than padding.'
+  'research-synthesis-concise|research|^## Phase 2|^## |Surface disagreements between inputs rather than averaging them. Keep it concise.'
+  'brainstorm-comparable-length|brainstorm|^## 2 — Panel$|^## |argue your stance. Keep it short enough to compare side by side.'
+  'cost-line|bof|^## Cost telemetry$|^## |Standard and Complex append `Cost: <N> dispatches, ~<T> dispatch tokens, ~<M> min wall-clock, models: <recorded models>` to the PR description'
+  'cost-tokens-once-per-message-id|bof|^## Cost telemetry$|^## |Sum `.message.usage` tokens once per unique `.message.id` in each dispatch record'
+  'cost-unknown-usage|bof|^## Cost telemetry$|^## |write `?` for `<T>` when a record has no usage.'
+  'cost-recorded-models|bof|^## Cost telemetry$|^## |Name the models those records show, not the requested aliases.'
+  'complex-cost-pointer|complex|^## Flow$|^## |Append the `Cost:` line defined in `/fc-build-or-fix` to the PR description.'
+  'research-cost-line|research|^## Output$|^## |Cost: <N> dispatches, ~<T> dispatch tokens, ~<M> min wall-clock, models: <recorded models>'
+  'complex-example-family-note|complex|^## Worked example$|^## |In an Opus-family session the same rules request `model: opus` for authoring and select `model: sonnet` for review.'
+  'complex-example-cost|complex|^## Worked example$|^## |`Cost: 17 dispatches, ~30M dispatch tokens, ~3h wall-clock, models: Sonnet + Opus (recorded)`'
+  'meta-cap-every-skill|meta|^## Numeric caps$|^## |not a named list, so a new skill cannot add orchestration text outside the cap.'
+  'grill-user-owned-scope|grill|^# fc-grill-me$|^## |Interview the user about each user-owned decision this work depends on until you reach a shared understanding.'
+  'lead-approve-quickly|lead|^## Rules$|^## |- If the work is genuinely good, approve quickly.'
+  'architect-project-tests|architect|^## Phase 1|^## |define the test before the implementation, using the kinds of test the project already runs where they fit.'
+  'pm-main-session-only|install|^agent_meta() {$|^}$|role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent'
+  'architect-when-not|install|^agent_meta() {$|^}$|Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions.'
+  'developer-when-not|install|^agent_meta() {$|^}$|Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests.'
+  'qa-spec-when-not|install|^agent_meta() {$|^}$|(one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review.'
+  'qa-code-when-not|install|^agent_meta() {$|^}$|quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review.'
+  'lead-when-not|install|^agent_meta() {$|^}$|before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review.'
+)
+# label|doc|replaced wording that must stay absent from the whole document
+t70_stale=(
+  'bof-one-finding|bof|One finding, not a list.'
+  'bof-selected-overrides|bof|<selected overrides>'
+  'bof-route-with-classifier|bof|route that need with the classifier below'
+  'qa-code-one-only|qacode|Finding (one only'
+  'qa-code-one-finding|qacode|One finding. No strengths section'
+  'qa-spec-one-only|qaspec|Finding (one only'
+  'qa-spec-save-for-later|qaspec|save the rest for follow-up'
+  'review-top-five|review|Cap the report at the top'
+  'review-dropped-count|review|how many you dropped'
+  'research-worker-cap|research|Cap 400 words'
+  'research-synthesis-cap|research|≤600 words'
+  'research-models-list|research|models: <list>'
+  'brainstorm-word-cap|brainstorm|≤300 words'
+  'complex-selected-aliases|complex|exact selected aliases'
+  'complex-history|complex|for two versions and five reviewers'
+  'meta-history|meta|An earlier version named only two files'
+  'grill-booster|grill|Interview the user relentlessly'
+  'lead-booster|lead|Thorough but pragmatic'
+  'architect-test-catalog|architect|UI → component tests'
+  'pm-orchestrates|install|and orchestrates the pipeline.'
+)
+t70_contract() { # root holding the t70_doc_* paths
+  local entry label doc from to text path section errors=""
+  for entry in "${t70_rules[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t70_doc_$doc"
+    section=$(sed -n "/$from/,/$to/p" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] || errors="$errors $label"
+  done
+  for entry in "${t70_stale[@]}"; do
+    IFS='|' read -r label doc text <<< "$entry"
+    path="t70_doc_$doc"
+    grep -qF -- "$text" "$1/${!path}" 2>/dev/null && errors="$errors stale:$label"
+  done
+  printf '%s\n' "$errors"
+}
+t70_out=$(t70_contract .)
+t70_err="$t70_err$t70_out"
+if [ -z "$t70_err" ]; then
+  t70_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t70_mut")
+  for t70_doc in "${t70_docs[@]}"; do
+    t70_path="t70_doc_$t70_doc"
+    mkdir -p "$t70_mut/$(dirname "${!t70_path}")" && cp "${!t70_path}" "$t70_mut/${!t70_path}"
+  done
+  for t70_entry in "${t70_rules[@]}"; do
+    IFS='|' read -r t70_label t70_doc t70_from t70_to t70_text <<< "$t70_entry"
+    t70_path="t70_doc_$t70_doc"
+    t70_orig=$(cat "${!t70_path}")
+    printf '%s\n' "${t70_orig/"$t70_text"/}" > "$t70_mut/${!t70_path}"
+    t70_mut_out=$(t70_contract "$t70_mut")
+    cp "${!t70_path}" "$t70_mut/${!t70_path}"
+    if [ "$t70_mut_out" = " $t70_label" ]; then
+      ok "T70 removal mutation: $t70_label rejected by its own check"
+    else
+      bad "T70 removal mutation: $t70_label" "got '${t70_mut_out:-<empty>}', want ' $t70_label'"
+    fi
+  done
+fi
+[ -z "$t70_err" ] && ok "T70 static contract alarm: v5.2.1 prompt-audit clauses pinned, replaced wording absent" \
+                   || bad "T70 prompt-audit contract" "missing:$t70_err"
 
 # ---------------------------------------------------------------- T35
 # Exercise both PowerShell invocation forms, not just parameter-name tokens.
@@ -2839,6 +3004,106 @@ else
   skip "T47 manifest byte parity (pwsh unavailable; set PWSH)"
 fi
 
+# ---------------------------------------------------------------- T68
+# Gate provenance is observed only one dispatch deep, so the five dispatched
+# roles deny Agent and Skill; fc-pm runs as the main session and denies
+# nothing. Each engine renders frontmatter once, for install, ownership, and
+# --check/--verify, so both engines must write byte-identical agents. After the
+# control passes, removing one role's deny line, adding one to fc-pm, or
+# dropping either engine's deny emission must fail with exactly its own labels.
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  skip "T68 delegation-guard frontmatter contract (PyYAML unavailable)"
+else
+  t68_root="$installer_root/t68"
+  t68_all=""
+  for t68_role in fc-architect fc-developer fc-qa-code fc-qa-spec fc-tech-lead; do
+    t68_all="$t68_all $t68_role:can-delegate $t68_role:can-invoke-skills"
+  done
+  t68_all=${t68_all# }
+  t68_passed=" "
+  for engine in "${INSTALLERS[@]}"; do
+    case_err=""
+    run_installer "$engine" "$t68_root/$engine"
+    expect_installer_success install
+    t68_out=$(validate_role_frontmatter "$t68_root/$engine" 2>&1) || case_err="$case_err validator-exited-$?"
+    [ -z "$t68_out" ] || case_err="$case_err $t68_out"
+    [ -n "$case_err" ] || t68_passed="$t68_passed$engine "
+    installer_result "T68 $engine denies Agent and Skill on exactly the five dispatched roles, never fc-pm"
+  done
+  if [ "${#INSTALLERS[@]}" -eq 2 ]; then
+    case_err=""
+    for src in agents/*.md; do
+      t68_f=$(basename "$src")
+      cmp -s "$t68_root/sh/agents/$t68_f" "$t68_root/ps1/agents/$t68_f" || case_err="$case_err differs:$t68_f"
+    done
+    installer_result "T68 install.sh and the PowerShell fallback write byte-identical agent files"
+  else
+    skip "T68 agent byte parity (pwsh unavailable; set PWSH)"
+  fi
+  if [[ "$t68_passed" == *" sh "* ]]; then
+    for t68_role in "${ROLE_AGENTS[@]}"; do
+      t68_mut="$t68_root/mut-$t68_role"
+      cp -R "$t68_root/sh" "$t68_mut"
+      t68_f="$t68_mut/agents/$t68_role.md"
+      if [ "$t68_role" = fc-pm ]; then
+        awk 'NR == 3 { print; print "disallowedTools: Agent, Skill"; next } { print }' "$t68_f" > "$t68_root/mutant"
+        t68_want="fc-pm:main-session-role-denies-tools"
+      else
+        grep -vx 'disallowedTools: Agent, Skill' "$t68_f" > "$t68_root/mutant"
+        t68_want="$t68_role:can-delegate $t68_role:can-invoke-skills"
+      fi
+      if cmp -s "$t68_root/mutant" "$t68_f"; then
+        bad "T68 mutation: $t68_role deny line" "mutation not applied"
+        continue
+      fi
+      mv "$t68_root/mutant" "$t68_f"
+      t68_mut_out=$(validate_role_frontmatter "$t68_mut" 2>&1)
+      [ "$t68_mut_out" = "$t68_want" ] && ok "T68 mutation: $t68_role deny-line change rejected by its own check" \
+        || bad "T68 mutation: $t68_role deny line" "got '${t68_mut_out:-<empty>}', want '$t68_want'"
+    done
+  else
+    bad "T68 deny-line mutation replay" "control must pass first"
+  fi
+  for engine in "${INSTALLERS[@]}"; do
+    if [[ "$t68_passed" != *" $engine "* ]]; then
+      bad "T68 $engine renderer mutation" "control must pass first"
+      continue
+    fi
+    t68_fixture="$t68_root/renderer-$engine-src"
+    if ! copy_installer_inputs "$t68_fixture"; then
+      bad "T68 $engine renderer mutation" "fixture-copy-failed"
+      continue
+    fi
+    # The ps1 target spells its backtick as \x60: bash 3.2 cannot parse one inside $(...).
+    if ! t68_py=$(python3 - "$engine" "$t68_fixture/install.$engine" 2>&1 <<'PY'
+import pathlib, sys
+engine, path = sys.argv[1:]
+old, new = {
+    'sh': (b"  [ \"$1\" = fc-pm ] || printf -- 'disallowedTools: Agent, Skill\\n'\n", b''),
+    'ps1': (b"  $deny = if ($name -ceq 'fc-pm') { '' } else { \"disallowedTools: Agent, Skill\x60n\" }\n",
+            b"  $deny = ''\n"),
+}[engine]
+target = pathlib.Path(path)
+source = target.read_bytes()
+assert source.count(old) == 1, 'renderer deny emission missing or ambiguous'
+target.write_bytes(source.replace(old, new, 1))
+PY
+    ); then
+      bad "T68 $engine renderer mutation" "$t68_py"
+      continue
+    fi
+    case_err=""
+    run_copied_installer "$t68_fixture" "$engine" "$t68_root/renderer-$engine" --force
+    expect_installer_success renderer-mutant-install
+    t68_mut_out=$(validate_role_frontmatter "$t68_root/renderer-$engine" 2>&1)
+    if [ -z "$case_err" ] && [ "$t68_mut_out" = "$t68_all" ]; then
+      ok "T68 $engine renderer mutation: a dropped deny emission is rejected for all five roles"
+    else
+      bad "T68 $engine renderer mutation" "got '${t68_mut_out:-<empty>}$case_err', want '$t68_all'"
+    fi
+  done
+fi
+
 # ---------------------------------------------------------------- T48
 # Reproduce #23 with v5.0.1's own installer. Counting the fixture's agents and
 # skill directories keeps the removal expectation tied to what it really wrote.
@@ -3113,6 +3378,63 @@ for engine in "${INSTALLERS[@]}"; do
   fi
   installer_result "T51 $engine --check/--verify: current means an equal manifest AND every installed file hashed"
 done
+
+# ---------------------------------------------------------------- T69
+# Other upgrade fixtures seed v5.0.1, which predates the manifest, or rewrite
+# this clone. v5.2.0 is a real release that records one, and v5.2.1 changes
+# every role agent's frontmatter: every untouched file must read outdated,
+# never uncertain, until --force replaces it; an edited agent must survive a
+# non-force install and uninstall with its recorded baseline, and only it.
+seed_tag() { # tag, prefix: install with that tag's own installer
+  if [ ! -f "$installer_root/$1/install.sh" ]; then
+    mkdir -p "$installer_root/$1" || return 1
+    git -c core.autocrlf=false archive "$1" | tar -x -C "$installer_root/$1" || return 1
+  fi
+  HOME="$installer_root/home" "$installer_bash" "$installer_root/$1/install.sh" --prefix "$2" --force \
+    > "$installer_root/seed.log" 2>&1
+}
+for engine in "${INSTALLERS[@]}"; do
+  case_err=""
+  p="$installer_root/t69-$engine/untouched"
+  if ! seed_tag v5.2.0 "$p"; then
+    bad "T69 $engine upgrades a real v5.2.0 install" "v5.2.0 installer fixture failed"
+    continue
+  fi
+  t51_run "$engine" "$p" 1 untouched-check --check
+  for a in "${ROLE_AGENTS[@]}"; do
+    expect_output_line "outdated: agents/$a.md" "untouched-check:$a"
+  done
+  expect_output_line 'outdated: feature-crew.sha256' untouched-check
+  printf '%s\n' "$installer_out" | grep -qE '^(missing|uncertain):' && case_err="$case_err untouched-check:unrecognized-file"
+  expect_output_line 'check: update-needed' untouched-check
+  run_installer "$engine" "$p" --force
+  expect_installer_success force-install
+  t51_run "$engine" "$p" 0 forced-check --check
+  expect_output_line 'check: current' forced-check
+  t51_run "$engine" "$p" 0 forced-verify --verify
+  expect_output_line 'verify: ok' forced-verify
+
+  p="$installer_root/t69-$engine/edited"
+  if ! seed_tag v5.2.0 "$p"; then
+    case_err="$case_err edited:v5.2.0-fixture-failed"
+  else
+    grep '  agents/fc-qa-code\.md$' "$p/feature-crew.sha256" > "$installer_root/t69.baseline"
+    printf '\nMY EDIT\n' >> "$p/agents/fc-qa-code.md"
+    cp "$p/agents/fc-qa-code.md" "$installer_root/t69.edited"
+    run_installer "$engine" "$p"
+    expect_installer_success nonforce-install
+    expect_output_line "skip (exists): $p/agents/fc-qa-code.md  [use --force to overwrite]" nonforce-skip
+    run_installer "$engine" "$p" --uninstall
+    expect_installer_success uninstall
+    expect_output_line "kept (yours — differs from what we install): $p/agents/fc-qa-code.md" edited-agent
+    cmp -s "$installer_root/t69.edited" "$p/agents/fc-qa-code.md" || case_err="$case_err edited-agent-changed"
+    [ "$(remaining_files "$p")" = $'agents/fc-qa-code.md\nfeature-crew.sha256' ] \
+      || case_err="$case_err uninstall-did-not-keep-exactly-the-edit"
+    expect_manifest_bytes "$p" "$installer_root/t69.baseline" edited-baseline
+  fi
+  installer_result "T69 $engine upgrades a real v5.2.0 install: untouched reads outdated until --force; an edit and its baseline survive"
+done
+[ "${#INSTALLERS[@]}" -eq 2 ] || skip "T69 ps1 v5.2.0 upgrade (pwsh unavailable; set PWSH)"
 
 # ---------------------------------------------------------------- T52
 # These malformed fixtures use real installed-file hashes, independently of
