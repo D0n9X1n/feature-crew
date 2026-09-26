@@ -2035,6 +2035,39 @@ else
   done
 fi
 
+# ---------------------------------------------------------------- T49b
+# Retiring a managed path drops its record, not the installed file itself.
+t49b_source="$installer_root/t49b-source"
+if ! copy_installer_inputs "$t49b_source"; then
+  bad "T49b retired-agent fixture" "cannot copy this working tree's installer inputs"
+else
+  printf '# Fixture-only retired agent\n' > "$t49b_source/agents/fc-retired.md"
+  for engine in "${INSTALLERS[@]}"; do
+    case_err=""
+    for variant in nonforce force; do
+      p="$installer_root/t49b-$engine-$variant"
+      run_copied_installer "$t49b_source" "$engine" "$p" --force
+      expect_installer_success "$variant:fixture-install"
+      if ! cp "$p/agents/fc-retired.md" "$installer_root/t49b.retired"; then
+        case_err="$case_err $variant:retired-agent-snapshot-missing"
+        continue
+      fi
+      hash=$("${installer_hash[@]}" < "$installer_root/t49b.retired" | cut -d' ' -f1)
+      grep -qxF "$hash  agents/fc-retired.md" "$p/feature-crew.sha256" 2>/dev/null \
+        || case_err="$case_err $variant:fixture-manifest-missing-retired-entry"
+      if [ "$variant" = force ]; then run_installer "$engine" "$p" --force
+      else run_installer "$engine" "$p"; fi
+      expect_installer_success "$variant:current-install"
+      raw_files_manifest "$p" | grep -v '  agents/fc-retired\.md$' > "$installer_root/t49b.expected" \
+        || case_err="$case_err $variant:cannot-hash-current-files"
+      expect_manifest_bytes "$p" "$installer_root/t49b.expected" "$variant:current-paths-only"
+      check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err $variant:checksum-check-failed"
+      cmp -s "$installer_root/t49b.retired" "$p/agents/fc-retired.md" || case_err="$case_err $variant:retired-agent-changed"
+    done
+    installer_result "T49b $engine reinstall drops stale manifest entries without changing retired files, with and without force"
+  done
+fi
+
 # ---------------------------------------------------------------- T50
 for engine in "${INSTALLERS[@]}"; do
   p="$installer_root/t50a-$engine"
@@ -2193,8 +2226,46 @@ for engine in "${INSTALLERS[@]}"; do
     installer_result "T52 $engine preserves a $malformed manifest while treating it as absent"
   done
 done
+# ------------------------------------------------------------- T52empty
+# Zero lines is valid: install rewrites it; uninstall removes it when empty.
+for engine in "${INSTALLERS[@]}"; do
+  case_err=""
+  p="$installer_root/t52-$engine-empty"
+  mkdir -p "$p"
+  : > "$p/feature-crew.sha256"
+  snapshot_tree "$p" > "$installer_root/before"
+  run_installer "$engine" "$p" --dry-run
+  expect_installer_success dry-install
+  expect_output_line "DRY-RUN: write $p/feature-crew.sha256" dry-empty-manifest-write
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err dry-install:empty-manifest-rejected"
+  snapshot_tree "$p" > "$installer_root/after"
+  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-install:tree-changed"
+
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  expect_output_line "installed: $p/feature-crew.sha256" empty-manifest-rewritten
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err install:empty-manifest-rejected"
+  raw_files_manifest "$p" > "$installer_root/t52-empty.expected" || case_err="$case_err cannot-hash-installed-files"
+  expect_manifest_bytes "$p" "$installer_root/t52-empty.expected" empty-replaced-with-canonical-manifest
+  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err checksum-check-failed"
+
+  : > "$p/feature-crew.sha256"
+  snapshot_tree "$p" > "$installer_root/before"
+  run_installer "$engine" "$p" --uninstall --dry-run
+  expect_installer_success dry-uninstall
+  expect_output_line "DRY-RUN: would remove $p/feature-crew.sha256" dry-empty-manifest-removal
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err dry-uninstall:empty-manifest-rejected"
+  snapshot_tree "$p" > "$installer_root/after"
+  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-uninstall:tree-changed"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  expect_output_line "removed: $p/feature-crew.sha256" empty-manifest-removed
+  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err uninstall:empty-manifest-rejected"
+  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
+  installer_result "T52empty $engine accepts and rewrites an empty manifest, then removes it without dry-run mutation"
+done
 if [ "${#INSTALLERS[@]}" -eq 1 ]; then
-  for n in 47 48a 48b 49 50a 50b 50c 50d 50e 51 52-text 52-crlf 52-parent-segment; do
+  for n in 47 48a 48b 49 49b 50a 50b 50c 50d 50e 51 52-text 52-crlf 52-parent-segment 52empty; do
     skip "T$n ps1 manifest regression (pwsh unavailable; set PWSH)"
   done
 fi
