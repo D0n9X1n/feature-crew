@@ -404,27 +404,108 @@ else
 fi
 
 # ---------------------------------------------------------------- T17
-# install.sh copies agent bodies with cat -- byte-exact, always. PowerShell 5.1
-# defaults Get-Content/Set-Content to the system ANSI code page, which silently
-# mangles the en-dashes, em-dashes, arrows, and U+2264 in every agent body on a
-# CJK code page. Without explicit UTF-8 the two installers disagree, violating
-# the cross-platform parity rule -- and the corruption is silent.
-#
-# Assert the ARGUMENTS on the specific lines, not that the function names
-# appear somewhere. Checking for "ReadAllText" left `[Text.Encoding]::ASCII`
-# green (it corrupts every non-ASCII character), and checking for
-# "UTF8Encoding" left `UTF8Encoding($true)` green (it emits a BOM, which breaks
-# the ^\s*--- frontmatter detection). Both were found by mutation.
-t17_err=""
-grep -qE 'ReadAllText\(.*\[Text\.Encoding\]::UTF8\)'   install.ps1 || t17_err="$t17_err read-not-utf8"
-grep -qE 'WriteAllText\(.*UTF8Encoding\(\$false\)\)'   install.ps1 || t17_err="$t17_err write-not-utf8-nobom"
-grep -qE '\[Text\.Encoding\]::(ASCII|Default|Unicode|UTF7|UTF32)' install.ps1 \
-  && t17_err="$t17_err wrong-encoding-present"
-grep -qE 'UTF8Encoding\(\$true\)' install.ps1 && t17_err="$t17_err bom-emitted"
-# A bare Get-/Set-Content on the agent body would reintroduce the bug.
-grep -qE '\$body = Get-Content' install.ps1 && t17_err="$t17_err bare-get-content"
-[ -z "$t17_err" ] && ok "T17 install.ps1 reads/writes agent bodies as explicit UTF-8, no BOM" \
-                  || bad "T17 PowerShell encoding drift" "issues:$t17_err"
+# Agent bodies must stay bytes: even explicit UTF-8 text decoding discards an
+# added BOM and makes an edited agent look untouched (#30). Inspect the agent
+# functions and their helpers, not unrelated ReadAllBytes calls in skill/hash
+# code. Replay #26's Get-Content mutation against this same check.
+t17_root=$(mktemp -d)
+CLEANUP_PATHS+=("$t17_root")
+t17_pwsh="${PWSH:-$(command -v pwsh 2>/dev/null || true)}"
+cat > "$t17_root/check.ps1" <<'PS'
+param([string]$Path, [string]$Mutant)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $parseErrors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw ($parseErrors -join "`n") }
+$functions = @{}
+$ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+  ForEach-Object { $functions[$_.Name] = $_ }
+function Get-AgentPath($entry) {
+  $todo = @($entry); $seen = @{}
+  for ($i = 0; $i -lt $todo.Count; $i++) {
+    $name = $todo[$i]
+    if ($seen.ContainsKey($name)) { continue }
+    if (-not $functions.ContainsKey($name)) { throw "missing agent function: $name" }
+    $f = $functions[$name]; $seen[$name] = $f
+    foreach ($call in $f.Body.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true)) {
+      $called = $call.GetCommandName()
+      if ($called -and $functions.ContainsKey($called)) { $todo += $called }
+    }
+  }
+  return @($seen.Values)
+}
+$install = @(Get-AgentPath 'Install-Agent')
+$ownership = @(Get-AgentPath 'Test-InstalledIsOurs')
+$installNodes = @($install | ForEach-Object { $_.Body.FindAll({ param($n) $true }, $true) })
+$ownNodes = @($ownership | ForEach-Object { $_.Body.FindAll({ param($n) $true }, $true) })
+$reads = @($installNodes | Where-Object {
+  $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
+  $_.Extent.Text -match '^\[(System\.)?IO\.File\]::ReadAllBytes\('
+})
+if ($Mutant) {
+  # Also replay against the old text implementation during RED; once the byte
+  # implementation exists this selects its actual ReadAllBytes expression.
+  $sourceReads = @($installNodes | Where-Object {
+    $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
+    $_.Extent.Text -match '^\[(System\.)?IO\.File\]::ReadAll(Bytes|Text)\('
+  })
+  if ($sourceReads.Count -ne 1) { throw 'agent source read missing or ambiguous; cannot replay mutation' }
+  $read = $sourceReads[0]
+  $text = [IO.File]::ReadAllText($Path)
+  $replacement = '(Get-Content -Raw -LiteralPath ' + $read.Arguments[0].Extent.Text + ')'
+  $text = $text.Remove($read.Extent.StartOffset, $read.Extent.EndOffset - $read.Extent.StartOffset).
+    Insert($read.Extent.StartOffset, $replacement)
+  [IO.File]::WriteAllText($Mutant, $text, (New-Object Text.UTF8Encoding($false)))
+  exit 0
+}
+$issues = @()
+if ($reads.Count -ne 1) { $issues += 'agent-source-not-ReadAllBytes' }
+if (-not @($installNodes | Where-Object {
+  $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
+  $_.Extent.Text -match '^\[(System\.)?IO\.File\]::WriteAllBytes\('
+}).Count) { $issues += 'agent-destination-not-WriteAllBytes' }
+$shared = @($install | Where-Object { $ownership.Name -contains $_.Name })
+if (-not @($shared | Where-Object { $_.Body.Extent.Text -match '::ReadAllBytes\(' }).Count) {
+  $issues += 'agent-bytes-not-shared-with-ownership'
+}
+if (-not @($installNodes | Where-Object {
+  ($_ -is [Management.Automation.Language.CommandAst] -or
+   $_ -is [Management.Automation.Language.InvokeMemberExpressionAst]) -and
+  $_.Extent.Text -match 'UTF8Encoding(\]::new)?\(\s*\$false\s*\)'
+}).Count) { $issues += 'frontmatter-encoder-not-explicit-no-BOM' }
+if (-not @($installNodes | Where-Object {
+  $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $_.Member.Value -eq 'GetBytes'
+}).Count) { $issues += 'frontmatter-not-encoded-to-bytes' }
+foreach ($n in @($installNodes) + @($ownNodes)) {
+  if ($n -is [Management.Automation.Language.CommandAst] -and
+      $n.GetCommandName() -match '^(Get|Set)-Content$') { $issues += 'text-cmdlet-on-agent-path' }
+  if ($n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
+      $n.Member.Value -match '^(Read|Write)AllText$') { $issues += 'text-IO-on-agent-path' }
+}
+if ($issues.Count) { Write-Output (($issues | Select-Object -Unique) -join ' '); exit 1 }
+PS
+if [ -n "$t17_pwsh" ] && [ -x "$t17_pwsh" ]; then
+  t17_err=""
+  t17_out=$("$t17_pwsh" -NoProfile -NonInteractive -File "$t17_root/check.ps1" -Path "$(pwd)/install.ps1" 2>&1)
+  [ "$?" -eq 0 ] || t17_err="$t17_err $t17_out"
+  [ -z "$t17_err" ] && ok "T17 agent bodies use shared bytes with no-BOM frontmatter" \
+                    || bad "T17 PowerShell agent byte path" "issues:$t17_err"
+  t17_err=""
+  if "$t17_pwsh" -NoProfile -NonInteractive -File "$t17_root/check.ps1" \
+      -Path "$(pwd)/install.ps1" -Mutant "$t17_root/mutant.ps1" > "$t17_root/mutation.log" 2>&1; then
+    t17_out=$("$t17_pwsh" -NoProfile -NonInteractive -File "$t17_root/check.ps1" -Path "$t17_root/mutant.ps1" 2>&1)
+    t17_rc=$?
+    if [ "$t17_rc" -ne 1 ] || ! printf '%s\n' "$t17_out" | grep -qF 'text-cmdlet-on-agent-path'; then
+      t17_err="$t17_err Get-Content-mutation-not-rejected:$t17_rc"
+    fi
+  else
+    t17_err="$t17_err cannot-replay-Get-Content-mutation"
+  fi
+  [ -z "$t17_err" ] && ok "T17 #26 Get-Content mutation is applied and rejected" \
+                    || bad "T17 #26 mutation replay" "issues:$t17_err"
+else
+  skip "T17 PowerShell AST byte-path and mutation check (pwsh unavailable; set PWSH)"
+fi
 
 # ---------------------------------------------------------------- T18
 # The bash half of the same property, actually executed: an installed agent's
@@ -793,7 +874,7 @@ t30_prefix=$(mktemp -d)
 bash install.sh --prefix "$t30_prefix" --force >/dev/null 2>&1
 t30_out=$(bash install.sh --prefix "$t30_prefix" --uninstall --dry-run 2>&1)
 t30_err=""
-echo "$t30_out" | grep -qE '^removed:' && t30_err="$t30_err claims-removed-but-did-not"
+echo "$t30_out" | grep -qE '^removed' && t30_err="$t30_err claims-removed-but-did-not"
 [ "$(ls "$t30_prefix/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 6 ] || t30_err="$t30_err dry-run-actually-deleted"
 [ -z "$t30_err" ] && ok "T30 --uninstall --dry-run claims nothing it did not do" \
                   || bad "T30 uninstall dry-run lies" "issues:$t30_err"
@@ -1266,6 +1347,495 @@ if grep '^Flags:' README.md | grep -qF -- '-DryRun'; then
   ok "T35i README Flags line names the PowerShell spelling"
 else
   bad "T35i README Flags line names the PowerShell spelling" "-DryRun absent from Flags line"
+fi
+
+# --------------------------------------------------------- T36-T46 helpers
+# Every runtime case gets a scratch prefix. PowerShell uses T35's empty-PATH
+# technique, so an installed Git Bash cannot silently replace the fallback.
+installer_root=$(mktemp -d)
+CLEANUP_PATHS+=("$installer_root")
+installer_repo=$(pwd)
+installer_bash=$(command -v bash)
+mkdir -p "$installer_root/home/.config/powershell" "$installer_root/empty-path"
+# A user's profile may enable strict mode. Current installers must inherit it;
+# historical table regeneration below intentionally runs the tags as published.
+printf 'Set-StrictMode -Version Latest\n' > "$installer_root/home/.config/powershell/Microsoft.PowerShell_profile.ps1"
+printf 'my notes\n' > "$installer_root/personal"
+printf 'my hidden notes\n' > "$installer_root/hidden"
+INSTALLERS=(sh)
+if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
+  INSTALLERS+=(ps1)
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  installer_hash=(sha256sum)
+else
+  installer_hash=(shasum -a 256)
+fi
+run_installer() { # engine, prefix, flags; preserves nonzero exits for assertions
+  local engine="$1" prefix="$2"; shift 2
+  if [ "$engine" = sh ]; then
+    HOME="$installer_root/home" "$installer_bash" "$installer_repo/install.sh" --prefix "$prefix" "$@" \
+      > "$installer_root/run.out" 2>&1
+  else
+    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --prefix "$prefix" "$@" \
+      > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+}
+run_installer_at() { # cwd, engine, prefix, flags; retain the child exit code
+  local cwd="$1"; shift
+  ( cd "$cwd" && run_installer "$@"; exit "$installer_rc" )
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+}
+expect_installer_success() {
+  if [ "$installer_rc" -ne 0 ]; then
+    case_err="$case_err $1:exit-$installer_rc:$(printf '%s\n' "$installer_out" | sed $'s/\033\\[[0-9;]*m//g' | tail -1)"
+  fi
+}
+installer_result() {
+  [ -z "$case_err" ] && ok "$1" || bad "$1" "issues:$case_err"
+}
+seed_legacy_skill() {
+  mkdir -p "$1/skills/research" || return 1
+  git show v3.1:.claude/skills/research/SKILL.md > "$1/skills/research/SKILL.md" || return 1
+  cp "$installer_root/personal" "$1/skills/research/sources.md" || return 1
+  cp "$installer_root/hidden" "$1/skills/research/.hidden"
+}
+seed_v31() {
+  if [ ! -f "$installer_root/v3.1/install.sh" ]; then
+    mkdir -p "$installer_root/v3.1" || return 1
+    git archive v3.1 | tar -x -C "$installer_root/v3.1" || return 1
+  fi
+  HOME="$installer_root/home" "$installer_bash" "$installer_root/v3.1/install.sh" --prefix "$1" \
+    > "$installer_root/seed.log" 2>&1
+}
+snapshot_tree() {
+  ( cd "$1" || exit 1
+    find . -type d -print | LC_ALL=C sort
+    while IFS= read -r f; do
+      printf '%s  %s\n' "$("${installer_hash[@]}" < "$f" | cut -d' ' -f1)" "$f"
+    done < <(find . -type f -print | LC_ALL=C sort)
+  )
+}
+normalize_installer_output() { # prefix, source, captured output
+  python3 - "$@" <<'PY'
+import pathlib, sys
+prefix, source, output = sys.argv[1:]
+text = pathlib.Path(output).read_bytes().decode('utf-8').replace('\r', '').replace('\\', '/')
+text = text.replace(prefix.replace('\\', '/'), '<P>').replace(source.replace('\\', '/'), '<SRC>')
+sys.stdout.write(text)
+PY
+}
+
+# ---------------------------------------------------------------- T36
+# A published SKILL.md proves ownership of that file, not of its neighbours.
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t36-$engine"
+  case_err=""
+  if ! seed_legacy_skill "$p"; then
+    bad "T36 $engine legacy skill preserves personal and hidden files" "cannot seed published v3.1 skill"
+    continue
+  fi
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  [ ! -e "$p/skills/research/SKILL.md" ] || case_err="$case_err published-SKILL-left"
+  cmp -s "$installer_root/personal" "$p/skills/research/sources.md" || case_err="$case_err personal-file-deleted"
+  cmp -s "$installer_root/hidden" "$p/skills/research/.hidden" || case_err="$case_err hidden-file-deleted"
+  printf '%s\n' "$installer_out" | grep -qxF "removed (legacy): $p/skills/research/SKILL.md" \
+    || case_err="$case_err per-file-removal-not-reported"
+  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/skills/research/sources.md" \
+    || case_err="$case_err personal-file-not-reported"
+  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/skills/research/.hidden" \
+    || case_err="$case_err hidden-file-not-reported"
+  for name in sources.md .hidden; do
+    count=$(printf '%s\n' "$installer_out" | grep -cxF "  if this was an older Feature-Crew you edited, remove it by hand: $p/skills/research/$name" || true)
+    [ "$count" -eq 1 ] || case_err="$case_err $name:legacy-hints=$count(want-1)"
+  done
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  cmp -s "$installer_root/personal" "$p/skills/research/sources.md" || case_err="$case_err personal-file-lost-after-uninstall"
+  cmp -s "$installer_root/hidden" "$p/skills/research/.hidden" || case_err="$case_err hidden-file-lost-after-uninstall"
+  installer_result "T36 $engine legacy skill preserves personal and hidden files"
+done
+
+# ---------------------------------------------------------------- T37
+# Use v3.1's OWN installer: copying today's agents would not reproduce the old
+# names, unquoted frontmatter, or duplicate fc-pm. Count the six agent removals
+# specifically; v3.1 also installed two legacy skills eligible for cleanup.
+t37_legacy_case() { # engine, actual prefix, given prefix, cwd, label
+  local engine="$1" p="$2" given="$3" cwd="$4" label="$5" action name count
+  case_err=""
+  if ! seed_v31 "$p"; then
+    bad "$label" "v3.1 installer fixture failed"
+    return
+  fi
+  cp "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md"
+  snapshot_tree "$p" > "$installer_root/before"
+  for action in install uninstall; do
+    if [ "$action" = install ]; then run_installer_at "$cwd" "$engine" "$given" --dry-run
+    else run_installer_at "$cwd" "$engine" "$given" --uninstall --dry-run; fi
+    expect_installer_success "dry-$action"
+    snapshot_tree "$p" > "$installer_root/after"
+    cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-$action:tree-changed"
+    printf '%s\n' "$installer_out" | grep -q '^removed' && case_err="$case_err dry-$action:claims-removed"
+    count=$(printf '%s\n' "$installer_out" | grep -cF "DRY-RUN: would remove (legacy): $given/agents/feature-crew/" || true)
+    [ "$count" -eq 6 ] || case_err="$case_err dry-$action:legacy-agent-lines=$count(want-6)"
+    for name in architect developer pm qa-code-reviewer qa-spec-reviewer tech-lead; do
+      printf '%s\n' "$installer_out" | grep -qxF "DRY-RUN: would remove (legacy): $given/agents/feature-crew/$name.md" \
+        || case_err="$case_err dry-$action:not-listed:$name"
+    done
+  done
+  run_installer_at "$cwd" "$engine" "$given"
+  expect_installer_success install
+  for name in architect developer pm qa-code-reviewer qa-spec-reviewer tech-lead; do
+    [ ! -e "$p/agents/feature-crew/$name.md" ] || case_err="$case_err legacy-agent-left:$name"
+  done
+  for name in build-or-fix research; do
+    [ ! -d "$p/skills/$name" ] || case_err="$case_err legacy-skill-left:$name"
+  done
+  cmp -s "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md" || case_err="$case_err personal-agent-deleted"
+  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $given/agents/feature-crew/my-own-agent.md" \
+    || case_err="$case_err personal-agent-not-reported"
+  count=$(find "$p/agents" -type f -name '*.md' -exec grep -l '^name: fc-pm$' {} + | wc -l | tr -d ' ')
+  [ "$count" -eq 1 ] || case_err="$case_err fc-pm-definitions=$count(want-1)"
+  run_installer_at "$cwd" "$engine" "$given" --uninstall
+  expect_installer_success uninstall
+  cmp -s "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md" || case_err="$case_err personal-agent-deleted-on-uninstall"
+  count=$(find "$p" -type f | wc -l | tr -d ' ')
+  [ "$count" -eq 1 ] || case_err="$case_err uninstall-files=$count(want-personal-only)"
+  installer_result "$label"
+}
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t37-$engine"
+  t37_legacy_case "$engine" "$p" "$p" "$installer_repo" "T37 $engine v3.1 cleanup is per-file on install and uninstall"
+  for form in dot parent absolute-dot absolute-parent; do
+    cwd="$installer_root/t37-$engine-$form/feature-crew"
+    mkdir -p "$cwd"
+    case "$form" in
+      dot) given='./p'; p="$cwd/p" ;;
+      parent) given='../p'; p="$(dirname "$cwd")/p" ;;
+      absolute-dot) given="$cwd/./p"; p="$cwd/p" ;;
+      absolute-parent) given="$cwd/../p"; p="$(dirname "$cwd")/p" ;;
+    esac
+    t37_legacy_case "$engine" "$p" "$given" "$cwd" "T37 $engine v3.1 cleanup through $given from feature-crew"
+  done
+
+  # Rooted paths still need normalization before FullName slicing.
+  case_err=""
+  for form in dot parent absolute-dot absolute-parent; do
+    cwd="$installer_root/t37-fresh-$engine-$form/feature-crew"
+    mkdir -p "$cwd"
+    case "$form" in
+      dot) given='./u'; p="$cwd/u" ;;
+      parent) given='../u'; p="$(dirname "$cwd")/u" ;;
+      absolute-dot) given="$cwd/./u"; p="$cwd/u" ;;
+      absolute-parent) given="$cwd/../u"; p="$(dirname "$cwd")/u" ;;
+    esac
+    run_installer_at "$cwd" "$engine" "$given"
+    expect_installer_success "$given/install"
+    [ -f "$p/agents/fc-pm.md" ] && [ -f "$p/skills/fc-review/SKILL.md" ] \
+      || case_err="$case_err $given:not-installed"
+    run_installer_at "$cwd" "$engine" "$given" --uninstall
+    expect_installer_success "$given/uninstall"
+    count=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
+    [ "$count" -eq 0 ] || case_err="$case_err $given:files-left=$count"
+  done
+  installer_result "T37 $engine fresh relative and absolute dot-segment prefixes uninstall completely"
+done
+
+# ---------------------------------------------------------------- T38
+# Brackets are literal path characters, not permission to act on a neighbour.
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t38-$engine/br[1]"
+  neighbour="$installer_root/t38-$engine/br1/agents/fc-pm.md"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  mkdir -p "$(dirname "$neighbour")"
+  printf 'MY OWN\n' > "$neighbour"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  [ "$(cat "$neighbour" 2>/dev/null)" = 'MY OWN' ] || case_err="$case_err neighbour-deleted-or-changed"
+  count=$(find "$p/agents" -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$count" -eq 0 ] || case_err="$case_err literal-prefix-agents-left=$count"
+  run_installer "$engine" "$p"
+  expect_installer_success restore
+  printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
+  cp "$p/agents/fc-pm.md" "$installer_root/edited-agent"
+  run_installer "$engine" "$p"
+  expect_installer_success reinstall
+  cmp -s "$installer_root/edited-agent" "$p/agents/fc-pm.md" || case_err="$case_err reinstall-overwrote-edit"
+  installer_result "T38 $engine bracket prefix protects neighbour and edited agent"
+done
+
+# ---------------------------------------------------------------- T39
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t39-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  cp "$installer_root/hidden" "$p/skills/fc-review/.notes.md"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  [ -d "$p/skills/fc-review" ] || case_err="$case_err skill-dir-deleted"
+  cmp -s "$installer_root/hidden" "$p/skills/fc-review/.notes.md" || case_err="$case_err hidden-file-deleted"
+  printf '%s\n' "$installer_out" | grep -qxF "kept (yours — differs from what we install): $p/skills/fc-review" \
+    || case_err="$case_err kept-line-missing"
+  installer_result "T39 $engine uninstall counts hidden personal files"
+done
+
+# ---------------------------------------------------------------- T40
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t40-$engine"
+  case_err=""
+  run_installer "$engine" "$p"
+  expect_installer_success install
+  { printf '\357\273\277'; cat "$p/agents/fc-pm.md"; } > "$installer_root/bom-agent"
+  cp "$installer_root/bom-agent" "$p/agents/fc-pm.md"
+  run_installer "$engine" "$p" --uninstall
+  expect_installer_success uninstall
+  cmp -s "$installer_root/bom-agent" "$p/agents/fc-pm.md" || case_err="$case_err BOM-edited-agent-deleted"
+  printf '%s\n' "$installer_out" | grep -qxF "kept (yours — differs from what we install): $p/agents/fc-pm.md" \
+    || case_err="$case_err kept-line-missing"
+  installer_result "T40 $engine BOM-only agent edit is kept byte-for-byte"
+done
+
+# ---------------------------------------------------------------- T41
+for engine in "${INSTALLERS[@]}"; do
+  p="$installer_root/t41-$engine"
+  case_err=""
+  mkdir -p "$p/skills/research"
+  : > "$p/skills/research/SKILL.md"
+  for attempt in 1 2; do
+    run_installer "$engine" "$p"
+    expect_installer_success "install-$attempt"
+    [ -f "$p/skills/research/SKILL.md" ] && [ ! -s "$p/skills/research/SKILL.md" ] \
+      || case_err="$case_err install-$attempt:empty-skill-changed"
+    printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/skills/research" \
+      || case_err="$case_err install-$attempt:kept-line-missing"
+  done
+  installer_result "T41 $engine empty legacy SKILL.md is kept without aborting either install"
+done
+if [ "${#INSTALLERS[@]}" -eq 1 ]; then
+  for n in 36 37 38 39 40 41; do skip "T$n ps1 fallback regression (pwsh unavailable; set PWSH)"; done
+fi
+
+# ---------------------------------------------------------------- T42
+# Query the real index, not a hand-picked file or a grep of .gitattributes.
+case_err=""
+count=0
+while IFS= read -r -d '' tracked; do
+  IFS= read -r -d '' attribute
+  IFS= read -r -d '' value
+  count=$((count + 1))
+  [ "$attribute:$value" = 'eol:lf' ] || case_err="$case_err $tracked:$value"
+done < <(git ls-files -z | git check-attr -z --stdin eol)
+[ "$count" -gt 0 ] || case_err="$case_err no-tracked-files"
+installer_result "T42 every tracked file has the LF checkout attribute"
+
+# ---------------------------------------------------------------- T43
+# Frozen provenance comes from what tagged installers WROTE, not current source
+# files or hand-maintained hashes. Both historical engines contribute, with CR
+# stripped exactly as the ownership classifier does. Do not update the table
+# during the test: a difference must fail, never bless itself.
+case_err=""
+t43_root="$installer_root/published"
+mkdir -p "$t43_root"
+: > "$t43_root/entries"
+for tag in v3.1 v4.0 v5.0.0 v5.0.1 v5.1.0; do
+  archive="$t43_root/$tag/source"
+  mkdir -p "$archive"
+  if ! git archive "$tag" | tar -x -C "$archive"; then
+    case_err="$case_err $tag:archive-failed"; continue
+  fi
+  for engine in "${INSTALLERS[@]}"; do
+    p="$t43_root/$tag/$engine/prefix"
+    home="$t43_root/$tag/$engine/home"
+    mkdir -p "$p" "$home"
+    if [ "$engine" = sh ]; then
+      HOME="$home" "$installer_bash" "$archive/install.sh" --prefix "$p" > "$t43_root/run.log" 2>&1
+    else
+      env -i HOME="$home" PATH="$installer_root/empty-path" \
+        POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+        "$PWSH_BIN" -NoProfile -NonInteractive -File "$archive/install.ps1" -Prefix "$p" > "$t43_root/run.log" 2>&1
+    fi
+    rc=$?
+    if [ "$rc" -ne 0 ]; then case_err="$case_err $tag/$engine:exit-$rc"; continue; fi
+    while IFS= read -r rel; do
+      hash=$(tr -d '\r' < "$p/$rel" | "${installer_hash[@]}" | cut -d' ' -f1)
+      printf '%s  %s\n' "$hash" "$rel" >> "$t43_root/entries"
+    done < <(cd "$p" && find . -type f -print | sed 's|^\./||' | LC_ALL=C sort)
+  done
+done
+LC_ALL=C sort -u -k2,2 -k1,1 "$t43_root/entries" > "$t43_root/regenerated.sha256"
+count=$(wc -l < "$t43_root/regenerated.sha256" | tr -d ' ')
+paths=$(cut -d' ' -f3- "$t43_root/regenerated.sha256" | LC_ALL=C sort -u | wc -l | tr -d ' ')
+[ "$count/$paths" = '41/23' ] || case_err="$case_err regenerated=$count-entries/$paths-paths(want-41/23)"
+if [ ! -f published.sha256 ]; then
+  case_err="$case_err published.sha256-missing"
+elif ! cmp -s published.sha256 "$t43_root/regenerated.sha256"; then
+  case_err="$case_err published.sha256-differs-from-tagged-installs"
+fi
+installer_result "T43 published.sha256 exactly matches v3.1-v5.1.0 installer output"
+[ "${#INSTALLERS[@]}" -eq 2 ] || skip "T43 historical PowerShell fallback hashes (pwsh unavailable; set PWSH)"
+
+# ---------------------------------------------------------------- T44
+case_err=""
+p="$installer_root/t44/empty"
+run_installer sh "$p" --dry-run
+expect_installer_success dry-empty
+cp "$installer_root/run.out" "$installer_root/t44-empty.out"
+printf '%s\n' "$installer_out" | grep -qF '//' && case_err="$case_err dry-empty:double-slash"
+# Build the set from source parents, retaining duplicates in the actual output
+# so repeating mkdir once per copied file cannot pass as a set comparison.
+{
+  printf '%s\n' "$p/agents"
+  for src in "$installer_repo"/.claude/skills/*/; do
+    [ -f "${src}SKILL.md" ] || continue
+    skill=$(basename "$src")
+    printf '%s\n' "$p/skills/$skill"
+    while IFS= read -r rel; do
+      printf '%s\n' "$(dirname "$p/skills/$skill/$rel")"
+    done < <(cd "$src" && find . -type f -print | sed 's|^\./||')
+  done
+} | LC_ALL=C sort -u > "$installer_root/expected-dirs"
+sed -n 's/^DRY-RUN: mkdir -p //p' "$installer_root/t44-empty.out" | LC_ALL=C sort > "$installer_root/actual-dirs"
+cmp -s "$installer_root/expected-dirs" "$installer_root/actual-dirs" || case_err="$case_err missing-or-repeated-mkdir"
+[ ! -e "$p" ] || case_err="$case_err dry-run-created-prefix"
+run_installer sh "$p"
+expect_installer_success install
+run_installer sh "$p" --dry-run --force
+expect_installer_success dry-force
+printf '%s\n' "$installer_out" | grep -q '^DRY-RUN: mkdir' && case_err="$case_err existing-dirs-print-mkdir"
+printf '%s\n' "$installer_out" | grep -qF '//' && case_err="$case_err dry-force:double-slash"
+run_installer sh "$p"
+expect_installer_success reinstall
+printf '%s\n' "$installer_out" | grep -q '^skip (exists):' || case_err="$case_err no-skip-lines"
+if printf '%s\n' "$installer_out" | grep '^skip (exists):' | grep -qv '  \[use --force to overwrite\]$'; then
+  case_err="$case_err noncanonical-skip-hint"
+fi
+installer_result "T44 canonical bash mkdir, copy paths, and skip hints"
+
+# ---------------------------------------------------------------- T45
+# Compare ordered output, not sorted output or substring tokens. Only paths,
+# path separators, and CR are normalized; whitespace and wording are contracts.
+if [ "${#INSTALLERS[@]}" -ne 2 ]; then
+  skip "T45 installer output parity matrix (pwsh unavailable; set PWSH)"
+elif ! command -v python3 >/dev/null 2>&1; then
+  skip "T45 installer output parity matrix (python3 unavailable)"
+else
+  for scenario in fresh reinstall dry-force dry-empty uninstall-dry uninstall install-v31 uninstall-dry-v31 edited-agent legacy-skill dot-install-v31 parent-round-trip; do
+    case_err=""
+    scenario_root="$installer_root/t45-$scenario"
+    mkdir -p "$scenario_root"
+    for engine in "${INSTALLERS[@]}"; do
+      p="$scenario_root/$engine"
+      given="$p"
+      cwd="$installer_repo"
+      raw="$scenario_root/$engine.raw"
+      : > "$raw"
+      flags=()
+      case "$scenario" in
+        reinstall|dry-force|uninstall-dry|uninstall|edited-agent)
+          run_installer "$engine" "$p"
+          expect_installer_success "$engine/setup"
+          ;;
+        install-v31|uninstall-dry-v31)
+          seed_v31 "$p" || case_err="$case_err $engine/v3.1-fixture-failed"
+          ;;
+        legacy-skill)
+          seed_legacy_skill "$p" || case_err="$case_err $engine/legacy-skill-fixture-failed"
+          ;;
+        dot-install-v31|parent-round-trip)
+          cwd="$scenario_root/$engine/feature-crew"
+          mkdir -p "$cwd"
+          if [ "$scenario" = dot-install-v31 ]; then
+            given='./p'; p="$cwd/p"
+            seed_v31 "$p" || case_err="$case_err $engine/v3.1-fixture-failed"
+          else
+            given='../u'; p="$scenario_root/$engine/u"
+            run_installer_at "$cwd" "$engine" "$given"
+            expect_installer_success "$engine/parent-install"
+            cat "$installer_root/run.out" >> "$raw"
+          fi
+          ;;
+      esac
+      case "$scenario" in
+        dry-force) flags=(--dry-run --force) ;;
+        dry-empty) flags=(--dry-run) ;;
+        uninstall-dry|uninstall-dry-v31) flags=(--uninstall --dry-run) ;;
+        uninstall|parent-round-trip) flags=(--uninstall) ;;
+        edited-agent)
+          printf '\nmy edit\n' >> "$p/agents/fc-pm.md"
+          flags=(--uninstall)
+          ;;
+      esac
+      # Bash 3.2 treats an empty array as unset under nounset.
+      if [ "${#flags[@]}" -gt 0 ]; then run_installer_at "$cwd" "$engine" "$given" "${flags[@]}"
+      else run_installer_at "$cwd" "$engine" "$given"; fi
+      expect_installer_success "$engine/$scenario"
+      cat "$installer_root/run.out" >> "$raw"
+      # For dot-segment scenarios only normalize the actual absolute prefix;
+      # ./p and ../u must remain printed exactly as the caller supplied them.
+      normalize_installer_output "$p" "$installer_repo" "$raw" > "$scenario_root/$engine.out" \
+        || case_err="$case_err $engine/normalization-failed"
+    done
+    if ! cmp -s "$scenario_root/sh.out" "$scenario_root/ps1.out"; then
+      case_err="$case_err ordered-output-differs"
+      # Show the first unequal line; do not flood every test run with two whole
+      # installs. The test still compares ALL output, including trailing LF.
+      mismatch=$(python3 - "$scenario_root/sh.out" "$scenario_root/ps1.out" <<'PY'
+import itertools, pathlib, sys
+left, right = [pathlib.Path(p).read_text().splitlines(keepends=True) for p in sys.argv[1:]]
+for n, (a, b) in enumerate(itertools.zip_longest(left, right), 1):
+    if a != b:
+        print(f'line {n}: sh={a!r}; ps1={b!r}')
+        break
+PY
+)
+      case_err="$case_err ($mismatch)"
+    fi
+    installer_result "T45 output parity: $scenario"
+  done
+fi
+
+# ---------------------------------------------------------------- T46
+# Parse commands, not text lines: comments and quoted examples do not count,
+# and splitting a command over lines must not evade the -LiteralPath check.
+if [ "${#INSTALLERS[@]}" -ne 2 ]; then
+  skip "T46 PowerShell literal-path AST check (pwsh unavailable; set PWSH)"
+else
+  cat > "$installer_root/literal-paths.ps1" <<'PS'
+param([string]$Path)
+$tokens = $null; $parseErrors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw ($parseErrors -join "`n") }
+$issues = @()
+foreach ($command in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true)) {
+  $name = $command.GetCommandName()
+  $parameters = @($command.CommandElements | Where-Object {
+    $_ -is [Management.Automation.Language.CommandParameterAst]
+  } | ForEach-Object { $_.ParameterName })
+  $where = $name + '@' + $command.Extent.StartLineNumber
+  if ($name -in @('Test-Path', 'Remove-Item', 'Get-ChildItem') -and $parameters -notcontains 'LiteralPath') {
+    $issues += ($where + ':no-LiteralPath')
+  }
+  if ($name -eq 'Copy-Item') { $issues += ($where + ':use-byte-copy') }
+  if ($name -eq 'Get-ChildItem' -and $parameters -contains 'Recurse' -and $parameters -notcontains 'Force') {
+    $issues += ($where + ':recursive-list-hides-files')
+  }
+}
+if ($issues.Count) { Write-Output ($issues -join ' '); exit 1 }
+PS
+  case_err=""
+  t46_out=$("$PWSH_BIN" -NoProfile -NonInteractive -File "$installer_root/literal-paths.ps1" \
+    -Path "$installer_repo/install.ps1" 2>&1)
+  [ "$?" -eq 0 ] || case_err=" $t46_out"
+  installer_result "T46 PowerShell uses literal paths, byte copies, and hidden-aware recursion"
 fi
 
 echo

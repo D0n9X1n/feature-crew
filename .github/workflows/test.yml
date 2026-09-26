@@ -309,6 +309,336 @@ jobs:
           Invoke-Expression $env:MASK_BASH
           Invoke-Expression $env:TEST_GNU_FLAGS
 
+      - name: Literal bracket prefix does not touch its neighbour
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $root = Join-Path $env:RUNNER_TEMP "fc-brackets"
+          $prefix = Join-Path $root "br[1]"
+          $neighbour = Join-Path $root "br1\agents\fc-pm.md"
+          .\install.ps1 --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { throw "initial install failed" }
+          [IO.Directory]::CreateDirectory((Split-Path -Parent $neighbour)) | Out-Null
+          [IO.File]::WriteAllText($neighbour, 'MY OWN')
+          .\install.ps1 --prefix $prefix --uninstall
+          if ($LASTEXITCODE -ne 0) { throw "uninstall failed" }
+          if (-not [IO.File]::Exists($neighbour) -or [IO.File]::ReadAllText($neighbour) -cne 'MY OWN') {
+            throw "uninstall deleted or changed the neighbouring agent"
+          }
+          $left = @(Get-ChildItem -LiteralPath (Join-Path $prefix "agents") -Filter 'fc-*.md' -File -Force)
+          if ($left.Count) { throw "uninstall left agents in the literal prefix" }
+          .\install.ps1 --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { throw "restore install failed" }
+          $agent = Join-Path $prefix "agents\fc-pm.md"
+          [IO.File]::AppendAllText($agent, "`nMY EDIT`n")
+          $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($agent))
+          .\install.ps1 --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { throw "reinstall failed" }
+          if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($agent)) -cne $before) {
+            throw "reinstall overwrote an edited agent in the bracket prefix"
+          }
+
+      - name: Hidden personal file protects an installed skill
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-hidden"
+          .\install.ps1 --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { throw "initial install failed" }
+          $skill = Join-Path $prefix "skills\fc-review"
+          $notes = Join-Path $skill "notes.md"
+          [IO.File]::WriteAllText($notes, 'MY HIDDEN NOTES')
+          [IO.File]::SetAttributes($notes, ([IO.File]::GetAttributes($notes) -bor [IO.FileAttributes]::Hidden))
+          $output = .\install.ps1 --prefix $prefix --uninstall 6>&1
+          if ($LASTEXITCODE -ne 0) { throw "uninstall failed" }
+          if (-not [IO.File]::Exists($notes) -or [IO.File]::ReadAllText($notes) -cne 'MY HIDDEN NOTES') {
+            throw "uninstall deleted the hidden personal file"
+          }
+          if (-not [IO.Directory]::Exists($skill)) { throw "uninstall deleted the protected skill" }
+          $kept = "kept (yours $([char]0x2014) differs from what we install): $skill"
+          if (@($output | ForEach-Object { "$_" }) -cnotcontains $kept) { throw "missing hidden-file kept line" }
+
+      - name: BOM-only agent edits survive uninstall
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-bom"
+          .\install.ps1 --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { throw "initial install failed" }
+          $agent = Join-Path $prefix "agents\fc-pm.md"
+          $edited = [byte[]](@(239, 187, 191) + [IO.File]::ReadAllBytes($agent))
+          [IO.File]::WriteAllBytes($agent, $edited)
+          $output = .\install.ps1 --prefix $prefix --uninstall 6>&1
+          if ($LASTEXITCODE -ne 0) { throw "uninstall failed" }
+          if (-not [IO.File]::Exists($agent)) { throw "uninstall deleted the BOM-edited agent" }
+          if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($agent)) -cne [Convert]::ToBase64String($edited)) {
+            throw "uninstall changed the BOM-edited agent"
+          }
+          $kept = "kept (yours $([char]0x2014) differs from what we install): $agent"
+          if (@($output | ForEach-Object { "$_" }) -cnotcontains $kept) { throw "missing BOM-edit kept line" }
+
+      - name: Empty legacy skill does not abort repeated installs
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $prefix = Join-Path $env:RUNNER_TEMP "fc-empty-legacy"
+          $skill = Join-Path $prefix "skills\research"
+          $file = Join-Path $skill "SKILL.md"
+          [IO.Directory]::CreateDirectory($skill) | Out-Null
+          [IO.File]::WriteAllBytes($file, [byte[]]@())
+          foreach ($attempt in 1, 2) {
+            $output = .\install.ps1 --prefix $prefix 6>&1
+            if ($LASTEXITCODE -ne 0) { throw "install $attempt failed" }
+            if (-not [IO.File]::Exists($file) -or [IO.File]::ReadAllBytes($file).Length -ne 0) {
+              throw "install $attempt changed the empty legacy skill"
+            }
+            $kept = "kept (not ours $([char]0x2014) content does not match any published version): $skill"
+            if (@($output | ForEach-Object { "$_" }) -cnotcontains $kept) { throw "install $attempt did not report the empty skill" }
+          }
+
+      - name: v3.1 cleanup preserves a personal agent and tells the truth in dry runs
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          # Capture exact tools before masking; never rely on whichever bash
+          # happens to be first on PATH (System32 can expose WSL's launcher).
+          $gitPath = (Get-Command git -CommandType Application | Select-Object -First 1).Path
+          $gitRoot = Split-Path -Parent (Split-Path -Parent $gitPath)
+          $candidates = @(
+            (Join-Path (Join-Path $gitRoot "bin") "bash.exe")
+            (Join-Path (Join-Path (Split-Path -Parent $gitRoot) "bin") "bash.exe")
+          )
+          $gitBash = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $gitBash) { throw "Git for Windows bash missing beside git" }
+          $root = Join-Path $env:RUNNER_TEMP "fc-v31-ownership"
+          $prefix = Join-Path $root "prefix"
+          [IO.Directory]::CreateDirectory($root) | Out-Null
+          $archive = Join-Path $root "v3.1.tar"
+          # Keep Git's executable path native and the tagged fixture bytes LF.
+          & $gitPath -C $env:GITHUB_WORKSPACE -c core.autocrlf=false archive -o $archive v3.1
+          if ($LASTEXITCODE -ne 0) { throw "v3.1 archive failed" }
+          $env:FC_FIXTURE_ROOT = $root
+          # Export HOME only for the tagged installer; all writes stay in root.
+          $seed = @'
+          set -euo pipefail
+          root=$(cygpath -u "$FC_FIXTURE_ROOT")
+          mkdir -p "$root/source" "$root/home"
+          tar -xf "$root/v3.1.tar" -C "$root/source"
+          HOME="$root/home" bash "$root/source/install.sh" --prefix "$root/prefix"
+          '@
+          & $gitBash -c $seed
+          if ($LASTEXITCODE -ne 0) { throw "v3.1 installer fixture failed" }
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $legacy = Join-Path $prefix "agents\feature-crew"
+          $personal = Join-Path $legacy "my-own-agent.md"
+          [IO.File]::WriteAllText($personal, 'MY OWN AGENT')
+          $legacyNames = @('architect', 'developer', 'pm', 'qa-code-reviewer', 'qa-spec-reviewer', 'tech-lead')
+          function Snapshot($dir) {
+            $entries = @(Get-ChildItem -LiteralPath $dir -Recurse -Force | ForEach-Object {
+              $rel = $_.FullName.Substring($dir.Length)
+              if ($_.PSIsContainer) { 'D ' + $rel }
+              else { 'F ' + $rel + ' ' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($_.FullName)) }
+            })
+            return (($entries | Sort-Object) -join "`n")
+          }
+          $before = Snapshot $prefix
+          foreach ($uninstall in @($false, $true)) {
+            $flags = @('--prefix', $prefix, '--dry-run')
+            if ($uninstall) { $flags += '--uninstall' }
+            $output = .\install.ps1 @flags 6>&1
+            if ($LASTEXITCODE -ne 0) { throw "dry run failed" }
+            if ((Snapshot $prefix) -cne $before) { throw "dry run changed the fixture" }
+            $lines = @($output | ForEach-Object { "$_" })
+            if (@($lines | Where-Object { $_ -match '^removed' }).Count) { throw "dry run claimed removal" }
+            foreach ($name in $legacyNames) {
+              $expected = 'DRY-RUN: would remove (legacy): ' + (Join-Path $legacy ($name + '.md'))
+              if (@($lines | Where-Object { $_ -ceq $expected }).Count -ne 1) { throw "dry run must list $name exactly once" }
+            }
+          }
+          $output = .\install.ps1 --prefix $prefix 6>&1
+          if ($LASTEXITCODE -ne 0) { throw "upgrade failed" }
+          foreach ($name in $legacyNames) {
+            if (Test-Path -LiteralPath (Join-Path $legacy ($name + '.md'))) { throw "upgrade left stale $name" }
+          }
+          if (-not [IO.File]::Exists($personal) -or [IO.File]::ReadAllText($personal) -cne 'MY OWN AGENT') {
+            throw "upgrade deleted the personal agent"
+          }
+          $kept = "kept (not ours $([char]0x2014) content does not match any published version): $personal"
+          if (@($output | ForEach-Object { "$_" }) -cnotcontains $kept) { throw "personal agent not reported" }
+          $pm = @(Get-ChildItem -LiteralPath (Join-Path $prefix "agents") -File -Recurse -Force |
+            Where-Object { [IO.File]::ReadAllText($_.FullName) -match '(?m)^name: fc-pm\r?$' })
+          if ($pm.Count -ne 1) { throw "expected one fc-pm definition, got $($pm.Count)" }
+          .\install.ps1 --prefix $prefix --uninstall
+          if ($LASTEXITCODE -ne 0) { throw "uninstall failed" }
+          if (-not [IO.File]::Exists($personal) -or [IO.File]::ReadAllText($personal) -cne 'MY OWN AGENT') {
+            throw "uninstall deleted the personal agent"
+          }
+
+      - name: Dot-segment prefixes uninstall completely in the fallback
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          Invoke-Expression $env:MASK_BASH
+          Set-StrictMode -Version Latest
+          $installer = Join-Path $env:GITHUB_WORKSPACE "install.ps1"
+          $root = Join-Path $env:RUNNER_TEMP ("fc-dot-prefix-" + [Guid]::NewGuid().ToString('N'))
+          $cwd = Join-Path $root 'feature-crew'
+          [IO.Directory]::CreateDirectory($cwd) | Out-Null
+          Push-Location $cwd
+          try {
+            foreach ($prefix in @('..\u', '.\p', "$cwd\..\absolute-parent", "$cwd\.\absolute-dot")) {
+              $actual = if ([IO.Path]::IsPathRooted($prefix)) { $prefix } else { Join-Path $cwd $prefix }
+              $actual = [IO.Path]::GetFullPath($actual)
+              $global:LASTEXITCODE = 0
+              & $installer --prefix $prefix
+              if ($LASTEXITCODE -ne 0) { throw "$prefix install exited $LASTEXITCODE" }
+              if (-not (Test-Path -LiteralPath (Join-Path $actual 'agents\fc-pm.md'))) {
+                throw "$prefix did not install its agents"
+              }
+              $global:LASTEXITCODE = 0
+              & $installer --prefix $prefix --uninstall
+              if ($LASTEXITCODE -ne 0) { throw "$prefix uninstall exited $LASTEXITCODE" }
+              $left = @(Get-ChildItem -LiteralPath $actual -Recurse -File -Force)
+              if ($left.Count -ne 0) { throw "$prefix uninstall left $($left.Count) files" }
+            }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Ordered output parity between Git Bash and the PowerShell fallback
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $gitPath = (Get-Command git -CommandType Application | Select-Object -First 1).Path
+          $gitRoot = Split-Path -Parent (Split-Path -Parent $gitPath)
+          $candidates = @(
+            (Join-Path (Join-Path $gitRoot "bin") "bash.exe")
+            (Join-Path (Join-Path (Split-Path -Parent $gitRoot) "bin") "bash.exe")
+          )
+          $gitBash = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $gitBash) { throw "Git for Windows bash missing beside git" }
+          $root = Join-Path $env:RUNNER_TEMP "fc-parity"
+          $repo = $env:GITHUB_WORKSPACE
+          [IO.Directory]::CreateDirectory($root) | Out-Null
+          $archive = Join-Path $root "v3.1.tar"
+          # Keep Git's executable path native and the tagged fixture bytes LF.
+          & $gitPath -C $env:GITHUB_WORKSPACE -c core.autocrlf=false archive -o $archive v3.1
+          if ($LASTEXITCODE -ne 0) { throw "v3.1 archive failed" }
+          $env:FC_MATRIX_ROOT = $root
+          $env:FC_MATRIX_REPO = $repo
+          # Make tagged fixtures with their own installer before masking.
+          $seed = @'
+          set -euo pipefail
+          root=$(cygpath -u "$FC_MATRIX_ROOT")
+          mkdir -p "$root/v31" "$root/home"
+          tar -xf "$root/v3.1.tar" -C "$root/v31"
+          for scenario in install-v31 uninstall-dry-v31; do
+            for engine in sh ps1; do
+              HOME="$root/home" bash "$root/v31/install.sh" --prefix "$root/$scenario/$engine"
+            done
+          done
+          for engine in sh ps1; do
+            skill="$root/legacy-skill/$engine/skills/research"
+            mkdir -p "$skill"
+            cp "$root/v31/.claude/skills/research/SKILL.md" "$skill/SKILL.md"
+            printf 'my notes\n' > "$skill/sources.md"
+            printf 'my hidden notes\n' > "$skill/.hidden"
+          done
+          '@
+          & $gitBash -c $seed
+          if ($LASTEXITCODE -ne 0) { throw "parity fixture preparation failed" }
+          $bashPath = $env:PATH
+          $repoMsys = (& $gitBash -c 'cygpath -u "$FC_MATRIX_REPO"').Trim()
+          $rootMsys = (& $gitBash -c 'cygpath -u "$FC_MATRIX_ROOT"').Trim()
+          if ($LASTEXITCODE -ne 0) { throw "MSYS path conversion failed" }
+          Invoke-Expression $env:MASK_BASH
+          $fallbackPath = $env:PATH
+          Set-StrictMode -Version Latest
+          $installer = Join-Path $repo "install.ps1"
+          $utf8 = New-Object Text.UTF8Encoding($false)
+          # Use the Hidden attribute, not merely a Unix dot-name, on Windows.
+          foreach ($engine in @('sh', 'ps1')) {
+            $hidden = Join-Path (Join-Path $root 'legacy-skill') ($engine + '\skills\research\.hidden')
+            [IO.File]::SetAttributes($hidden, ([IO.File]::GetAttributes($hidden) -bor [IO.FileAttributes]::Hidden))
+          }
+          $env:FC_MATRIX_HOME = Join-Path $root "home"
+          $bashCommand = @'
+          set -euo pipefail
+          repo=$(cygpath -u "$FC_MATRIX_REPO")
+          prefix=$(cygpath -u "$FC_MATRIX_PREFIX")
+          export HOME=$(cygpath -u "$FC_MATRIX_HOME")
+          bash "$repo/install.sh" --prefix "$prefix" "$@"
+          '@
+          function Run-Installer($engine, $prefix, [string[]]$flags) {
+            # Native children update the global automatic variable. A local
+            # reset would shadow their exit code and make this check vacuous.
+            $global:LASTEXITCODE = 0
+            if ($engine -eq 'sh') {
+              $env:FC_MATRIX_PREFIX = $prefix
+              # Only the explicit Git Bash child gets its required utility PATH.
+              # Restore the masked PATH before ANY PowerShell installer call.
+              try {
+                $env:PATH = $bashPath
+                $lines = @(& $gitBash -c $bashCommand -- @flags)
+                $code = $LASTEXITCODE
+              } finally { $env:PATH = $fallbackPath }
+            } else {
+              $lines = @(& $installer --prefix $prefix @flags 6>&1)
+              $code = $LASTEXITCODE
+            }
+            if ($code -ne 0) { throw "$engine installer exited $code" }
+            return (($lines | ForEach-Object { "$_" }) -join "`n") + "`n"
+          }
+          function Normalize($text, $prefix, $prefixMsys) {
+            $text = $text.Replace("`r", '').Replace('\', '/')
+            # Longest forms first; do not sort lines, trim spaces, or hide //.
+            foreach ($form in @($prefix.Replace('\', '/'), $prefixMsys)) { $text = $text.Replace($form, '<P>') }
+            foreach ($form in @($repo.Replace('\', '/'), $repoMsys)) { $text = $text.Replace($form, '<SRC>') }
+            return $text
+          }
+          $failures = @()
+          foreach ($scenario in @('fresh', 'reinstall', 'dry-force', 'dry-empty', 'uninstall-dry', 'uninstall', 'install-v31', 'uninstall-dry-v31', 'edited-agent', 'legacy-skill')) {
+            $outputs = @{}
+            foreach ($engine in @('sh', 'ps1')) {
+              $prefix = Join-Path (Join-Path $root $scenario) $engine
+              $prefixMsys = "$rootMsys/$scenario/$engine"
+              if ($scenario -in @('reinstall', 'dry-force', 'uninstall-dry', 'uninstall', 'edited-agent')) {
+                Run-Installer $engine $prefix @() | Out-Null
+              }
+              $flags = @()
+              switch ($scenario) {
+                'dry-force' { $flags = @('--dry-run', '--force') }
+                'dry-empty' { $flags = @('--dry-run') }
+                'uninstall-dry' { $flags = @('--uninstall', '--dry-run') }
+                'uninstall-dry-v31' { $flags = @('--uninstall', '--dry-run') }
+                'uninstall' { $flags = @('--uninstall') }
+                'edited-agent' {
+                  [IO.File]::AppendAllText((Join-Path $prefix "agents\fc-pm.md"), "`nmy edit`n", $utf8)
+                  $flags = @('--uninstall')
+                }
+              }
+              $outputs[$engine] = Normalize (Run-Installer $engine $prefix $flags) $prefix $prefixMsys
+            }
+            if ($outputs.sh -cne $outputs.ps1) {
+              $failures += $scenario
+              Write-Host "Output mismatch: $scenario"
+              Write-Host "--- install.sh ---"
+              Write-Host $outputs.sh
+              Write-Host "--- install.ps1 ---"
+              Write-Host $outputs.ps1
+            }
+          }
+          if ($failures.Count) { throw ('Output parity failed: ' + ($failures -join ', ')) }
+
   powershell-delegation:
     # Prove Git for Windows' bash runs even when a broken bash is first on PATH.
     runs-on: windows-latest
