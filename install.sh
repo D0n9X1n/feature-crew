@@ -73,12 +73,12 @@ REMOVED_ROOTS=()
 # author provenance. Keep in sync with $AgentMeta in install.ps1.
 agent_meta() {
   case "$1" in
-    fc-pm.md)         echo "Feature-Crew Product Manager: selects Just Do It/Standard/Complex and orchestrates the pipeline." ;;
-    fc-architect.md)  echo "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines)." ;;
-    fc-developer.md)  echo "Feature-Crew Developer: implements one task TDD-style against an approved plan." ;;
-    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode)." ;;
-    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode)." ;;
-    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review before merging Complex work." ;;
+    fc-pm.md)         echo "Feature-Crew Product Manager role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent: it collects user approvals, and gate provenance is observed only one dispatch deep." ;;
+    fc-architect.md)  echo "Feature-Crew Architect: turns an approved spec into a bounded implementation plan (<=500 lines). Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions." ;;
+    fc-developer.md)  echo "Feature-Crew Developer: implements one planned task TDD-style. Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests." ;;
+    fc-qa-spec.md)    echo "Feature-Crew QA spec reviewer: checks an implementation against its approved spec (one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review." ;;
+    fc-qa-code.md)    echo "Feature-Crew QA code reviewer: reviews a diff in one-clue mode, spec and quality on Standard, quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review." ;;
+    fc-tech-lead.md)  echo "Feature-Crew Tech Lead: final cross-family review of Complex work before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review." ;;
     *)                echo "Feature-Crew agent." ;;
   esac
 }
@@ -114,7 +114,21 @@ ensure_dir() {
   fi
 }
 
-# Install one agent file: prepend YAML frontmatter (name, description) if the
+# Frontmatter for one installed role agent: the single renderer that install,
+# ownership, and --check/--verify share, so all three agree byte for byte.
+# Quote the description: role descriptions contain ": " (e.g. "Feature-Crew
+# Architect: turns an approved spec into..."), and a plain YAML scalar may not.
+# Claude Code 2.1.220 tolerates the unquoted form, but that tolerance is
+# undocumented. Dispatched roles deny Agent and Skill because gate provenance
+# is observed only one dispatch deep; fc-pm runs as the main session and keeps
+# them. Keep in sync with Get-AgentBytes in install.ps1.
+agent_front() {
+  printf -- '---\nname: %s\ndescription: "%s"\n' "$1" "$2"
+  [ "$1" = fc-pm ] || printf -- 'disallowedTools: Agent, Skill\n'
+  printf -- '---\n\n'
+}
+
+# Install one agent file: prepend YAML frontmatter (agent_front) if the
 # source doesn't already have one, then write to dest.
 install_agent() {
   local src="$1" dest="$2" name="$3" desc="$4" hash
@@ -137,11 +151,7 @@ install_agent() {
   {
     # Only add frontmatter if the source file doesn't start with '---'
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      # Quote the description: role descriptions contain ": " (e.g. "Feature-Crew
-      # Architect: turns an approved spec into..."), and a plain YAML scalar may
-      # not. Claude Code 2.1.220 tolerates the unquoted form, but that tolerance
-      # is undocumented. Keep in sync with install.ps1.
-      printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$name" "$desc"
+      agent_front "$name" "$desc"
     fi
     cat "$src"
   } > "$dest"
@@ -370,7 +380,7 @@ installed_is_ours() {
   tmp="$(mktemp)"
   {
     if ! head -n 1 "$src" | grep -q '^---$'; then
-      printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$name" "$desc"
+      agent_front "$name" "$desc"
     fi
     cat "$src"
   } > "$tmp"
@@ -456,7 +466,7 @@ sha256_stdin() {
 # The exact bytes install_agent writes for a source agent.
 agent_bytes() {
   if ! head -n 1 "$1" | grep -q '^---$'; then
-    printf -- '---\nname: %s\ndescription: "%s"\n---\n\n' "$2" "$3"
+    agent_front "$2" "$3"
   fi
   cat "$1"
 }

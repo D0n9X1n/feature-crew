@@ -142,12 +142,12 @@ if (Test-Path -LiteralPath $publishedTable -PathType Leaf) {
 # model key: hard-gate dispatchers select an explicit override from artifact
 # author provenance. Keep in sync with agent_meta() in install.sh.
 $AgentMeta = @{
-  "fc-pm.md"        = "Feature-Crew Product Manager: selects Just Do It/Standard/Complex and orchestrates the pipeline."
-  "fc-architect.md" = "Feature-Crew Architect: turns approved spec into a bounded implementation plan (<=500 lines)."
-  "fc-developer.md" = "Feature-Crew Developer: implements one task TDD-style against an approved plan."
-  "fc-qa-spec.md"   = "Feature-Crew QA spec reviewer: verifies implementation matches approved spec (one-clue mode)."
-  "fc-qa-code.md"   = "Feature-Crew QA code reviewer: code-quality pass on a diff (one-clue mode)."
-  "fc-tech-lead.md" = "Feature-Crew Tech Lead: final cross-family review before merging Complex work."
+  "fc-pm.md"        = "Feature-Crew Product Manager role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent: it collects user approvals, and gate provenance is observed only one dispatch deep."
+  "fc-architect.md" = "Feature-Crew Architect: turns an approved spec into a bounded implementation plan (<=500 lines). Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions."
+  "fc-developer.md" = "Feature-Crew Developer: implements one planned task TDD-style. Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests."
+  "fc-qa-spec.md"   = "Feature-Crew QA spec reviewer: checks an implementation against its approved spec (one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review."
+  "fc-qa-code.md"   = "Feature-Crew QA code reviewer: reviews a diff in one-clue mode, spec and quality on Standard, quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review."
+  "fc-tech-lead.md" = "Feature-Crew Tech Lead: final cross-family review of Complex work before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review."
 }
 
 function Ensure-Dir($p) {
@@ -187,8 +187,9 @@ function Resolve-AbsPath($p) {
   return [IO.Path]::GetFullPath($p)
 }
 
-# Shared by install and ownership: never decode agent bodies. Text readers
-# discard BOMs and can silently use the system ANSI code page in PowerShell 5.1.
+# The single agent renderer, shared by install, ownership, and -Check/-Verify:
+# never decode agent bodies. Text readers discard BOMs and can silently use the
+# system ANSI code page in PowerShell 5.1.
 function Get-AgentBytes($src, $name, $desc) {
   $body = [IO.File]::ReadAllBytes((Resolve-AbsPath $src))
   # Match install.sh's first-line predicate exactly: three dashes, LF or EOF.
@@ -196,7 +197,10 @@ function Get-AgentBytes($src, $name, $desc) {
     $body[2] -eq 45 -and ($body.Length -eq 3 -or $body[3] -eq 10))
   if ($hasFront) { return ,$body }
   # Quote descriptions containing ": " and encode only the new frontmatter.
-  $front = "---`nname: $name`ndescription: `"$desc`"`n---`n`n"
+  # Dispatched roles deny Agent and Skill; fc-pm runs as the main session.
+  # Keep in sync with agent_front() in install.sh.
+  $deny = if ($name -ceq 'fc-pm') { '' } else { "disallowedTools: Agent, Skill`n" }
+  $front = "---`nname: $name`ndescription: `"$desc`"`n${deny}---`n`n"
   $utf8 = New-Object Text.UTF8Encoding($false)
   return ,([byte[]]($utf8.GetBytes($front) + $body))
 }

@@ -49,7 +49,7 @@ flowchart TB
 2. **The hub routes one missing ingredient at a time.** A single fact is looked up directly. Evidence from several places goes to `fc-research`, a user-owned decision to `fc-grill-me`, an open approach to `fc-brainstorm`, a chosen consequential decision to `fc-second-opinion`, and an unexplained failure to `fc-debug`. Each returns its result to the caller. Only `fc-grill-me` may be called from inside another skill, and the same gap is never routed twice.
 3. **The hub dispatches role prompts** with the task text pasted inline, an explicit model override, and a closing line that forbids further delegation.
 4. **Authorized work goes to `fc-ship`.**
-5. **The installers copy the prompts into `~/.claude`.** They add `name` and `description` frontmatter to agents and record `feature-crew.sha256`. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
+5. **The installers copy the prompts into `~/.claude`.** They add `name` and `description` frontmatter to agents, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and record `feature-crew.sha256`. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
 6. **Claude Code loads the installed files** from `~/.claude/agents` and `~/.claude/skills`. How it discovers them is Claude Code behavior, not code in this repository.
 7. **The suite and CI check both halves:** line caps, rule text with removal mutations, installer parity, and the PowerShell engine, all under `FC_STRICT=1`.
 
@@ -57,7 +57,7 @@ flowchart TB
 |---|---|---|---|
 | fc-build-or-fix playbook | Makes the main session the PM: classifies the need, picks a track, runs it, enforces the hard gates, and selects reviewers. Loads run discipline (feedback checks, a checkpoint, runtime proof) at entry. `fc-pm.md` only points here. | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md: *Need classifier*, *Step 1*, *Hard gates*, *Cross-family audit at hard gates*; [run-discipline.md][run] |
 | Routed skills | Each resolves one missing ingredient and returns it to the caller; `fc-research` also has a focused path for one bounded question | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md: *Need classifier*; fc-research: *Focused path* |
-| Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` return one-clue verdicts, and the tech lead reviews Complex work as a whole | [agents/][agents] | [complex-track.md][complex]: *Flow* |
+| Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five are installed with `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
 | fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and always cleans up | [SKILL.md][ship] | fc-ship: sections 1–7 |
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
 | Installers | Copy agents (adding frontmatter) and every skill directory, record hashes, and delete only files proven to be theirs; `--check` and `--verify` are read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [README][readme]: *Install* |
@@ -105,9 +105,9 @@ sequenceDiagram
     PM->>Rec: read recorded author model
     Note over PM,Rec: Sonnet author selects opus<br/>other known family selects sonnet, or opus on collision<br/>unknown provenance stops the gate
     PM->>QA: spec and commit range, one-clue mode, explicit model
-    QA-->>PM: one verdict, PASS or IMPORTANT or CRITICAL
-    PM->>Rec: read recorded reviewer model
-    alt reviewer missing, unknown, or in author family
+    QA-->>PM: one verdict, every blocking finding listed
+    PM->>Rec: read the reviewer record
+    alt the record fails the gate rule in SKILL.md
         PM->>PM: record GATE UNSATISFIED and stop
     else cross-family reviewer verified
         PM->>PM: fix CRITICAL, fix or follow up IMPORTANT, max three cycles
@@ -135,7 +135,7 @@ sequenceDiagram
 - **4–5 Track.** Standard fits one coherent feature. Just Do It is ruled out when the change touches the escalation list: runtime behavior, config, auth, secrets, persistence, public API, or deploy behavior.
 - **6–12 Spec.** The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
 - **13 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
-- **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. A missing, unknown, or same-family reviewer leaves the gate unsatisfied, with no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
+- **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. Whether the reviewer's record satisfies the gate is decided only by the canonical rule in [SKILL.md][bof] (*Cross-family audit at hard gates*); there is no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
 - **20–26 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Cleanup always runs.
 
 | Participant | Job in this flow | Key files |
@@ -162,7 +162,7 @@ sequenceDiagram
 **Verified in the repository**
 
 - Everything Claude Code runs is Markdown: ten skills, five reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher.
-- Role prompts carry no `model` key. The installers add only `name` and `description`, and every authoring or review dispatch sets its model explicitly.
+- Role prompts carry no `model` key. The installers add `name` and `description`, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - The suite's rule-text checks prove a rule is present, not what it means; its header says so.
 - Orchestration (`fc-pm.md` plus every `SKILL.md`) is capped at 600 lines, and the framework total at 1500 lines and a ratcheted baseline.
@@ -178,7 +178,8 @@ sequenceDiagram
 - Which agent type runs the blind second designer; `design-check.md` does not name one.
 - Whether models follow these prompts: the suite checks prompt text and installers, not live runs.
 - Whether the transcript fields stay accurate; `gate-provenance.md` calls them an internal, undocumented format.
-- What `fc-pm` does when dispatched as a subagent: the installer registers it as an agent, but its prompt says it is the main session.
+- What `fc-pm` does if dispatched as a subagent anyway: the installer registers it as an agent, while its description and prompt say it runs only as the main session.
+- Whether Claude Code enforces `disallowedTools`: an open upstream report, [anthropics/claude-code#94202](https://github.com/anthropics/claude-code/issues/94202), says listed tools can still load, so the transcript check at each gate remains the enforced control.
 
 ## Where to start reading
 
