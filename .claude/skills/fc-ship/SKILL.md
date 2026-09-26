@@ -25,7 +25,7 @@ Fetch `gh run view <id> --log-failed`, taking the run id from the failed check l
 
 ## 5 — Merge
 
-Right before the irreversible step, re-verify head, gates, and approval. Run `git fetch origin <base>` and require the PR head to contain the current base tip: `git merge-base --is-ancestor origin/<base> <head>`. If the base advanced: rebase, push with `--force-with-lease`, rerun the full suite and CI on the new head, and compare with `git range-diff origin/<base> <old-head> <head>`. Parts changed by conflict resolution get a cross-family re-review (selector in `/fc-build-or-fix`).
+Right before the irreversible step, re-verify head, gates, and approval. Run `git fetch origin <base>` and require the PR head to contain the current base tip: `git merge-base --is-ancestor origin/<base> <head>`. If the base advanced: rebase and push only the feature branch with `git push --force-with-lease=<branch>:<old-head> origin <branch>` (fc-ship never pushes the base), rerun the full suite and CI on the new head, and compare with `git range-diff origin/<base> <old-head> <head>`. Parts changed by conflict resolution get a cross-family re-review (selector in `/fc-build-or-fix`).
 
 Then run `gh pr merge <pr> --squash --match-head-commit <sha>` with no bypass (`--admin`, `--auto`) and no `--delete-branch`. Confirm the merge through PR metadata (`state` is `MERGED`), fetch the base, and verify the merged tree equals the head tree: `git diff --quiet <head> <merge-commit>`. If it still differs: stop, report, and run only safe cleanup.
 

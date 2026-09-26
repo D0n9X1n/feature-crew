@@ -3252,7 +3252,7 @@ t64_labels=(
   watch-record-head watch-main-agent-background watch-required-fallback
   outcome-read-real-states outcome-read-commands outcome-report-each outcome-rearm-once outcome-no-loops
   failure-log-evidence failure-callback-route failure-resume-new-head
-  merge-reverify merge-base-tip merge-rebase-rerun merge-conflict-rereview merge-pinned-squash
+  merge-reverify merge-base-tip merge-push-feature-only merge-rebase-rerun merge-conflict-rereview merge-pinned-squash
   merge-confirm-tree merge-mismatch-stops
   release-only-approved release-tag-last-watch
   cleanup-mandatory cleanup-check-state cleanup-remove-only-merged cleanup-prune-temp
@@ -3260,7 +3260,7 @@ t64_labels=(
   build-or-fix-hands-off readme-direct-command readme-skill-count banner-sh banner-ps1
 )
 t64_sections=(auth auth watch watch watch outcome outcome outcome outcome outcome
-  failure failure failure merge merge merge merge merge merge merge release release
+  failure failure failure merge merge merge merge merge merge merge merge release release
   cleanup cleanup cleanup cleanup cleanup cleanup standard commands layout sh ps1)
 t64_rules=(
   'Commit, push, PR, merge, tag/publish, and cleanup are separate authorizations; none implies another.'
@@ -3278,7 +3278,8 @@ t64_rules=(
   'Shipping resumes only on a new, verified head.'
   'Right before the irreversible step, re-verify head, gates, and approval.'
   'Run `git fetch origin <base>` and require the PR head to contain the current base tip: `git merge-base --is-ancestor origin/<base> <head>`.'
-  'If the base advanced: rebase, push with `--force-with-lease`, rerun the full suite and CI on the new head, and compare with `git range-diff origin/<base> <old-head> <head>`.'
+  'If the base advanced: rebase and push only the feature branch with `git push --force-with-lease=<branch>:<old-head> origin <branch>` (fc-ship never pushes the base)'
+  'rerun the full suite and CI on the new head, and compare with `git range-diff origin/<base> <old-head> <head>`.'
   'Parts changed by conflict resolution get a cross-family re-review (selector in `/fc-build-or-fix`).'
   'Then run `gh pr merge <pr> --squash --match-head-commit <sha>` with no bypass (`--admin`, `--auto`) and no `--delete-branch`.'
   'Confirm the merge through PR metadata (`state` is `MERGED`), fetch the base, and verify the merged tree equals the head tree: `git diff --quiet <head> <merge-commit>`.'
@@ -3534,7 +3535,7 @@ t64_fill() { # command template -> this scenario's values
   local c="$1"
   c=${c//'<pr>'/7}; c=${c//'<base>'/main}; c=${c//'<old-head>'/$t64_old}
   c=${c//'<head>'/$t64_head}; c=${c//'<sha>'/$t64_sha}
-  c=${c//'<merge-commit>'/$t64_mergeoid}; c=${c//'<id>'/$t64_id}
+  c=${c//'<merge-commit>'/$t64_mergeoid}; c=${c//'<id>'/$t64_id}; c=${c//'<branch>'/feature}
   printf '%s\n' "$c"
 }
 t64_run() { # command template; run in the work clone with the stand-in first on PATH
@@ -3591,10 +3592,11 @@ t64_cmd_eligible=$(t64_span 'git merge-base ' '--is-ancestor')
 t64_cmd_rangediff=$(t64_span 'git range-diff ' 'origin/')
 t64_cmd_merge=$(t64_span 'gh pr merge <pr> ' '--match-head-commit')
 t64_cmd_tree=$(t64_span 'git diff ' '--quiet')
+t64_cmd_push=$(t64_span 'git push ' '--force-with-lease=')
 t64_cmd_watch_all=${t64_cmd_watch/ --required/}
 t64_cmd_read_all=${t64_cmd_read/ --required/}
 t64_missing=""
-for t64_v in watch read view log fetch eligible rangediff merge tree; do
+for t64_v in watch read view log fetch eligible push rangediff merge tree; do
   t64_n="t64_cmd_$t64_v"
   [ -n "${!t64_n}" ] || t64_missing="$t64_missing $t64_v"
 done
@@ -3702,9 +3704,8 @@ else
     t64_run "$t64_cmd_eligible"; t64_expect stale-head-contains-base 1
     t64_run "$t64_cmd_view"
     [ "$(t64_field state)" = OPEN ] || case_err="$case_err merged-before-rebase"
-    t64_git -C "$t64_case/work" rebase -q origin/main \
-      && t64_git -C "$t64_case/work" push -q --force-with-lease origin feature \
-      || case_err="$case_err rebase-failed"
+    t64_git -C "$t64_case/work" rebase -q origin/main || case_err="$case_err rebase-failed"
+    t64_run "$t64_cmd_push"; t64_expect push 0
     t64_head=$(t64_git -C "$t64_case/work" rev-parse HEAD); t64_sha=$t64_head
     t64_run "$t64_cmd_watch"; t64_expect rebased-watch 0
     t64_run "$t64_cmd_eligible"; t64_expect rebased-head-contains-base 0
@@ -3721,6 +3722,35 @@ else
     [ ! -s "$t64_case/bypass" ] || case_err="$case_err bypass:$(tr '\n' ' ' < "$t64_case/bypass")"
   fi
   installer_result "T64 behavior: an advanced base refuses the merge until rebased, then merges the verified tree"
+
+  # Stale base: `git fetch origin <base>` refreshed the base's lease but left
+  # the local base behind. Under push.default=matching an unqualified
+  # --force-with-lease push would rewind the remote base to that stale tip; the
+  # documented push names the feature branch and its old head, so only it moves.
+  if t64_setup stale-base-push ''; then
+    t64_git -C "$t64_case/work" config push.default matching \
+      && t64_git clone -q "$t64_case/origin.git" "$t64_case/other" \
+      && printf 'base2\n' > "$t64_case/other/base2.txt" \
+      && t64_git -C "$t64_case/other" add base2.txt \
+      && t64_git -C "$t64_case/other" commit -q -m base2 \
+      && t64_git -C "$t64_case/other" push -q origin main \
+      || case_err="$case_err base-advance-failed"
+    t64_base=$(t64_git --git-dir="$t64_case/origin.git" rev-parse refs/heads/main)
+    t64_run "$t64_cmd_fetch"; t64_expect fetch 0
+    t64_git -C "$t64_case/work" rebase -q origin/main || case_err="$case_err rebase-failed"
+    t64_head=$(t64_git -C "$t64_case/work" rev-parse HEAD)
+    [ "$t64_head" != "$t64_old" ] || case_err="$case_err rebase-did-not-move-head"
+    t64_run "$t64_cmd_push"; t64_expect push 0
+    t64_refs=$(t64_git --git-dir="$t64_case/origin.git" for-each-ref --format='%(refname) %(objectname)')
+    [ "$t64_refs" = "refs/heads/feature $t64_head"$'\n'"refs/heads/main $t64_base" ] \
+      || case_err="$case_err remote-refs:$(printf '%s' "$t64_refs" | tr '\n' ' ')"
+    # Control: in this same repository the unqualified form does rewind the
+    # remote base, so the assertion above is not vacuous.
+    t64_git -C "$t64_case/work" push -q --force-with-lease origin || case_err="$case_err control-push-failed"
+    [ "$(t64_git --git-dir="$t64_case/origin.git" rev-parse refs/heads/main)" != "$t64_base" ] \
+      || case_err="$case_err control-did-not-rewind-base"
+  fi
+  installer_result "T64 behavior: with push.default=matching and a stale local base, the documented push moves only the feature ref"
 fi
 
 echo
