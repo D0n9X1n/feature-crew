@@ -1,6 +1,6 @@
 ---
 name: fc-research
-description: Multi-agent research pipeline that fans out across distinct search angles, synthesizes the findings, and validates them against the sources. Use when answering needs evidence from several places — codebase plus web, multiple files, comparing options, surveying prior art. Do NOT use for a single grep or one known file (read it directly), for choosing between approaches (use /fc-brainstorm), or for judging existing work (use /fc-review).
+description: Multi-agent research pipeline that fans out across distinct search angles, synthesizes the findings, and validates them against the sources. Use when answering needs evidence from several places — codebase plus web, multiple files, comparing options, surveying prior art. Do NOT use for a single grep or one known file (read it directly), for choosing between approaches (use /fc-brainstorm), for judging existing work (use /fc-review), or for explaining a project's structure with diagrams (use /fc-explain).
 ---
 
 # fc-research
