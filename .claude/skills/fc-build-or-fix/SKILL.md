@@ -18,6 +18,7 @@ Users describe the need naturally; slash-command knowledge is not required. At e
 | User-owned requirement or decision | Invoke `/fc-grill-me`. |
 | Unresolved solution approach or options | Invoke `/fc-brainstorm`. |
 | A chosen consequential decision needing adversarial confidence | Invoke `/fc-second-opinion`. |
+| An unexplained failure or unproven cause | Invoke `/fc-debug`. A known cause goes straight to its track. |
 
 Do not grill for facts, research preferences, brainstorm an already chosen approach, or use second-opinion to make the initial choice. A subskill resolves one category and returns its result to the originating flow; the originator may reclassify a distinct remaining gap, invoke one next appropriate skill, then resume. A subskill must not self-invoke or recursively invoke another skill; the sole nested-call exception is `/fc-grill-me`, a leaf any flow may call for user-owned decisions. The leaf returns to its caller and cannot invoke skills. Do not repeat the same skill for an unchanged gap: no cycles.
 

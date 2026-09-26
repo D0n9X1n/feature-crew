@@ -13,9 +13,9 @@ Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`; `install.ps1` also
 
 ## Describe the need
 
-Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, and adversarial confidence in a chosen consequential decision. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
+Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, adversarial confidence in a chosen consequential decision, and an unexplained failure. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
 
-The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`; this README does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-build-or-fix`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
+The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`; this README does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-build-or-fix`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
 
 ## Complexity tracks
 
@@ -65,7 +65,7 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── .claude/skills/fc-*/       # seven skills
+├── .claude/skills/fc-*/       # eight skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test and release pipelines
 ├── tests/framework_test.sh

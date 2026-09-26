@@ -472,7 +472,7 @@ main_install() {
   say "Skills:  $DEST_SKILLS_DIR"
   say ""
   say "Describe your need naturally in any project; slash commands are optional."
-  say "Available: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
+  say "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-grill-me, /fc-research,"
   say "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
 }
 

@@ -272,7 +272,7 @@ function Install-ClaudeGlobal {
   Write-Host "Skills:  $DestSkillsDir"
   Write-Host ""
   Write-Host "Describe your need naturally in any project; slash commands are optional."
-  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-grill-me, /fc-research,"
+  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-grill-me, /fc-research,"
   Write-Host "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
 }
 
