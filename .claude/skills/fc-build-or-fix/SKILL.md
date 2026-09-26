@@ -26,8 +26,8 @@ Do not grill for facts, research preferences, brainstorm an already chosen appro
 | Track | When | Spec | Dispatches |
 |---|---|---|---|
 | **Just Do It** | Straightforward and bounded; obvious solution; no unresolved design; low regression risk; reversible | none | 0 |
-| **Standard** | One coherent feature, modest coupling, no new architecture | bullet list in chat | 1–2 |
-| **Complex** | Multi-module, new subsystem, security or data-integrity central, public API change | doc, ≤1000 words | 5+ |
+| **Standard** | One coherent feature, modest coupling, no new architecture | bullet list in chat | 2–3 |
+| **Complex** | Multi-module, new subsystem, security or data-integrity central, public API change | doc, ≤1000 words | 6+ |
 
 File count is an optional warning signal, never an eligibility rule: a mirrored low-risk content change across several files can qualify, while a one-line high-risk change cannot. **Just Do It never applies** when the change touches the canonical **escalation list**: runtime behavior, config, auth, secrets, persistence, public API contract, or deploy behavior. This list is stated only here; it controls both the track floor and Standard spec audit.
 
@@ -50,7 +50,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 ### Standard
 
 1. User approves track unless waived.
-2. Write a bullet spec in chat: purpose · files · 3–8 behavior bullets · must-pass full-suite command · non-goals. Look up facts; ask only user-owned decisions.
+2. Write a bullet spec in chat: purpose · files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets · must-pass full-suite command · non-goals. Run [reference/design-check.md](reference/design-check.md), including its blind second opinion unless the design is super straightforward. Look up facts; ask only user-owned decisions.
 3. **Cross-audit the spec** when it touches the escalation list. Otherwise skip as one of the two exemptions in the audit rule.
 4. User approves spec unless waived.
 5. Implement TDD: failing test → observe failure → minimal code → observe pass → refactor.
@@ -99,7 +99,7 @@ Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 
 - Paste task text inline; never tell a subagent to read the plan file.
 - For a hard-gate review, pass the audit envelope and exact explicit Agent model override above. Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
-- Parallel only at ≥3 independent tasks; otherwise run sequentially.
+- Parallel only at ≥3 independent implementation tasks; otherwise run sequentially. Exception: the blind second design runs alongside the first ([reference/design-check.md](reference/design-check.md)).
 - Use background mode for substantive work and handle results as they arrive.
 - Max 3 fix cycles per issue, then stop and question the approach.
 - Subagent self-review never replaces QA.

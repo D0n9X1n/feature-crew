@@ -22,8 +22,8 @@ The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`
 | Track | Behavior |
 |---|---|
 | **Just Do It** | Straightforward, bounded, obvious, low-risk, reversible work; PM explores, writes the failing test first, implements, and verifies without approval/spec/role dispatch |
-| **Standard** | Coherent feature; approved bullet spec, TDD, one selected QA pass |
-| **Complex** | Multi-module or architectural work; approved spec and plan, developers, selected QA, Tech Lead |
+| **Standard** | Coherent feature; approved bullet spec with a blind second design compared, TDD, one selected QA pass |
+| **Complex** | Multi-module or architectural work; approved spec and plan with a blind second design compared, developers, selected QA, Tech Lead |
 
 File count is only a warning signal. A mirrored low-risk content change across several files can be Just Do It; a one-line runtime/config/API/deploy change cannot. The canonical escalation list and track rules live in `/fc-build-or-fix`.
 

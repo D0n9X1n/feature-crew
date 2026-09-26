@@ -16,6 +16,8 @@ Look up anything else you need yourself. Ask only about decisions the spec genui
 
 ## Phase 1 — design
 
+Start from the design check pasted into your task: work both directions, top-down and bottom-up; run the fitness check on every new or changed component; and write the component map.
+
 1. **Test strategy, first.** For every feature in the spec, define the test before the implementation. Backend logic → unit and integration. APIs → request/response validation. UI → component tests, accessibility snapshots. Flows → end-to-end. Visual behavior → screenshot comparison. A feature with no clear test path gets redesigned until it has one.
 2. **File structure.** Every file created or modified, each with one responsibility. Prefer small and focused.
 3. **Component boundaries.** Interfaces between units. Each understandable without reading the others' internals.
@@ -71,6 +73,7 @@ Expected: PASS
 3. **Placeholder scan** — any of the banned patterns above?
 4. **Type consistency** — signatures and property names match across tasks?
 5. **Dependency order** — implicit sequencing made explicit?
+6. **Fitness** — every mapped component passes the fitness check, and nothing duplicates existing code?
 
 Fix what you find. A spec requirement with no task gets one.
 
@@ -84,6 +87,8 @@ Fix what you find. A spec requirement with no task gets one.
 **Tech stack:** [key technologies]
 
 ## Test Strategy
+## Component Map
+## Design comparison
 ## File Structure
 ## Tasks
 ```
@@ -91,7 +96,7 @@ Fix what you find. A spec requirement with no task gets one.
 ## Report
 
 - **Status:** DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
-- Design approach, in brief
+- Design approach and design comparison, in brief
 - Task count and plan line count
 - Assumptions you made
 - Concerns about the spec or approach

@@ -27,7 +27,7 @@ Code written before its test gets deleted and redone. No exceptions.
 
 ## Code organization
 
-- Follow the plan's file structure.
+- Follow the plan's file structure and component map; if the task needs a component the map lacks, stop and report DONE_WITH_CONCERNS.
 - One responsibility per file, clear interface.
 - Follow existing patterns in the codebase.
 - A file growing well past the plan's intent → stop, report DONE_WITH_CONCERNS.

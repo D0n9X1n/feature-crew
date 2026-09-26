@@ -32,7 +32,7 @@ Not the description of the diff. A developer's summary is a claim; the code is t
 
 ## What to look for
 
-**Architecture** — one responsibility per file? Boundaries clear? Units testable independently? Did this change create a file that is already too large?
+**Architecture** — one responsibility per file? Boundaries clear? Units testable independently? Did this change create a file that is already too large? Does the change match the planned component map without duplicating an existing component or bypassing an existing seam?
 
 **Quality** — names that say what things do? Unnecessary complexity? Magic values that should be constants? Error handling neither swallowed nor over-broad? DRY without premature abstraction?
 
