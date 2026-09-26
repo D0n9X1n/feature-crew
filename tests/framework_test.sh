@@ -272,19 +272,22 @@ ps1_operative_ok() {
   grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$'   "$f" || return 1
   grep -qE '^[[:space:]]*Copy-Tree[[:space:]]+\$'       "$f" || return 1
   grep -qE '^Install-ClaudeGlobal[[:space:]]*$'         "$f" || return 1
-  # Presence is not reachability. An unconditional `throw`/`exit` at column 0
-  # before the dispatch leaves every token in place while the installer does
-  # nothing -- a reviewer demonstrated exactly that and the suite stayed green.
-  #
-  # Column 0 specifically: install.ps1 legitimately exits from inside `if`
-  # blocks (bash delegation, --uninstall), and those are indented. Only an
-  # unindented terminator runs unconditionally. Static analysis cannot prove
-  # reachability in general; the Windows CI job proves the rest by executing.
-  local disp
-  disp=$(grep -n '^Install-ClaudeGlobal[[:space:]]*$' "$f" | head -1 | cut -d: -f1)
-  [ -n "$disp" ] || return 1
-  head -n "$disp" "$f" | grep -qE '^(throw|exit)([[:space:]]|$)' && return 1
-  return 0
+  # Presence is not reachability. Reject throws outside function bodies even
+  # when nested in a top-level `if`, but keep legitimate conditional exits for
+  # delegation/help/uninstall. Functions and their closing braces are column 0
+  # in this installer. This bounded static check complements Windows execution.
+  awk '
+    /^[[:space:]]*<#/ { block_comment = 1 }
+    block_comment { if (/#>/) block_comment = 0; next }
+    /^[[:space:]]*#/ { next }
+    /^Install-ClaudeGlobal[[:space:]]*$/ { exit }
+    # Retain the original column-0 guard even inside function bodies.
+    /^(throw|exit)([[:space:]]|$)/ { bad = 1; exit }
+    tolower($0) ~ /^function[[:space:]]/ { in_function = 1 }
+    in_function { if (/^}/) in_function = 0; next }
+    tolower($0) ~ /(^|[^[:alnum:]_$.-])throw([^[:alnum:]_-]|$)/ { bad = 1; exit }
+    END { exit bad }
+  ' "$f"
 }
 sh_operative_ok() {
   local f="$1"
@@ -595,12 +598,52 @@ else
   t20_err="$t20_err attack4-not-applied"
 fi
 
+# Attack 5 (#26): a conditional top-level throw bypasses the column-0 check.
+awk '/^Install-ClaudeGlobal[[:space:]]*$/ { print "if ($true) { throw \"native-only regression\" }" } { print }' \
+  install.ps1 > "$mut/e.ps1"
+if grep -qxF 'if ($true) { throw "native-only regression" }' "$mut/e.ps1"; then
+  ps1_operative_ok "$mut/e.ps1" && t20_err="$t20_err attack5-undetected"
+else
+  t20_err="$t20_err attack5-not-applied"
+fi
+
+# Attack 6 (#26): parentheses after throw must not hide the keyword.
+awk '/^Install-ClaudeGlobal[[:space:]]*$/ { print "if ($true) { throw(\"native-only regression\") }" } { print }' \
+  install.ps1 > "$mut/f.ps1"
+if grep -qxF 'if ($true) { throw("native-only regression") }' "$mut/f.ps1"; then
+  ps1_operative_ok "$mut/f.ps1" && t20_err="$t20_err attack6-undetected"
+else
+  t20_err="$t20_err attack6-not-applied"
+fi
+
+# Attacks 7/8: function skipping must not weaken the original column-0 guard.
+# Insert exactly once at the entry to the install function, before any work.
+for t20_attack in 7 8; do
+  case "$t20_attack" in
+    7) t20_terminator='exit 0' ;;
+    8) t20_terminator='throw "gutted"' ;;
+  esac
+  if [ "$(grep -cxF 'function Install-ClaudeGlobal {' install.ps1)" -ne 1 ]; then
+    t20_err="$t20_err attack$t20_attack-target-not-unique"
+    continue
+  fi
+  awk -v terminator="$t20_terminator" '
+    { print }
+    $0 == "function Install-ClaudeGlobal {" { print terminator }
+  ' install.ps1 > "$mut/attack$t20_attack.ps1"
+  if [ "$(awk '/^function Install-ClaudeGlobal \{$/ { getline; print }' "$mut/attack$t20_attack.ps1")" = "$t20_terminator" ]; then
+    ps1_operative_ok "$mut/attack$t20_attack.ps1" && t20_err="$t20_err attack$t20_attack-undetected"
+  else
+    t20_err="$t20_err attack$t20_attack-not-applied"
+  fi
+done
+
 # Control: the real installers must still pass, or the check is just broken.
 ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
 sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
 
 rm -rf "$mut"
-[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (4 mutations + 2 controls)" \
+[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (8 mutations + 2 controls)" \
                   || bad "T20 mutation test" "issues:$t20_err"
 
 # ---------------------------------------------------------------- T21
@@ -1323,8 +1366,66 @@ STUB
     t35_unchanged
     t35_result "T35l typed $t35_style force/uninstall flags reach Git-layout bash"
   done
+
+  # Exit 3 means Git Bash ran the installer and reported failure, not that bash
+  # was unavailable. Reuse this guard on confirmed scratch mutations as well.
+  cat > "$t35_git/bin/bash.exe" <<STUB
+#!/bin/sh
+printf '%s\n' ran > "$t35_root/o-git-ran"
+exit 3
+STUB
+  for t35_variant in control exit-zero fallback; do
+    t35_script="$t35_repo/install.ps1"
+    if [ "$t35_variant" != control ]; then
+      if ! command -v python3 >/dev/null 2>&1; then
+        skip "T35o $t35_variant mutation replay (python3 unavailable)"
+        continue
+      fi
+      # Like T21, keep the copy beside agents/ so an erroneous fallback really
+      # installs files instead of failing for an unrelated missing-source error.
+      t35_script="$t35_repo/t35o-$t35_variant-$$.ps1"
+      CLEANUP_PATHS+=("$t35_script")
+      if ! t35_mutation_out=$(python3 - "$t35_variant" "$t35_script" 2>&1 <<'PY'
+import pathlib, sys
+old, new = {
+    'exit-zero': (b'    exit $bashExitCode\n', b'    exit 0\n'),
+    'fallback': (b'  if ($bashExitCode -ne 126 -and $bashExitCode -ne 127) {',
+                 b'  if ($bashExitCode -eq 0) {'),
+}[sys.argv[1]]
+source = pathlib.Path('install.ps1').read_bytes()
+assert source.count(old) == 1, 'delegation mutation target missing or ambiguous'
+mutant = source.replace(old, new, 1)
+assert mutant != source and old not in mutant, 'delegation mutation not applied'
+pathlib.Path(sys.argv[2]).write_bytes(mutant)
+PY
+      ); then
+        bad "T35o $t35_variant mutation replay" "$t35_mutation_out"
+        continue
+      fi
+    fi
+    rm -f "$t35_marker" "$t35_root/o-git-ran"
+    t35_prefix="$t35_root/o-$t35_variant-prefix"
+    t35_run "o-$t35_variant" "$t35_git/cmd:$t35_decoy" -File "$t35_script" --prefix "$t35_prefix"
+    t35_expect_rc 3
+    [ -e "$t35_root/o-git-ran" ] || t35_err="$t35_err Git-bash-not-run"
+    [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
+    grep -qF 'using the PowerShell installer' "$t35_case/stderr" && t35_err="$t35_err unexpected-fallback-warning"
+    t35_unchanged
+    if [ "$t35_variant" = control ]; then
+      t35_result "T35o delegated exit 3 propagates without a fallback warning or installed files"
+    else
+      t35_expected=' exit=0(want-3)'
+      [ "$t35_variant" = fallback ] && t35_expected="$t35_expected unexpected-fallback-warning prefix-created"
+      if [ "$t35_err" = "$t35_expected" ]; then
+        ok "T35o $t35_variant mutation applied and rejected:$t35_err"
+      else
+        bad "T35o $t35_variant mutation replay" "expected '$t35_expected', got '${t35_err:-<no rejection>}'"
+      fi
+      rm -f "$t35_script"
+    fi
+  done
 else
-  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native; do
+  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native o o-exit-zero o-fallback; do
     skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
   done
 fi
@@ -2303,6 +2404,272 @@ sed -n '/^## Updating$/,/^## Credits$/p' README.md | grep -qF 'feature-crew.sha2
 count=$(wc -l < README.md | tr -d ' ')
 [ "$count" -eq 94 ] || case_err="$case_err README-lines=$count(want-94)"
 installer_result "T54 README explains the install manifest without gaining lines"
+
+# ---------------------------------------------------------------- T58
+# Parse the workflow graph: a Linux-only suite in release.yml cannot substantiate
+# Windows validation. The release must need the reusable full test workflow and
+# build its validation list from the jobs of this run, not static claims.
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  skip "T58 release workflow gate (PyYAML unavailable)"
+else
+  if t58_out=$(python3 - <<'PY'
+import pathlib, sys, yaml
+
+test = yaml.safe_load(pathlib.Path('.github/workflows/test.yml').read_text())
+release_text = pathlib.Path('.github/workflows/release.yml').read_text()
+release = yaml.safe_load(release_text)
+errors = []
+def require(condition, message):
+    if not condition:
+        errors.append(message)
+
+# PyYAML's YAML 1.1 resolver may interpret the key `on` as boolean True.
+triggers = test.get('on', test.get(True, {}))
+require(isinstance(triggers, dict) and {'workflow_call', 'push', 'pull_request'} <= set(triggers),
+        'test-missing-reusable-or-existing-trigger')
+require(release.get('permissions') == {'contents': 'read'}, 'release-default-permissions-not-read-only')
+jobs = release.get('jobs', {})
+reusable = {name for name, job in jobs.items() if job.get('uses') == './.github/workflows/test.yml'}
+require(bool(reusable), 'release-does-not-call-test-workflow')
+publish = jobs.get('release', {})
+require(publish.get('name') == 'release', 'publishing-job-must-be-named-release')
+needs = publish.get('needs', [])
+if isinstance(needs, str):
+    needs = [needs]
+require(bool(reusable.intersection(needs)), 'release-does-not-need-full-tests')
+require(publish.get('permissions') == {'contents': 'write', 'actions': 'read'},
+        'publishing-permissions-must-be-contents-write-actions-read')
+steps = [step for job in jobs.values() for step in job.get('steps', [])]
+scripts = '\n'.join(str(step.get('run', '')) for step in steps)
+require('tests/framework_test.sh' not in scripts, 'release-runs-its-own-suite')
+require(not any('pyyaml' in str(step).lower() for step in steps), 'release-installs-its-own-PyYAML')
+require('executed on Windows' not in release_text, 'release-claims-static-Windows-validation')
+require(any('gh api' in str(step.get('run', '')) and
+            'actions/runs/$GITHUB_RUN_ID/jobs' in str(step.get('run', '')) and
+            step.get('env', {}).get('GH_TOKEN') == '${{ github.token }}' for step in steps),
+        'release-missing-authenticated-current-run-jobs-query')
+require('git fetch origin main' in scripts and
+        'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in scripts,
+        'release-missing-tag-on-main-gate')
+require('release-notes.md' in scripts and
+        all(heading in scripts for heading in ('## feature-crew ', '### Commits', '### Contents', '### Validation', '### Install')),
+        'release-missing-generated-body-structure')
+require(any('gh release create' in str(step.get('run', '')) and
+            '--verify-tag' in str(step.get('run', '')) and
+            '--notes-file release-notes.md' in str(step.get('run', '')) for step in steps),
+        'release-missing-verified-tag-publication')
+print(' '.join(errors))
+sys.exit(bool(errors))
+PY
+  ); then
+    ok "T58 release needs the full reusable test workflow and reports this run's validation"
+  else
+    bad "T58 release workflow gate" "issues:$t58_out"
+  fi
+fi
+
+# ---------------------------------------------------------------- T59
+# T44/T45 compare dry-run output over untouched installs. They do not prove a
+# forced dry run preserves edits. Snapshot every path and byte, including any
+# manifest, and use the same behavioral guard on originals and four mutants.
+t59_dry_force() { # engine, fixture root, installer to exercise in the dry run
+  local engine="$1" fixture="$2" script="$3"
+  local prefix="$fixture/prefix"
+  case_err=""
+  mkdir -p "$fixture" || { case_err="fixture-directory-failed"; return; }
+  run_installer "$engine" "$prefix"
+  expect_installer_success install
+  [ -f "$prefix/agents/fc-pm.md" ] || case_err="$case_err missing-agent"
+  [ -f "$prefix/skills/fc-review/SKILL.md" ] || case_err="$case_err missing-skill"
+  [ -z "$case_err" ] || return
+  printf '\nMY AGENT EDIT\n' >> "$prefix/agents/fc-pm.md" || case_err="$case_err agent-edit-failed"
+  printf '\nMY SKILL EDIT\n' >> "$prefix/skills/fc-review/SKILL.md" || case_err="$case_err skill-edit-failed"
+  cp "$prefix/agents/fc-pm.md" "$fixture/agent" || case_err="$case_err agent-snapshot-failed"
+  cp "$prefix/skills/fc-review/SKILL.md" "$fixture/skill" || case_err="$case_err skill-snapshot-failed"
+  snapshot_tree "$prefix" > "$fixture/before" || case_err="$case_err before-snapshot-failed"
+  [ -z "$case_err" ] || return
+  if [ "$engine" = sh ]; then
+    HOME="$installer_root/home" "$installer_bash" "$script" --prefix "$prefix" --dry-run --force \
+      > "$installer_root/run.out" 2>&1
+  else
+    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$script" --prefix "$prefix" --dry-run --force \
+      > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+  expect_installer_success dry-run
+  cmp -s "$fixture/agent" "$prefix/agents/fc-pm.md" || case_err="$case_err dry-run:agent-changed"
+  cmp -s "$fixture/skill" "$prefix/skills/fc-review/SKILL.md" || case_err="$case_err dry-run:skill-changed"
+  snapshot_tree "$prefix" > "$fixture/after" || case_err="$case_err after-snapshot-failed"
+  cmp -s "$fixture/before" "$fixture/after" || case_err="$case_err dry-run:tree-changed"
+}
+for engine in "${INSTALLERS[@]}"; do
+  for variant in control agent-return skill-copy; do
+    t59_script="$installer_repo/install.$engine"
+    if [ "$variant" != control ]; then
+      if ! command -v python3 >/dev/null 2>&1; then
+        skip "T59 $engine $variant mutation replay (python3 unavailable)"
+        continue
+      fi
+      # Like T21, root-local copies find the real sources. Register before
+      # writing so failures cannot leave a mutant in the working tree.
+      t59_script="$installer_repo/t59-$engine-$variant-$$.$engine"
+      CLEANUP_PATHS+=("$t59_script")
+      if ! t59_mutation_out=$(python3 - "$engine" "$variant" "$t59_script" 2>&1 <<'PY'
+import pathlib, sys
+engine, variant, output = sys.argv[1:]
+old, new = {
+    ('sh', 'agent-return'): (
+        b'    say "DRY-RUN: install $src -> $dest  (name: $name)"\n    return 0\n',
+        b'    say "DRY-RUN: install $src -> $dest  (name: $name)"\n'),
+    ('ps1', 'agent-return'): (
+        b'    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return\n',
+        b'    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"\n'),
+    ('sh', 'skill-copy'): (b'    do_or_echo cp "$s" "$d"\n', b'    cp "$s" "$d"\n'),
+    ('ps1', 'skill-copy'): (
+        b'    if ($DryRun) {\n      Write-Host "DRY-RUN: cp $($_.FullName) $d"\n',
+        b'    if ($false) {\n      Write-Host "DRY-RUN: cp $($_.FullName) $d"\n'),
+}[engine, variant]
+source = pathlib.Path('install.' + engine).read_bytes()
+assert source.count(old) == 1, 'dry-run mutation target missing or ambiguous'
+mutant = source.replace(old, new, 1)
+assert mutant != source and old not in mutant, 'dry-run mutation not applied'
+pathlib.Path(output).write_bytes(mutant)
+PY
+      ); then
+        bad "T59 $engine $variant mutation replay" "$t59_mutation_out"
+        continue
+      fi
+    fi
+    t59_dry_force "$engine" "$installer_root/t59-$engine-$variant" "$t59_script"
+    if [ "$variant" = control ]; then
+      installer_result "T59 $engine --dry-run --force preserves edited agent, skill, and the whole install"
+    else
+      case "$variant" in
+        agent-return) t59_expected=' dry-run:agent-changed dry-run:tree-changed' ;;
+        skill-copy) t59_expected=' dry-run:skill-changed dry-run:tree-changed' ;;
+      esac
+      if [ "$case_err" = "$t59_expected" ]; then
+        ok "T59 $engine $variant mutation applied and rejected:$case_err"
+      else
+        bad "T59 $engine $variant mutation replay" "expected '$t59_expected', got '${case_err:-<no rejection>}'"
+      fi
+      rm -f "$t59_script"
+    fi
+  done
+done
+if [ "${#INSTALLERS[@]}" -eq 1 ]; then
+  for variant in control agent-return skill-copy; do
+    skip "T59 ps1 $variant dry-run guard (pwsh unavailable; set PWSH)"
+  done
+fi
+
+# ---------------------------------------------------------------- T60
+# U3 checks ownership per installed skill file, not by file count. An unknown
+# file or an edit to a shipped file must protect the whole skill. Replace only
+# that predicate in a root-local copy, then require actual deletion to prove
+# this same guard rejects the bypass; a setup failure or nonzero exit is not RED.
+t60_skill_ownership() { # engine, fixture root, scenario, uninstall script
+  local engine="$1" fixture="$2" scenario="$3" script="$4"
+  local prefix="$fixture/prefix" skill personal
+  case_err=""
+  mkdir -p "$fixture" || { case_err="fixture-directory-failed"; return; }
+  run_installer "$engine" "$prefix"
+  expect_installer_success install
+  skill="$prefix/skills/fc-build-or-fix"
+  [ -f "$skill/SKILL.md" ] || case_err="$case_err missing-skill"
+  [ -z "$case_err" ] || return
+  if [ "$scenario" = extra-file ]; then
+    personal="$skill/personal-notes.txt"
+    [ ! -e "$personal" ] || { case_err="personal-file-already-shipped"; return; }
+    cp "$installer_root/personal" "$personal" || case_err="$case_err personal-file-fixture-failed"
+  else
+    personal="$skill/SKILL.md"
+    printf '\nMY SKILL EDIT\n' >> "$personal" || case_err="$case_err edited-file-fixture-failed"
+  fi
+  cp "$personal" "$fixture/personal" || case_err="$case_err personal-snapshot-failed"
+  snapshot_tree "$skill" > "$fixture/before" || case_err="$case_err before-snapshot-failed"
+  [ -z "$case_err" ] || return
+  if [ "$engine" = sh ]; then
+    HOME="$installer_root/home" "$installer_bash" "$script" --prefix "$prefix" --uninstall \
+      > "$installer_root/run.out" 2>&1
+  else
+    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$script" --prefix "$prefix" --uninstall \
+      > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+  expect_installer_success uninstall
+  if [ ! -f "$personal" ]; then
+    case_err="$case_err uninstall:personal-file-deleted"
+  elif ! cmp -s "$fixture/personal" "$personal"; then
+    case_err="$case_err uninstall:personal-bytes-changed"
+  fi
+  if [ ! -d "$skill" ]; then
+    case_err="$case_err uninstall:skill-deleted"
+  else
+    snapshot_tree "$skill" > "$fixture/after" || case_err="$case_err after-snapshot-failed"
+    cmp -s "$fixture/before" "$fixture/after" || case_err="$case_err uninstall:skill-tree-changed"
+  fi
+}
+for engine in "${INSTALLERS[@]}"; do
+  for variant in control ownership-bypass; do
+    t60_script="$installer_repo/install.$engine"
+    if [ "$variant" = ownership-bypass ]; then
+      if ! command -v python3 >/dev/null 2>&1; then
+        for scenario in extra-file edited-shipped-file; do
+          skip "T60 $engine $scenario ownership-bypass replay (python3 unavailable)"
+        done
+        continue
+      fi
+      t60_script="$installer_repo/t60-$engine-ownership-bypass-$$.$engine"
+      CLEANUP_PATHS+=("$t60_script")
+      if ! t60_mutation_out=$(python3 - "$engine" "$t60_script" 2>&1 <<'PY'
+import pathlib, re, sys
+engine, output = sys.argv[1:]
+pattern, body = {
+    'sh': (rb'^skill_file_is_ours\(\) \{\n(.*?)^\}', b'  return 0\n'),
+    'ps1': (rb'^function Test-SkillFileIsOurs\(\$src, \$dest, \$relativePath\) \{\n(.*?)^\}',
+            b'  return $true\n'),
+}[engine]
+source = pathlib.Path('install.' + engine).read_bytes()
+matches = list(re.finditer(pattern, source, re.M | re.S))
+assert len(matches) == 1, 'skill ownership predicate missing or ambiguous'
+match = matches[0]
+assert match.group(1) != body, 'skill ownership predicate already bypassed'
+mutant = source[:match.start(1)] + body + source[match.end(1):]
+assert mutant != source and list(re.finditer(pattern, mutant, re.M | re.S))[0].group(1) == body, 'ownership mutation not applied'
+pathlib.Path(output).write_bytes(mutant)
+PY
+      ); then
+        bad "T60 $engine ownership-bypass replay" "$t60_mutation_out"
+        continue
+      fi
+    fi
+    for scenario in extra-file edited-shipped-file; do
+      t60_skill_ownership "$engine" "$installer_root/t60-$engine-$variant-$scenario" "$scenario" "$t60_script"
+      if [ "$variant" = control ]; then
+        installer_result "T60 $engine $scenario preserves personal bytes and the whole skill"
+      elif [ "$case_err" = ' uninstall:personal-file-deleted uninstall:skill-deleted' ]; then
+        ok "T60 $engine $scenario ownership-bypass applied and rejected:$case_err"
+      else
+        bad "T60 $engine $scenario ownership-bypass replay" "expected personal-file and skill deletion, got '${case_err:-<no rejection>}'"
+      fi
+    done
+    [ "$variant" = control ] || rm -f "$t60_script"
+  done
+done
+if [ "${#INSTALLERS[@]}" -eq 1 ]; then
+  for variant in control ownership-bypass; do
+    for scenario in extra-file edited-shipped-file; do
+      skip "T60 ps1 $scenario $variant (pwsh unavailable; set PWSH)"
+    done
+  done
+fi
 
 echo
 if [ "$SKIP" -gt 0 ]; then
