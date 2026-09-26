@@ -1231,6 +1231,9 @@ echo "$selector" | grep -qiE 'recorded reviewer model and the reviewer record.s 
   || t32_err="$t32_err reviewer-delegation-not-fail-closed"
 t32_calls=$(git grep -cF "reviewer record's tool calls" -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
 [ "$t32_calls" = "1" ] || t32_err="$t32_err reviewer-delegation-rule-stated-${t32_calls}-times"
+# The delegated-reviewer predicate is stated once, in the canonical rule; other docs link to it.
+t32_pred=$(git grep -cF '`Agent`, `Skill`, or `Workflow`' -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
+[ "$t32_pred" = "1" ] || t32_err="$t32_err reviewer-delegation-predicate-stated-${t32_pred}-times"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
 
