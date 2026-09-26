@@ -1,6 +1,6 @@
 # Feature-Crew
 
-**v5.1.0** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates.
+**v5.1.1** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates.
 
 ## Install
 
@@ -31,7 +31,7 @@ Just Do It is auto-selected from natural language and does not ask for track app
 
 ## Dynamic hard-gate review
 
-All six role agents install without a `model` frontmatter key. Before each model-authored hard-gate review, the dispatcher uses the artifact author's known family/provenance to select an explicit cross-family Agent override and records an audit envelope. Unknown provenance, a family collision, or unavailable selected model leaves the gate unsatisfied; there is no same-family fallback.
+All six role agents install without a `model` frontmatter key; authoring and review dispatches carry explicit model overrides. Author and reviewer families come from the model the harness recorded, not the requested alias. The dispatcher records the author's evidence in an audit envelope, selects an override, then verifies the recorded reviewer model after the review. Missing/unknown provenance, a family collision, or an unavailable dispatch leaves the gate unsatisfied; there is no same-family fallback. A verified third-family substitution is logged and stands. Record lookup and environment assumptions live in [gate provenance](.claude/skills/fc-build-or-fix/reference/gate-provenance.md).
 
 The exact selector is canonical in `/fc-build-or-fix`; other docs point there rather than copying it. Standalone `/fc-review` and `/fc-second-opinion` remain useful but do not substitute for pipeline hard gates.
 

@@ -981,6 +981,22 @@ echo "$selector" | grep -qiE 'no fallback|never.*fallback|do not.*fallback' \
   || t32_err="$t32_err author-family-fallback-not-banned"
 echo "$selector" | grep -qiE 'tests-as-spec.*author family|author family.*tests-as-spec' \
   || t32_err="$t32_err tests-as-spec-provenance-missing"
+# Requested aliases are not runtime provenance: allowlists, fallbacks, and
+# gateways can substitute a model without failing the dispatch.
+echo "$selector" | grep -qiE 'author family.*model the harness recorded.*not.*requested alias' \
+  || t32_err="$t32_err author-not-harness-recorded"
+echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*model' \
+  || t32_err="$t32_err authoring-model-not-explicit"
+echo "$selector" | grep -qiE 'recorded reviewer model.*missing.*GATE UNSATISFIED' \
+  || t32_err="$t32_err missing-reviewer-model-not-fail-closed"
+echo "$selector" | grep -qiE 'recorded reviewer model.*author.s family.*GATE UNSATISFIED' \
+  || t32_err="$t32_err recorded-family-collision-not-fail-closed"
+echo "$selector" | grep -qiE 'third family.*recorded as a substitution.*stands' \
+  || t32_err="$t32_err third-family-substitution-not-recorded"
+echo "$selector" | grep -qiE 'this session.s record.*sonnet.*author.s family.*model: *opus' \
+  || t32_err="$t32_err recorded-sonnet-collision-not-rerouted"
+echo "$selector" | grep -qF '(reference/gate-provenance.md)' \
+  || t32_err="$t32_err provenance-reference-not-linked"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
 
@@ -1041,6 +1057,26 @@ echo "$classifier" | grep -qiE 'must not self-invoke|no self-invocation|never se
 echo "$classifier" | grep -qiE 'do not repeat|never repeat|no repeat' \
   || t33_err="$t33_err no-repeat"
 echo "$classifier" | grep -qiE 'recurs|cycle' || t33_err="$t33_err no-cycles"
+echo "$classifier" | grep -qiE 'fc-grill-me.*leaf.*any flow may call' \
+  || t33_err="$t33_err grill-leaf-exception-missing"
+brainstorm=.claude/skills/fc-brainstorm/SKILL.md
+bs_panel=$(sed -n '/^## 2 — Panel/,/^## /p' "$brainstorm")
+bs_spec=$(sed -n '/^## 5 — Spec/,/^## /p' "$brainstorm")
+bs_caps=$(sed -n '/^## Caps/,/^## /p' "$brainstorm")
+echo "$bs_panel" | grep -qE '^> .*Do not call `Agent`, `Skill`, `Workflow`, or delegate' \
+  || t33_err="$t33_err brainstorm-panel-delegation-not-forbidden"
+echo "$bs_spec" | grep -qiE 'another flow invoked.*return.*approved spec.*originator' \
+  || t33_err="$t33_err brainstorm-does-not-return-approved-spec"
+echo "$bs_spec" | grep -qF 'Hand off to `/fc-build-or-fix`' \
+  && t33_err="$t33_err brainstorm-unconditional-build-handoff"
+echo "$bs_spec" | grep -qiE 'only if the user invoked.*directly.*offer.*fc-build-or-fix' \
+  || t33_err="$t33_err brainstorm-direct-invocation-not-distinguished"
+echo "$bs_caps" | grep -qiE 'max 7 panel/review dispatches.*3 panel \+ (up to 3|≤3) re-dispatch \+ 1 cross-audit' \
+  || t33_err="$t33_err brainstorm-cap-omits-diversity-round"
+echo "$bs_caps" | grep -qiE 'descendants.*any depth' \
+  || t33_err="$t33_err brainstorm-descendants-not-counted"
+echo "$bs_caps" | grep -qiE 'pause.*user.*approval|user.*OK.*first' \
+  || t33_err="$t33_err brainstorm-cap-expansion-not-approved"
 if grep -q '^disable-model-invocation: true$' .claude/skills/fc-grill-me/SKILL.md; then
   t33_err="$t33_err grill-not-model-invocable"
 fi
@@ -1063,6 +1099,193 @@ stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned 
 [ -z "$stale_pins" ] || t34_err="$t34_err stale-role-pin:$(echo "$stale_pins" | tr '\n' ',')"
 [ -z "$t34_err" ] && ok "T34 no stale legacy-track or role-pin wording in active shipped content" \
                    || bad "T34 stale framework wording" "issues:$t34_err"
+
+# ---------------------------------------------------------------- T55
+# Runtime evidence and environment assumptions belong in the linked reference;
+# unrelated mentions outside these sections must not satisfy the contract.
+t55_err=""
+provenance=.claude/skills/fc-build-or-fix/reference/gate-provenance.md
+echo "$selector" | grep -qF '(reference/gate-provenance.md)' \
+  || t55_err="$t55_err provenance-reference-not-linked"
+if [ -f "$provenance" ]; then
+  record=$(sed -n '/^## Read the record/,/^## /p' "$provenance")
+  families=$(sed -n '/^## Map model ids to families/,/^## /p' "$provenance")
+  assumptions=$(sed -n '/^## Environment assumptions/,/^## /p' "$provenance")
+  echo "$record" | grep -qF '~/.claude/projects/<cwd-slug>/<session-id>/subagents/agent-<agentId>.jsonl' \
+    || t55_err="$t55_err subagent-record-path-missing"
+  echo "$record" | grep -qF '.message.model' || t55_err="$t55_err runtime-model-field-missing"
+  echo "$record" | grep -qiE 'meta.json.*requested alias.*not.*runtime' \
+    || t55_err="$t55_err metadata-alias-not-distinguished"
+  echo "$record" | grep -qiE 'unreadable record.*unknown provenance' \
+    || t55_err="$t55_err unreadable-record-not-unknown"
+  for family in sonnet opus haiku; do
+    echo "$families" | grep -qF "claude-${family}-*" \
+      || t55_err="$t55_err ${family}-id-family-mapping-missing"
+  done
+  echo "$families" | grep -qiE 'non-Claude id.*provider.*family' \
+    || t55_err="$t55_err non-claude-family-mapping-missing"
+  echo "$families" | grep -qiE 'non-Claude id.*prefix.*`gpt-\*`.*GPT' \
+    || t55_err="$t55_err non-claude-vendor-prefix-rule-missing"
+  echo "$families" | grep -qiE 'every id.*one vendor line.*one family' \
+    || t55_err="$t55_err vendor-line-family-boundary-missing"
+  echo "$families" | grep -qiE 'unknown only when.*vendor cannot be (told|identified)' \
+    || t55_err="$t55_err unknown-vendor-boundary-missing"
+  echo "$families" | grep -qiE 'non-Claude id.*requires.*verified.*mapping|without.*(reliable|verified).*mapping.*unknown' \
+    && t55_err="$t55_err verified-mapping-still-required"
+  for assumption in 2.1.251 CLAUDE_CODE_SUBAGENT_MODEL_FORCE availableModels 'fallback chains' 'alias-remapping gateways'; do
+    echo "$assumptions" | grep -qF "$assumption" \
+      || t55_err="$t55_err missing-assumption:$assumption"
+  done
+  echo "$assumptions" | grep -qiE 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE.*unset' \
+    || t55_err="$t55_err force-unset-not-required"
+else
+  t55_err="$t55_err gate-provenance-missing"
+fi
+# Pin the caller's choice, not a fixed author family. Each call site must use
+# the canonical default so a Sonnet session is not silently moved to Opus.
+echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*alias.*session.s own model.*unless the user chose another' \
+  || t55_err="$t55_err session-authoring-alias-default-missing"
+complex_flow=$(sed -n '/^## Flow/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
+architect_dispatch=$(echo "$complex_flow" | grep -E '^5\. ')
+developer_dispatch=$(echo "$complex_flow" | grep -E '^8\. ')
+synthesis_dispatch=$(sed -n '/^## Phase 2/,/^## /p' .claude/skills/fc-research/SKILL.md)
+echo "$architect_dispatch" | grep -qE 'fc-architect.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
+  || t55_err="$t55_err architect-authoring-rule-not-linked"
+echo "$developer_dispatch" | grep -qE 'fc-developer.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
+  || t55_err="$t55_err developer-authoring-rule-not-linked"
+echo "$synthesis_dispatch" | grep -qE 'general-purpose.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
+  || t55_err="$t55_err synthesis-authoring-rule-not-linked"
+for authoring_site in architect developer synthesis; do
+  case "$authoring_site" in
+    architect) authoring_text="$architect_dispatch" ;;
+    developer) authoring_text="$developer_dispatch" ;;
+    synthesis) authoring_text="$synthesis_dispatch" ;;
+  esac
+  echo "$authoring_text" | grep -qE 'model: *(opus|sonnet|haiku|fable)' \
+    && t55_err="$t55_err $authoring_site:hardcoded-authoring-alias"
+done
+complex_example=$(sed -n '/^## Worked example/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
+echo "$complex_example" | grep -qE '^> .*fc-architect.*requested with `model: sonnet`' \
+  || t55_err="$t55_err example-architect-changes-session-family"
+echo "$complex_example" | grep -qE '^> .*Developers requested with `model: sonnet`' \
+  || t55_err="$t55_err example-developers-change-session-family"
+# Delegation can hide contributors from the dispatched agent's own record.
+# Keep these literal contract sentences scoped to their operative sections.
+# Removal mutations below must produce exactly their own diagnostic, not merely
+# some failure, and run only after the unmodified documents pass the control.
+t55_boundary_labels=(
+  gated-prompts refuter-prompts authoring-call-boundary reviewer-call-boundary
+  artifact-change-contributor recursive-records missing-child-records in-record-skills
+  author-child-family-set reviewer-child-family-set disjoint-family-sets
+  child-record-link child-link-observation-scope unresolved-child-link
+)
+t55_boundary_sections=(dispatch refute record record record record record record families families families record record record)
+t55_boundary_rules=(
+  'Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."'
+  'Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
+  'Only `Agent` or `Workflow` calls made to produce or change the artifact contribute to its author set.'
+  'Gate reviews, validators and refuters, and their children, stay in reviewer sets when they only report findings, even if their calls sit in the main-session record; using their findings in a later fix does not make them authors.'
+  'A call that changes the artifact is an authoring contributor, whoever made it; if it also reviewed, keep it in both sets.'
+  'Read each relevant authoring or review child record recursively, including forked `Skill` runs.'
+  'A child record that cannot be found or read makes provenance unknown and the gate unsatisfied.'
+  'A `Skill` call without a fork stays in the same record.'
+  'Authoring children join the author family set at every depth, according to their task rather than the parent record.'
+  'Children doing review join the set for that reviewer at every depth, not the author set unless they changed the artifact.'
+  'Every model in a reviewer set must be known and outside the author family set.'
+  'Match `.toolUseId` in child `agent-<agentId>.meta.json` to the spawning `Agent` tool_use `.id` in the parent record, then read the matching `agent-<agentId>.jsonl`.'
+  'This child-record link has been observed for depth-1 `Agent` calls only; `Workflow` children and depth 2 or greater have not been observed.'
+  'If this link cannot locate a contributor record, provenance is unknown and the gate unsatisfied.'
+)
+t55_delegation_contract() { # build-or-fix, second-opinion, provenance text
+  local dispatch refute record families section i errors=""
+  dispatch=$(printf '%s\n' "$1" | sed -n '/^## Dispatch rules/,/^## /p')
+  refute=$(printf '%s\n' "$2" | sed -n '/^## 3 — Refute/,/^## /p' | grep '^> ')
+  record=$(printf '%s\n' "$3" | sed -n '/^## Read the record/,/^## /p')
+  families=$(printf '%s\n' "$3" | sed -n '/^## Map model ids to families/,/^## /p')
+  for ((i=0; i<${#t55_boundary_rules[@]}; i++)); do
+    case "${t55_boundary_sections[$i]}" in
+      dispatch) section="$dispatch" ;;
+      refute) section="$refute" ;;
+      record) section="$record" ;;
+      families) section="$families" ;;
+    esac
+    printf '%s\n' "$section" | grep -qF "${t55_boundary_rules[$i]}" \
+      || errors="$errors ${t55_boundary_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t55_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
+t55_refuter_text=$(cat .claude/skills/fc-second-opinion/SKILL.md)
+t55_provenance_text=$(cat "$provenance" 2>/dev/null)
+t55_boundary_out=$(t55_delegation_contract "$t55_build_text" "$t55_refuter_text" "$t55_provenance_text")
+t55_err="$t55_err$t55_boundary_out"
+if [ -z "$t55_boundary_out" ]; then
+  for ((t55_i=0; t55_i<${#t55_boundary_rules[@]}; t55_i++)); do
+    t55_rule="${t55_boundary_rules[$t55_i]}"
+    t55_build_mut="$t55_build_text"
+    t55_refuter_mut="$t55_refuter_text"
+    t55_provenance_mut="$t55_provenance_text"
+    case "${t55_boundary_sections[$t55_i]}" in
+      dispatch) t55_build_mut="${t55_build_mut/"$t55_rule"/}" ;;
+      refute) t55_refuter_mut="${t55_refuter_mut/"$t55_rule"/}" ;;
+      *) t55_provenance_mut="${t55_provenance_mut/"$t55_rule"/}" ;;
+    esac
+    t55_mut_out=$(t55_delegation_contract "$t55_build_mut" "$t55_refuter_mut" "$t55_provenance_mut")
+    if [ "$t55_mut_out" = " ${t55_boundary_labels[$t55_i]}" ]; then
+      ok "T55 removal mutation: ${t55_boundary_labels[$t55_i]} rejected by its own check"
+    else
+      bad "T55 removal mutation: ${t55_boundary_labels[$t55_i]}" \
+        "got '${t55_mut_out:-<empty>}', want ' ${t55_boundary_labels[$t55_i]}'"
+    fi
+  done
+fi
+[ -z "$t55_err" ] && ok "T55 static contract alarm: recorded-model provenance + pinned authors" \
+                   || bad "T55 provenance reference and author dispatch contract" "missing:$t55_err"
+
+# ---------------------------------------------------------------- T56
+# One mandatory suffix shared by all three phases closes recursive delegation;
+# the Phase 1 profile and the invocation-wide budget are separate safeguards.
+t56_err=""
+research=.claude/skills/fc-research/SKILL.md
+workers=$(sed -n '/^## Worker boundary/,/^## /p' "$research")
+search_phase=$(sed -n '/^## Phase 1/,/^## /p' "$research")
+research_caps=$(sed -n '/^## Caps/,/^## /p' "$research")
+echo "$workers" | grep -qiE 'append.*suffix.*every worker prompt.*Phases 1, 2 and 3' \
+  || t56_err="$t56_err no-shared-worker-suffix"
+echo "$workers" | grep -qE '^> .*Do not call `Agent`, `Skill`, `Workflow`, or delegate' \
+  || t56_err="$t56_err worker-delegation-not-forbidden"
+echo "$search_phase" | grep -qiE 'prefer.*`Explore`.*no `Agent` tool' \
+  || t56_err="$t56_err phase1-does-not-prefer-explore"
+echo "$search_phase" | grep -qE '^> Return raw findings only\.' \
+  || t56_err="$t56_err phase1-not-raw-findings"
+echo "$research_caps" | grep -qiE 'max 5 dispatches.*descendants.*any depth' \
+  || t56_err="$t56_err descendant-dispatches-not-counted"
+echo "$research_caps" | grep -qiE 'pause.*user.*approval|user.*OK.*first' \
+  || t56_err="$t56_err cap-expansion-not-approved"
+[ -z "$t56_err" ] && ok "T56 static contract alarm: research workers cannot delegate past the cap" \
+                   || bad "T56 research dispatch boundary" "missing:$t56_err"
+
+# ---------------------------------------------------------------- T57
+# Tool/model frontmatter ends with the loading turn. The standalone skills
+# promise a read-only policy, not shell-write isolation or a persistent model.
+t57_err=""
+for skill in fc-review fc-second-opinion; do
+  f=".claude/skills/$skill/SKILL.md"
+  intro=$(sed -n "/^# $skill\$/,/^## /p" "$f")
+  grep -qi 'by construction' "$f" && t57_err="$t57_err $skill:construction-claim"
+  echo "$intro" | grep -qi 'read-only by policy' || t57_err="$t57_err $skill:policy-missing"
+  echo "$intro" | grep -qiE 'frontmatter removes.*`Write`.*`Edit`.*`NotebookEdit`.*only for the turn that loads the skill' \
+    || t57_err="$t57_err $skill:tool-restriction-lifetime-missing"
+  echo "$intro" | grep -qiE '`model` override.*only for that turn' \
+    || t57_err="$t57_err $skill:model-override-lifetime-missing"
+  echo "$intro" | grep -qiE 'Bash and PowerShell.*write-capable' \
+    || t57_err="$t57_err $skill:shell-write-limit-unacknowledged"
+done
+refute=$(sed -n '/^## 3 — Refute/,/^## /p' .claude/skills/fc-second-opinion/SKILL.md)
+echo "$refute" | grep -qiE 'each refuter.*explicit.*`model` override.*selector.*`/fc-build-or-fix`' \
+  || t57_err="$t57_err refuter-selector-override-missing"
+[ -z "$t57_err" ] && ok "T57 static contract alarm: honest read-only policy + explicit refuter models" \
+                   || bad "T57 standalone review policy contract" "missing:$t57_err"
 
 # ---------------------------------------------------------------- T35
 # Exercise both PowerShell invocation forms, not just parameter-name tokens.
@@ -2054,7 +2277,11 @@ for engine in "${INSTALLERS[@]}"; do
     bad "T48a $engine recognizes an untouched v5.0.1 install" "v5.0.1 installer fixture failed"
     continue
   fi
-  raw_files_manifest "$p" > "$installer_root/t48.expected" || case_err="$case_err cannot-hash-fixture"
+  raw_files_manifest "$p" > "$installer_root/t48.old" || case_err="$case_err cannot-hash-fixture"
+  LC_ALL=C awk 'FILENAME == ARGV[1] { old[substr($0,67)]=$0; next }
+    { path=substr($0,67); print (path in old ? old[path] : $0) }' \
+    "$installer_root/t48.old" "$installer_root/t47-$engine.expected" > "$installer_root/t48.expected" \
+    || case_err="$case_err cannot-build-upgrade-expectation"
   snapshot_tree "$p" > "$installer_root/before"
   { find "$p/agents" -maxdepth 1 -type f -print
     find "$p/skills" -mindepth 1 -maxdepth 1 -type d -print
@@ -2089,7 +2316,12 @@ for engine in "${INSTALLERS[@]}"; do
   fi
   printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
   cp "$p/agents/fc-pm.md" "$installer_root/t48.edited"
-  raw_files_manifest "$p" | grep -v '  agents/fc-pm.md$' > "$installer_root/t48.expected"
+  raw_files_manifest "$p" > "$installer_root/t48.old" || case_err="$case_err cannot-hash-fixture"
+  LC_ALL=C awk 'FILENAME == ARGV[1] { old[substr($0,67)]=$0; next }
+    { path=substr($0,67); print (path in old ? old[path] : $0) }' \
+    "$installer_root/t48.old" "$installer_root/t47-$engine.expected" \
+    | grep -v '  agents/fc-pm.md$' > "$installer_root/t48.expected" \
+    || case_err="$case_err cannot-build-upgrade-expectation"
   snapshot_tree "$p" > "$installer_root/before"
   run_installer "$engine" "$p" --uninstall --dry-run
   expect_installer_success dry-uninstall

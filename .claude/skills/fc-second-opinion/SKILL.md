@@ -10,6 +10,8 @@ disallowed-tools: Write Edit NotebookEdit
 
 Attacks a position. Inverts the usual review bias: a model asked to "review this" tends to bless a plausible-looking answer, so here the burden of proof runs the other way.
 
+Read-only by policy: do not edit files or mutate repository state through any tool, including shell commands or refuters. Frontmatter removes `Write`, `Edit`, and `NotebookEdit` only for the turn that loads the skill; its `model` override also lasts only for that turn. Bash and PowerShell remain write-capable when available; the confirmation reply clears those frontmatter settings, not this policy. Reapply the policy after replies and include it in every refuter prompt; never rely on the loading turn's model for later dispatches.
+
 **This is not a substitute for a hard gate.** The cross-family audits inside `/fc-build-or-fix` are mandatory and automatic; this skill is opt-in, for calls the pipeline is not touching. Never substitute a `/fc-second-opinion` verdict for a required gate audit — if it could stand in, the mandatory gate would quietly become optional.
 
 ## 1 — State the claim
@@ -24,9 +26,9 @@ An attack on a weakened version of the argument is worthless, and skipping this 
 
 ## 3 — Refute
 
-Dispatch **2–3 subagents**, each with a distinct lens (correctness · cost/complexity · what-breaks-later · security when relevant). Each prompt:
+Dispatch **2–3 subagents**, each with a distinct lens (correctness · cost/complexity · what-breaks-later · security when relevant). Give each refuter an explicit `model` override chosen with the selector in `/fc-build-or-fix` for the recorded author family of the claim and steelman (usually this session, which writes both). Independence is from the author, not between refuters; distinct lenses may share a qualifying family. Read each refuter's recorded model as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes; drop any verdict with missing/unknown provenance or a model in an author's family, and report exclusions. If none qualify, report unavailable rather than SURVIVES. Include the read-only policy in each prompt:
 
-> Try to refute this claim. You are not asked whether it is reasonable — you are asked to break it. Report `refuted: true` if you can construct a concrete scenario where the claim leads to a bad outcome, **and default to `refuted: true` when you are uncertain.** Give the scenario in 3 sentences: the conditions, what goes wrong, and the cost. If you genuinely cannot break it, report `refuted: false` and name the single assumption the claim most depends on.
+> Try to refute this claim. You are not asked whether it is reasonable — you are asked to break it. Report `refuted: true` if you can construct a concrete scenario where the claim leads to a bad outcome, **and default to `refuted: true` when you are uncertain.** Give the scenario in 3 sentences: the conditions, what goes wrong, and the cost. If you genuinely cannot break it, report `refuted: false` and name the single assumption the claim most depends on. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.
 
 ## 4 — Verdict
 
@@ -40,7 +42,7 @@ Then one line on what would change the verdict.
 
 - **Max 3 refuters.** Fewer when a lens does not apply — a smaller panel is honest, padding it is not.
 - **One round.** No re-litigating after the user responds.
-- If no second model family is reachable, run fewer reviewers rather than two from the same family, and say so.
+- If no family outside the author's is reachable, run no refuter from the author's family, and say so. Distinct lenses may share a qualifying family; do not shrink the panel merely for that.
 
 ## Known limitation
 
