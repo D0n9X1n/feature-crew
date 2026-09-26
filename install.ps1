@@ -122,16 +122,18 @@ $DryDirs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringCompa
 $PublishedHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $publishedTable = Join-Path $ScriptDir "published.sha256"
 $PublishedUnreadable = $false
+function Read-PublishedTable {
+  foreach ($line in [IO.File]::ReadAllLines($publishedTable)) {
+    [void]$PublishedHashes.Add($line)
+  }
+}
 if (Test-Path -LiteralPath $publishedTable -PathType Leaf) {
-  try {
-    foreach ($line in [IO.File]::ReadAllLines($publishedTable)) {
-      [void]$PublishedHashes.Add($line)
-    }
-  } catch {
-    # -Check and -Verify report an unreadable table as an operational error
-    # (Invoke-InstallCheck); every other mode stops here, as before.
-    if (-not ($Check -or $Verify)) { throw }
-    $PublishedUnreadable = $true
+  # -Check and -Verify report an unreadable table as an operational error
+  # (Invoke-InstallCheck); every other mode stops on the read error, as before.
+  if ($Check -or $Verify) {
+    try { Read-PublishedTable } catch { $PublishedUnreadable = $true }
+  } else {
+    Read-PublishedTable
   }
 }
 
