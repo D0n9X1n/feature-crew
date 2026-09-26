@@ -149,7 +149,8 @@ tmp_prefix="$(mktemp -d)"
 T15_PROBE=".claude/skills/t15-probe-$$"
 T21_SCRIPT="./t21-noguard-$$.sh"
 CLEANUP_PATHS=("$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT")
-cleanup() { rm -rf "${CLEANUP_PATHS[@]}"; }
+# T63 locks source fixtures with chmod 000; unlock first so an abort cannot strand them.
+cleanup() { chmod -R u+rwX "${CLEANUP_PATHS[@]}" 2>/dev/null; rm -rf "${CLEANUP_PATHS[@]}"; }
 trap cleanup EXIT
 if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
   t5_err=""
@@ -3282,6 +3283,30 @@ for engine in "${INSTALLERS[@]}"; do
   fi
   t63_result "T63 $engine operational errors (no agents/ source, unreadable file) exit 2 without a verdict"
 
+  # An unreadable source is an operational error on every walk, never a
+  # mismatch: exit 2 and one ERROR line naming the walk that failed, identical
+  # from both engines. The mode is restored after each pair, even on failure.
+  if [ "$t63_can_lock" -eq 1 ]; then
+    case_err=""
+    p="$base/fresh"
+    t63_fixture="$t63_root/locked-src"
+    if [ ! -d "$t63_fixture" ]; then
+      copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-failed"
+    fi
+    for t63_locked in agents agents/fc-pm.md .claude/skills .claude/skills/fc-review \
+        .claude/skills/fc-build-or-fix/reference .claude/skills/fc-review/SKILL.md; do
+      t63_perm=644
+      [ -d "$t63_fixture/$t63_locked" ] && t63_perm=755
+      t63_label="source-$(printf '%s' "${t63_locked#.claude/}" | tr '/.' '--')"
+      t63_expect "ERROR: cannot read installer source (<SRC>/${t63_locked%/reference})"
+      chmod 000 "$t63_fixture/$t63_locked"
+      t63_run "$engine" "$p" 2 "$t63_label-check" "$t63_fixture" --check
+      t63_run "$engine" "$p" 2 "$t63_label-verify" "$t63_fixture" --verify
+      chmod "$t63_perm" "$t63_fixture/$t63_locked"
+    done
+    t63_result "T63 $engine an unreadable source (agents, skills, a skill, a nested dir, a file) exits 2 identically"
+  fi
+
   case_err=""
   p="$base/absent"
   for t63_pair in '--check --verify' '--check --force' '--verify --uninstall' '--check --dry-run' '--verify --force'; do
@@ -3295,7 +3320,7 @@ for engine in "${INSTALLERS[@]}"; do
   fi
   t63_result "T63 $engine --check/--verify with each other, --force, --uninstall, or --dry-run is a usage error"
 done
-[ "$t63_can_lock" -eq 1 ] || skip "T63 unreadable-file exit 2 (file permissions not enforced for this user)"
+[ "$t63_can_lock" -eq 1 ] || skip "T63 unreadable prefix and source exit 2 (file permissions not enforced for this user)"
 
 if [ "${#INSTALLERS[@]}" -eq 2 ]; then
   case_err=""
@@ -3383,7 +3408,8 @@ for job in ('framework', 'powershell', 'powershell-delegation'):
         errors.append('job-renamed-or-missing:' + job)
 script = str(doc.get('env', {}).get('TEST_CHECK_VERIFY', ''))
 for token in ('-Check', '-Verify', '--check', '--verify', '-Check -Force', 'Get-Command bash, git',
-              'check: update-needed', 'verify: ok', 'feature-crew.sha256', '$global:LASTEXITCODE'):
+              'check: update-needed', 'verify: ok', 'feature-crew.sha256', '$global:LASTEXITCODE',
+              'stale: agents/fc-retired.md', 'stale: skills/fc-retired', 'removed a stale entry'):
     if token not in script:
         errors.append('check-verify-script-missing:' + token)
 def runs(job, shell, masked):
@@ -3407,7 +3433,7 @@ print(' '.join(errors))
 sys.exit(bool(errors))
 PY
 ); then
-  ok "T63 native Windows runs -Check/-Verify in the masked fallback and through Git Bash, pwsh and PowerShell 5.1"
+  ok "T63 native Windows runs -Check/-Verify, stale warnings included, in the masked fallback and through Git Bash, pwsh and PowerShell 5.1"
 else
   bad "T63 native Windows check/verify workflow steps" "issues:$t63_out"
 fi

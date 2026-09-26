@@ -570,6 +570,21 @@ function Get-CheckState($rel, $want) {
   return 'uncertain'
 }
 
+# An unreadable source is an operational error, never a mismatch: report the
+# path that failed, exactly as source_error does in install.sh.
+function Read-Source($path, [scriptblock]$read) {
+  try { & $read } catch { throw "cannot read installer source ($path)" }
+}
+
+# Get-ChildItem lists an unreadable directory as empty when it filters without
+# recursing, so probe with the .NET listing, which throws (source_list in install.sh).
+function Get-SourceChildren($root, [switch]$Directories, [string]$Filter = '*') {
+  Read-Source $root {
+    [void][IO.Directory]::GetFileSystemEntries((Resolve-AbsPath $root))
+    Get-SortedChildren $root -Directories:$Directories -Filter $Filter
+  }
+}
+
 # Sets $script:CheckExitCode instead of returning it, so no stream can leak
 # into the exit code: 0 current/verified, 1 mismatch, 2 error.
 function Invoke-InstallCheck {
@@ -589,12 +604,12 @@ function Invoke-InstallCheck {
   }
   $expected = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
   $agents = 0; $agentsOk = 0; $skills = 0; $skillsOk = 0
-  foreach ($src in @(Get-SortedChildren $SrcAgents -Filter '*.md')) {
+  foreach ($src in @(Get-SourceChildren $SrcAgents -Filter '*.md')) {
     $meta = $AgentMeta[$src.Name]
     if (-not $meta) { $meta = "Feature-Crew agent." }
     $name = [IO.Path]::GetFileNameWithoutExtension($src.Name)
     $rel = 'agents/' + $name + '.md'
-    $want = Get-Sha256Bytes (Get-AgentBytes $src.FullName $name $meta)
+    $want = Read-Source $src.FullName { Get-Sha256Bytes (Get-AgentBytes $src.FullName $name $meta) }
     $expected[$rel] = $want
     $state = Get-CheckState $rel $want
     if ($state -ne 'current') { $found[$state].Add($rel) }
@@ -607,13 +622,15 @@ function Invoke-InstallCheck {
     }
   }
   if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
-    foreach ($dir in @(Get-SortedChildren $SrcSkillsDir -Directories)) {
+    foreach ($dir in @(Get-SourceChildren $SrcSkillsDir -Directories)) {
+      # Walk before the SKILL.md test: an unreadable directory is an error, not a non-skill.
+      $files = @(Read-Source $dir.FullName { Get-SortedChildren $dir.FullName -Recurse })
       if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName "SKILL.md") -PathType Leaf)) { continue }
       $skills++
       $skillOk = $true
-      foreach ($file in @(Get-SortedChildren $dir.FullName -Recurse)) {
+      foreach ($file in $files) {
         $rel = 'skills/' + $dir.Name + '/' + $file.FullName.Substring($dir.FullName.Length).TrimStart('\','/').Replace('\','/')
-        $want = Get-Sha256Raw $file.FullName
+        $want = Read-Source $file.FullName { Get-Sha256Raw $file.FullName }
         $expected[$rel] = $want
         $state = Get-CheckState $rel $want
         if ($state -ne 'current') { $found[$state].Add($rel); $skillOk = $false }

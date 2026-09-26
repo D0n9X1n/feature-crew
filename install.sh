@@ -506,6 +506,20 @@ check_report() { # label, prefix-relative paths...
   printf '%s\n' "$@" | sort | while IFS= read -r rel; do say "$label: $rel"; done
 }
 
+# An unreadable source is an operational error, never a mismatch: a glob or a
+# process substitution drops a failed walk, so every walk checks its status.
+# Mirrored by Read-Source in install.ps1.
+source_error() {
+  say "ERROR: cannot read installer source ($1)" >&2
+  exit 2
+}
+
+source_list() { # dir, find predicates...; sets SOURCE_LIST
+  local dir="$1"; shift
+  SOURCE_LIST=$(cd "$dir" 2>/dev/null && find . "$@" -print 2>/dev/null | sed 's|^\./||' | sort) \
+    || source_error "$dir"
+}
+
 check_install() {
   local src base name rel want ok bad agents=0 agents_ok=0 skills=0 skills_ok=0
   if [ ! -d "$SRC_AGENTS" ]; then
@@ -522,12 +536,13 @@ check_install() {
   CHECK_UNCERTAIN=()
   CHECK_STALE=()
   CHECK_MODEL=()
+  source_list "$SRC_AGENTS" -maxdepth 1
   for src in "$SRC_AGENTS"/*.md; do
     [ -e "$src" ] || continue
     base=$(basename "$src")
     name=${base%.md}
     rel="agents/$name.md"
-    want=$(agent_bytes "$src" "$name" "$(agent_meta "$base")" | sha256_stdin)
+    want=$(agent_bytes "$src" "$name" "$(agent_meta "$base")" 2>/dev/null | sha256_stdin) || source_error "$src"
     check_file "$rel" "$want"
     agents=$((agents + 1))
     if [ "$VERIFY" -eq 1 ] && [ -f "$PREFIX/$rel" ] && agent_has_model "$PREFIX/$rel"; then
@@ -537,17 +552,22 @@ check_install() {
     fi
   done
   if [ -d "$SRC_SKILLS_DIR" ]; then
+    source_list "$SRC_SKILLS_DIR" -maxdepth 1
     for src in "$SRC_SKILLS_DIR"/*/; do
+      src=${src%/}
       [ -d "$src" ] || continue
+      # Walk before the SKILL.md test: an unreadable directory is an error, not a non-skill.
+      source_list "$src" -type f
       [ -f "$src/SKILL.md" ] || continue
       name=$(basename "$src")
       skills=$((skills + 1))
       ok=1
       while IFS= read -r rel; do
-        want=$(sha256_raw "$src$rel")
+        [ -n "$rel" ] || continue
+        want=$(sha256_raw "$src/$rel" 2>/dev/null) || source_error "$src/$rel"
         check_file "skills/$name/$rel" "$want"
         [ "$STATE" = current ] || ok=0
-      done < <(cd "$src" && find . -type f -print | sed 's|^\./||' | sort)
+      done < <(printf '%s\n' "$SOURCE_LIST")
       skills_ok=$((skills_ok + ok))
     done
   fi

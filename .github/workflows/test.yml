@@ -125,6 +125,18 @@ env:
     Assert-ReadOnly 0 @("agents: $agents/$agents verified", "skills: $skills/$skills verified", 'verify: ok') {
       & $installer -Verify -Prefix $prefix 6>&1
     }
+    # fc-* leftovers this clone no longer ships are warnings: reported, kept, and no update.
+    $stale = @('stale: agents/fc-retired.md', 'stale: skills/fc-retired')
+    $staleAgent = Join-Path $prefix "agents\fc-retired.md"
+    $staleSkill = Join-Path $prefix "skills\fc-retired\SKILL.md"
+    [IO.File]::WriteAllText($staleAgent, "retired agent`n")
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $staleSkill))
+    [IO.File]::WriteAllText($staleSkill, "retired`n")
+    Assert-ReadOnly 0 ($stale + 'check: current') { & $installer -Check -Prefix $prefix 6>&1 }
+    Assert-ReadOnly 0 ($stale + 'verify: ok') { & $installer --verify --prefix $prefix 6>&1 }
+    if (-not ((Test-Path -LiteralPath $staleAgent -PathType Leaf) -and (Test-Path -LiteralPath $staleSkill -PathType Leaf))) {
+      throw "read-only runs removed a stale entry"
+    }
     $skill = Join-Path $prefix "skills\fc-review\SKILL.md"
     [IO.File]::WriteAllBytes($skill, [byte[]]([IO.File]::ReadAllBytes($skill) + [Text.Encoding]::UTF8.GetBytes("`nMY EDIT`n")))
     Assert-ReadOnly 1 @('uncertain: skills/fc-review/SKILL.md', 'check: update-needed') { & $installer -Check -Prefix $prefix 6>&1 }
