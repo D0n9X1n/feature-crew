@@ -2277,7 +2277,11 @@ for engine in "${INSTALLERS[@]}"; do
     bad "T48a $engine recognizes an untouched v5.0.1 install" "v5.0.1 installer fixture failed"
     continue
   fi
-  raw_files_manifest "$p" > "$installer_root/t48.expected" || case_err="$case_err cannot-hash-fixture"
+  raw_files_manifest "$p" > "$installer_root/t48.old" || case_err="$case_err cannot-hash-fixture"
+  LC_ALL=C awk 'FILENAME == ARGV[1] { old[substr($0,67)]=$0; next }
+    { path=substr($0,67); print (path in old ? old[path] : $0) }' \
+    "$installer_root/t48.old" "$installer_root/t47-$engine.expected" > "$installer_root/t48.expected" \
+    || case_err="$case_err cannot-build-upgrade-expectation"
   snapshot_tree "$p" > "$installer_root/before"
   { find "$p/agents" -maxdepth 1 -type f -print
     find "$p/skills" -mindepth 1 -maxdepth 1 -type d -print
@@ -2312,7 +2316,12 @@ for engine in "${INSTALLERS[@]}"; do
   fi
   printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
   cp "$p/agents/fc-pm.md" "$installer_root/t48.edited"
-  raw_files_manifest "$p" | grep -v '  agents/fc-pm.md$' > "$installer_root/t48.expected"
+  raw_files_manifest "$p" > "$installer_root/t48.old" || case_err="$case_err cannot-hash-fixture"
+  LC_ALL=C awk 'FILENAME == ARGV[1] { old[substr($0,67)]=$0; next }
+    { path=substr($0,67); print (path in old ? old[path] : $0) }' \
+    "$installer_root/t48.old" "$installer_root/t47-$engine.expected" \
+    | grep -v '  agents/fc-pm.md$' > "$installer_root/t48.expected" \
+    || case_err="$case_err cannot-build-upgrade-expectation"
   snapshot_tree "$p" > "$installer_root/before"
   run_installer "$engine" "$p" --uninstall --dry-run
   expect_installer_success dry-uninstall
