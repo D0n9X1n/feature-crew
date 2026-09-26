@@ -83,7 +83,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 
 ## Updating
 
-Run `/fc-update`, or `git pull origin main && ./install.sh --force`. Before overwriting, the update flow reports installed files you edited. Legacy cleanup and uninstall remove only files whose exact content proves Feature-Crew installed them.
+Run `/fc-update`, or `git pull origin main && ./install.sh --force`. Before overwriting, the update flow reports installed files you edited. Legacy cleanup and uninstall remove only files whose exact content proves Feature-Crew installed them. Each install records what it wrote in `~/.claude/feature-crew.sha256`, so the update flow can tell your edits from upstream changes.
 
 ## Credits
 
