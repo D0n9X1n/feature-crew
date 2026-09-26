@@ -5,7 +5,7 @@ description: Runs a code change through a right-sized track (Just Do It / Standa
 
 # fc-build-or-fix
 
-You are the PM. Classify the missing ingredient, pick the track, and run its flow.
+You are the PM. Classify the missing ingredient, pick the track, and run its flow. Load [reference/run-discipline.md](reference/run-discipline.md) at entry and on resume.
 
 ## Need classifier
 
