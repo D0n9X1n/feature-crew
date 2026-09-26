@@ -45,6 +45,10 @@ Versioning defaults to semver; an explicit approved version decision overrides t
 
 Feature-Crew changes are **Standard track maximum**. Orchestration (`agents/fc-pm.md` plus every `SKILL.md`) stays ≤600 lines; framework total stays ≤1500 and under its ratcheted baseline. `tests/framework_test.sh` enforces the binding limits.
 
+## Wiki
+
+`wiki/` is the only source of truth for the GitHub wiki: `.github/workflows/publish-wiki.yml` mirrors it there on every push to `main`. Never edit the GitHub wiki directly; browser edits are overwritten on the next publish. A change that alters documented behavior updates `wiki/` in the same PR. After merging, confirm the `Publish wiki` run for the merge commit succeeded, or reported no page changes. Link wiki pages by page name and source files by full GitHub URL.
+
 ## Layout
 
 | What | Where |
@@ -54,6 +58,8 @@ Feature-Crew changes are **Standard track maximum**. Orchestration (`agents/fc-p
 | Role prompts | `agents/fc-*.md` |
 | Self-test | `tests/framework_test.sh` |
 | CI | `.github/workflows/` |
+| Wiki pages | `wiki/*.md` |
+| Wiki publisher and its test | `scripts/` |
 
 ## Install
 

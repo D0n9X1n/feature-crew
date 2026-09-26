@@ -1,0 +1,48 @@
+name: Publish wiki
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that writes Git content it did not build: it pushes the
+    # mirror to the wiki's master branch. The grant sits on this job, not the
+    # workflow, so it cannot widen to a future sibling job.
+    permissions:
+      contents: write
+    steps:
+      # Check out main as it is now, not the triggering commit, so re-running
+      # an older run cannot publish stale pages over newer ones.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 5
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Clone wiki repository
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" \
+            wiki-repo
+      - name: Build wiki mirror
+        id: mirror
+        timeout-minutes: 5
+        run: scripts/publish-wiki.sh wiki wiki-repo "$(git rev-parse HEAD)"
+      - name: Push wiki mirror
+        if: steps.mirror.outputs.changed == 'true'
+        timeout-minutes: 5
+        run: git -C wiki-repo push origin HEAD:master
