@@ -273,7 +273,7 @@ function Install-ClaudeGlobal {
   Write-Host ""
   Write-Host "Describe your need naturally in any project; slash commands are optional."
   Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-grill-me, /fc-research,"
-  Write-Host "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
+  Write-Host "/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
 }
 
 # Exact content identity, not a description prefix. Three prior attempts each

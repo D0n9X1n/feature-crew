@@ -473,7 +473,7 @@ main_install() {
   say ""
   say "Describe your need naturally in any project; slash commands are optional."
   say "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-grill-me, /fc-research,"
-  say "/fc-review, /fc-second-opinion, /fc-update - or delegate to an fc-* subagent."
+  say "/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
 }
 
 

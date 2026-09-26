@@ -46,7 +46,7 @@ skip() {
   fi
 }
 
-SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-build-or-fix fc-review fc-second-opinion fc-update)
+SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship)
 ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
 
 skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
@@ -3189,6 +3189,568 @@ if [ "${#INSTALLERS[@]}" -eq 1 ]; then
       skip "T60 ps1 $scenario $variant (pwsh unavailable; set PWSH)"
     done
   done
+fi
+
+# ---------------------------------------------------------------- T64
+# fc-ship (#39) finishes a PR with no polling loop: the main agent watches CI
+# in the background, reads real states when the watch exits, and merges only a
+# head that contains the base tip. T9 and T13 are replayed on scratch copies so
+# fc-ship cannot slip past either. As in T55, every section-scoped literal has
+# a removal mutation that must trip exactly its own label. The behavior half
+# runs the documented commands against a gh stand-in with gh 2.101.0's
+# observable contract (a CANCELLED check exits 0, --fail-fast stops at the first
+# failure, no checks is an error) and a scratch origin, so dropping a flag or
+# the eligibility check fails here.
+t64_root=$(mktemp -d)
+CLEANUP_PATHS+=("$t64_root")
+mkdir -p "$t64_root/bin" "$t64_root/home"
+t64_ship=.claude/skills/fc-ship/SKILL.md
+
+# T9 replay: an untouched scratch copy passes; removing either clause from the
+# fc-ship description is reported for fc-ship alone. A no-op mutation is a
+# setup failure, not a rejection.
+case_err=""
+mkdir -p "$t64_root/skills" && cp -R .claude/skills/. "$t64_root/skills/"
+t64_got=$(t9_contract "$t64_root/skills")
+[ -z "$t64_got" ] || case_err="$case_err control:$t64_got"
+t64_edits=('/^description:/s/ Use when [^.]*\.//' '/^description:/s/ Do NOT use for.*$//')
+t64_wants=(' fc-ship:no-use-when' ' fc-ship:no-anti-trigger')
+for t64_i in 0 1; do
+  if [ ! -f "$t64_ship" ] || ! sed "${t64_edits[$t64_i]}" "$t64_ship" > "$t64_root/skills/fc-ship/SKILL.md" \
+     || cmp -s "$t64_ship" "$t64_root/skills/fc-ship/SKILL.md"; then
+    case_err="$case_err mutation-$t64_i-not-applied"; continue
+  fi
+  t64_got=$(t9_contract "$t64_root/skills")
+  [ "$t64_got" = "${t64_wants[$t64_i]}" ] || case_err="$case_err mutation-$t64_i:got'$t64_got'"
+done
+installer_result "T64 T9 rejects fc-ship scratch copies missing Use when or Do NOT use for"
+
+# T13 replay: a fresh scratch install passes; the same prefix without the
+# installed fc-ship SKILL.md is reported for fc-ship alone.
+case_err=""
+t64_prefix="$t64_root/prefix"
+if bash install.sh --prefix "$t64_prefix" --force >/dev/null 2>&1; then
+  t64_got=$(t13_contract "$t64_prefix")
+  [ -z "$t64_got" ] || case_err="$case_err control-missing:$t64_got"
+  if [ -f "$t64_prefix/skills/fc-ship/SKILL.md" ]; then
+    rm "$t64_prefix/skills/fc-ship/SKILL.md"
+    t64_got=$(t13_contract "$t64_prefix")
+    [ "$t64_got" = ' fc-ship' ] || case_err="$case_err omission:got'$t64_got'"
+  else
+    case_err="$case_err fc-ship-not-installed"
+  fi
+else
+  case_err="$case_err install.sh-failed"
+fi
+installer_result "T64 T13 rejects an install without fc-ship's SKILL.md"
+
+# Static contract: each approved clause, scoped to its own section.
+t64_words=(zero one two three four five six seven eight nine ten eleven twelve)
+t64_count_word=${t64_words[${#SKILL_NAMES[@]}]:-${#SKILL_NAMES[@]}}
+t64_labels=(
+  auth-separate auth-one-question
+  watch-record-head watch-main-agent-background watch-required-fallback
+  outcome-read-real-states outcome-read-commands outcome-report-each outcome-rearm-once outcome-no-loops
+  failure-log-evidence failure-callback-route failure-resume-new-head
+  merge-reverify merge-base-tip merge-push-feature-only merge-rebase-rerun merge-conflict-rereview merge-pinned-squash
+  merge-confirm-tree merge-mismatch-stops
+  release-only-approved release-tag-last-watch
+  cleanup-mandatory cleanup-check-state cleanup-remove-only-merged cleanup-prune-temp
+  cleanup-keep-uncertain cleanup-return-report
+  build-or-fix-hands-off readme-direct-command readme-skill-count banner-sh banner-ps1
+)
+t64_sections=(auth auth watch watch watch outcome outcome outcome outcome outcome
+  failure failure failure merge merge merge merge merge merge merge merge release release
+  cleanup cleanup cleanup cleanup cleanup cleanup standard commands layout sh ps1)
+t64_rules=(
+  'Commit, push, PR, merge, tag/publish, and cleanup are separate authorizations; none implies another.'
+  'Ask for every missing approval in one question up front, then do only what is approved.'
+  'After each push, record the head SHA.'
+  'The main agent itself — never a subagent, because a background task notifies whoever started it — starts one background watch on the recorded head, `gh pr checks <pr> --watch --fail-fast --required --interval 30`, and keeps working meanwhile.'
+  'When gh reports no required checks, watch all checks instead: drop `--required` here and when reading states.'
+  'When the watch exits, read the actual check states and the PR head; the exit code cannot tell success from cancellation, and the watch follows the latest PR commit.'
+  'Run `gh pr checks <pr> --required --json name,state,bucket,link` and `gh pr view <pr> --json headRefOid,state,mergeCommit`.'
+  'Report each outcome: failure (immediately, via `--fail-fast`), success, cancelled, action-required, timed out, no checks, API error, head changed, PR closed or merged.'
+  'A watcher error or time limit re-arms once, then reports.'
+  'No loops.'
+  'Fetch `gh run view <id> --log-failed`, taking the run id from the failed check link.'
+  'Return head, run, and log evidence to the calling flow, which routes it to `/fc-debug` and fixes under its own gates; invoked directly, fc-ship routes it itself.'
+  'Shipping resumes only on a new, verified head.'
+  'Right before the irreversible step, re-verify head, gates, and approval.'
+  'Run `git fetch origin <base>` and require the PR head to contain the current base tip: `git merge-base --is-ancestor origin/<base> <head>`.'
+  'If the base advanced: rebase and push only the feature branch with `git push --force-with-lease=<branch>:<old-head> origin <branch>` (fc-ship never pushes the base)'
+  'rerun the full suite and CI on the new head, and compare with `git range-diff origin/<base> <old-head> <head>`.'
+  'Parts changed by conflict resolution get a cross-family re-review (selector in `/fc-build-or-fix`).'
+  'Then run `gh pr merge <pr> --squash --match-head-commit <sha>` with no bypass (`--admin`, `--auto`) and no `--delete-branch`.'
+  'Confirm the merge through PR metadata (`state` is `MERGED`), fetch the base, and verify the merged tree equals the head tree: `git diff --quiet <head> <merge-commit>`.'
+  'If it still differs: stop, report, and run only safe cleanup.'
+  'Release only when approved:'
+  'tag the verified base commit, push the tag last, watch the release run in the background (`gh run watch <id> --exit-status`), and verify the published body.'
+  'Cleanup is mandatory when shipping ends.'
+  'Check status, worktrees, sessions, and locks.'
+  'Remove only clean, inactive worktrees and branches still at the merged PR head; after a squash merge `git branch -d` refuses, so use `-D` only once the PR is confirmed merged and the trees match.'
+  'Prune stale refs and remove task-owned temp files and processes.'
+  'Keep dirty or unmerged work, stashes, and anything uncertain.'
+  'Return to the updated base and report the final status and anything kept.'
+  '9. Commit only when authorized; use a feature branch, then continue with `/fc-ship`.'
+  '`/fc-ship`'
+  "# ${t64_count_word} skills"
+  '/fc-ship'
+  '/fc-ship'
+)
+t64_contract() { # fc-ship, build-or-fix, README, install.sh, install.ps1 text
+  local auth watch outcome failure merge release clean standard commands layout sh ps1
+  local i section="" errors=""
+  auth=$(printf '%s\n' "$1" | sed -n '/^## 1 — Authorize/,/^## /p')
+  watch=$(printf '%s\n' "$1" | sed -n '/^## 2 — Watch CI asynchronously/,/^## /p')
+  outcome=$(printf '%s\n' "$1" | sed -n '/^## 3 — Read the outcome/,/^## /p')
+  failure=$(printf '%s\n' "$1" | sed -n '/^## 4 — Failure/,/^## /p')
+  merge=$(printf '%s\n' "$1" | sed -n '/^## 5 — Merge/,/^## /p')
+  release=$(printf '%s\n' "$1" | sed -n '/^## 6 — Release/,/^## /p')
+  clean=$(printf '%s\n' "$1" | sed -n '/^## 7 — Clean up/,/^## /p')
+  standard=$(printf '%s\n' "$2" | sed -n '/^### Standard/,/^### /p')
+  commands=$(printf '%s\n' "$3" | sed -n '/^## Describe the need/,/^## /p')
+  layout=$(printf '%s\n' "$3" | sed -n '/^## Layout/,/^## /p')
+  sh=$(printf '%s\n' "$4" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
+  ps1=$(printf '%s\n' "$5" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
+  for ((i=0; i<${#t64_rules[@]}; i++)); do
+    case "${t64_sections[$i]}" in
+      auth) section="$auth" ;;
+      watch) section="$watch" ;;
+      outcome) section="$outcome" ;;
+      failure) section="$failure" ;;
+      merge) section="$merge" ;;
+      release) section="$release" ;;
+      cleanup) section="$clean" ;;
+      standard) section="$standard" ;;
+      commands) section="$commands" ;;
+      layout) section="$layout" ;;
+      sh) section="$sh" ;;
+      ps1) section="$ps1" ;;
+    esac
+    case "$section" in *"${t64_rules[$i]}"*) ;; *) errors="$errors ${t64_labels[$i]}" ;; esac
+  done
+  printf '%s\n' "$errors"
+}
+t64_ship_text=$(cat "$t64_ship" 2>/dev/null)
+t64_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
+t64_readme_text=$(cat README.md)
+t64_sh_text=$(cat install.sh)
+t64_ps1_text=$(cat install.ps1)
+t64_contract_out=$(t64_contract "$t64_ship_text" "$t64_build_text" "$t64_readme_text" "$t64_sh_text" "$t64_ps1_text")
+if [ -z "$t64_contract_out" ]; then
+  for ((t64_i=0; t64_i<${#t64_rules[@]}; t64_i++)); do
+    t64_rule="${t64_rules[$t64_i]}"
+    t64_m1="$t64_ship_text"; t64_m2="$t64_build_text"; t64_m3="$t64_readme_text"
+    t64_m4="$t64_sh_text"; t64_m5="$t64_ps1_text"
+    case "${t64_sections[$t64_i]}" in
+      standard) t64_m2="${t64_m2/"$t64_rule"/}" ;;
+      commands|layout) t64_m3="${t64_m3/"$t64_rule"/}" ;;
+      sh) t64_m4="${t64_m4/"$t64_rule"/}" ;;
+      ps1) t64_m5="${t64_m5/"$t64_rule"/}" ;;
+      *) t64_m1="${t64_m1/"$t64_rule"/}" ;;
+    esac
+    t64_mut_out=$(t64_contract "$t64_m1" "$t64_m2" "$t64_m3" "$t64_m4" "$t64_m5")
+    if [ "$t64_mut_out" = " ${t64_labels[$t64_i]}" ]; then
+      ok "T64 removal mutation: ${t64_labels[$t64_i]} rejected by its own check"
+    else
+      bad "T64 removal mutation: ${t64_labels[$t64_i]}" \
+        "got '${t64_mut_out:-<empty>}', want ' ${t64_labels[$t64_i]}'"
+    fi
+  done
+fi
+[ -z "$t64_contract_out" ] && ok "T64 static contract alarm: fc-ship async CI callback, verified merge, gated release, mandatory cleanup" \
+                           || bad "T64 fc-ship section contract" "missing:$t64_contract_out"
+
+# Behavior: a gh stand-in that keeps gh 2.101.0's observable contract.
+cat > "$t64_root/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+# gh stand-in for T64; scenario files live in $T64_CASE. A checks row is
+# name|required|state,state,...|link: the comma list is the poll sequence and
+# its last state repeats. A watch advances polls until nothing is pending, or
+# until a failure under --fail-fast; a later read sees that same poll.
+set -u
+c="${T64_CASE:?}"
+die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+sorted() { printf '%s\n' "${1//,/ }" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' '; }
+pr_head() { git --git-dir="$c/origin.git" rev-parse refs/heads/feature; }
+snapshot() { # required-only (0/1), poll index
+  local name req states link state bucket list idx
+  rows=(); kept=0; failed=0; pending=0; total=0
+  while IFS='|' read -r name req states link; do
+    [ -n "$name" ] || continue
+    total=$((total + 1))
+    if [ "$1" = 1 ] && [ "$req" != yes ]; then continue; fi
+    IFS=',' read -r -a list <<< "$states"
+    idx=$2; [ "$idx" -lt "${#list[@]}" ] || idx=$((${#list[@]} - 1))
+    state=${list[$idx]}
+    case "$state" in
+      SUCCESS) bucket=pass ;;
+      SKIPPED|NEUTRAL) bucket=skipping ;;
+      ERROR|FAILURE|TIMED_OUT|ACTION_REQUIRED) bucket=fail; failed=$((failed + 1)) ;;
+      CANCELLED) bucket=cancel ;;
+      *) bucket=pending; pending=$((pending + 1)) ;;
+    esac
+    rows[$kept]="$name|$state|$bucket|$link"; kept=$((kept + 1))
+  done < "$c/checks"
+  [ "$total" -gt 0 ] || die "no checks reported on the 'feature' branch"
+  [ "$kept" -gt 0 ] || die "no required checks reported on the 'feature' branch"
+}
+checks() {
+  local pr="" watch=0 failfast=0 required=0 interval="" json="" poll f v obj out="" i
+  local name state bucket link
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --watch) watch=1 ;;
+      --fail-fast) failfast=1 ;;
+      --required) required=1 ;;
+      --interval|-i) interval="${2-}"; shift ;;
+      --json) json="${2-}"; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) pr="$1" ;;
+    esac
+    shift
+  done
+  [ "$pr" = 7 ] || die "no pull requests found for branch \"$pr\""
+  if [ -n "$json" ] && [ "$watch" = 1 ]; then die 'cannot use `--watch` with `--json` flag'; fi
+  if [ "$failfast" = 1 ] && [ "$watch" = 0 ]; then die 'cannot use `--fail-fast` flag without `--watch` flag'; fi
+  if [ -n "$interval" ] && [ "$watch" = 0 ]; then die 'cannot use `--interval` flag without `--watch` flag'; fi
+  case "$interval" in *[!0-9]*) die "invalid argument \"$interval\" for \"-i, --interval\" flag" ;; esac
+  for f in ${json//,/ }; do
+    case "$f" in bucket|link|name|state) ;; *) die "Unknown JSON field: \"$f\"" ;; esac
+  done
+  if [ "$watch" = 1 ] && [ -s "$c/watch-errors" ] && [ "$(cat "$c/watch-errors")" -gt 0 ]; then
+    echo $(( $(cat "$c/watch-errors") - 1 )) > "$c/watch-errors"
+    die 'HTTP 502: Bad Gateway (https://api.github.com/graphql)'
+  fi
+  poll=$(cat "$c/poll")
+  snapshot "$required" "$poll"
+  while [ "$watch" = 1 ] && [ "$pending" -gt 0 ]; do
+    if [ "$failfast" = 1 ] && [ "$failed" -gt 0 ]; then break; fi
+    poll=$((poll + 1))
+    [ "$poll" -le 20 ] || die 'stand-in: checks never settled' 124
+    snapshot "$required" "$poll"
+  done
+  echo "$poll" > "$c/poll"
+  for ((i=0; i<kept; i++)); do
+    IFS='|' read -r name state bucket link <<< "${rows[$i]}"
+    if [ -z "$json" ]; then printf '%s\t%s\t%s\n' "$name" "$bucket" "$link"; continue; fi
+    obj=""
+    for f in $(sorted "$json"); do
+      case "$f" in bucket) v=$bucket ;; link) v=$link ;; name) v=$name ;; state) v=$state ;; esac
+      obj="$obj${obj:+,}\"$f\":\"$v\""
+    done
+    out="$out${out:+,}{$obj}"
+  done
+  if [ -n "$json" ]; then printf '[%s]\n' "$out"; exit 0; fi
+  if [ "$failed" -gt 0 ]; then exit 1; fi
+  if [ "$pending" -gt 0 ]; then exit 8; fi
+  exit 0
+}
+view() {
+  local pr="" json="" f out="" merged=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) json="${2-}"; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) pr="$1" ;;
+    esac
+    shift
+  done
+  [ "$pr" = 7 ] || die "no pull requests found for branch \"$pr\""
+  [ -n "$json" ] || die 'stand-in: only --json output is modeled'
+  [ -f "$c/merge-oid" ] && merged=$(cat "$c/merge-oid")
+  for f in $(sorted "$json"); do
+    case "$f" in
+      headRefOid) out="$out${out:+,}\"headRefOid\":\"$(pr_head)\"" ;;
+      state) out="$out${out:+,}\"state\":\"$(cat "$c/pr-state")\"" ;;
+      mergeCommit)
+        if [ -n "$merged" ]; then out="$out${out:+,}\"mergeCommit\":{\"oid\":\"$merged\"}"
+        else out="$out${out:+,}\"mergeCommit\":null"; fi ;;
+      *) die "Unknown JSON field: \"$f\"" ;;
+    esac
+  done
+  printf '{%s}\n' "$out"
+}
+merge() {
+  local pr="" squash=0 match="" base tree commit out
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --squash|-s) squash=1 ;;
+      --match-head-commit) match="${2-}"; shift ;;
+      --admin|--auto|--delete-branch|-d) printf '%s\n' "$1" >> "$c/bypass" ;;
+      -*) die "unknown flag: $1" ;;
+      *) pr="$1" ;;
+    esac
+    shift
+  done
+  [ "$pr" = 7 ] || die "no pull requests found for branch \"$pr\""
+  [ "$squash" = 1 ] || die '--merge, --rebase, or --squash required when not running interactively'
+  [ "$(cat "$c/pr-state")" = OPEN ] || die 'Pull request #7 is not open'
+  if [ -n "$match" ] && [ "$match" != "$(pr_head)" ]; then
+    die 'GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)'
+  fi
+  base=$(git --git-dir="$c/origin.git" rev-parse refs/heads/main) || die 'stand-in: no base'
+  out=$(git --git-dir="$c/origin.git" merge-tree --write-tree "$base" "$(pr_head)") \
+    || die 'Pull request #7 is not mergeable: the merge commit cannot be cleanly created.'
+  read -r tree <<< "$out"
+  commit=$(git --git-dir="$c/origin.git" commit-tree "$tree" -p "$base" -m 'feature (#7)') \
+    || die 'stand-in: commit failed'
+  git --git-dir="$c/origin.git" update-ref refs/heads/main "$commit" "$base" || die 'stand-in: update-ref failed'
+  echo MERGED > "$c/pr-state"
+  echo "$commit" > "$c/merge-oid"
+  printf 'Squashed and merged pull request #7\n'
+}
+run_view() {
+  local id="" logfailed=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --log-failed) logfailed=1 ;;
+      -*) die "unknown flag: $1" ;;
+      *) id="$1" ;;
+    esac
+    shift
+  done
+  [ "$logfailed" = 1 ] || die 'stand-in: only --log-failed is modeled'
+  [ -f "$c/run-$id.log" ] || die 'failed to get run: HTTP 404: Not Found'
+  cat "$c/run-$id.log"
+}
+case "${1-} ${2-}" in
+  'pr checks') shift 2; checks "$@" ;;
+  'pr view') shift 2; view "$@" ;;
+  'pr merge') shift 2; merge "$@" ;;
+  'run view') shift 2; run_view "$@" ;;
+  *) die "stand-in: unsupported gh ${*}" ;;
+esac
+STUB
+chmod +x "$t64_root/bin/gh"
+# Scratch git ignores the caller's config, hooks, and repository variables.
+t64_env=(-u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_OBJECT_DIRECTORY
+  -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u XDG_CONFIG_HOME
+  HOME="$t64_root/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+  GIT_AUTHOR_NAME=T64 GIT_AUTHOR_EMAIL=t64@example.invalid
+  GIT_COMMITTER_NAME=T64 GIT_COMMITTER_EMAIL=t64@example.invalid)
+t64_git() { env "${t64_env[@]}" git "$@" 2>> "$t64_case/setup.log"; }
+t64_fill() { # command template -> this scenario's values
+  local c="$1"
+  c=${c//'<pr>'/7}; c=${c//'<base>'/main}; c=${c//'<old-head>'/$t64_old}
+  c=${c//'<head>'/$t64_head}; c=${c//'<sha>'/$t64_sha}
+  c=${c//'<merge-commit>'/$t64_mergeoid}; c=${c//'<id>'/$t64_id}; c=${c//'<branch>'/feature}
+  printf '%s\n' "$c"
+}
+t64_run() { # command template; run in the work clone with the stand-in first on PATH
+  local cmd words
+  cmd=$(t64_fill "$1")
+  set -f; words=($cmd); set +f
+  ( cd "$t64_case/work" \
+    && env "${t64_env[@]}" T64_CASE="$t64_case" PATH="$t64_root/bin:$PATH" "${words[@]}" ) \
+    > "$t64_case/out" 2> "$t64_case/err"
+  t64_rc=$?
+  t64_stdout=$(cat "$t64_case/out"); t64_stderr=$(cat "$t64_case/err")
+}
+t64_setup() { # scenario name, checks table; origin has main plus PR #7 on feature
+  t64_case="$t64_root/$1"; case_err=""
+  mkdir -p "$t64_case"
+  printf '%s\n' "$2" > "$t64_case/checks"
+  echo OPEN > "$t64_case/pr-state"; echo 0 > "$t64_case/poll"
+  t64_git init -q --bare -b main "$t64_case/origin.git" \
+    && t64_git init -q -b main "$t64_case/work" \
+    && printf 'base\n' > "$t64_case/work/base.txt" \
+    && t64_git -C "$t64_case/work" add base.txt \
+    && t64_git -C "$t64_case/work" commit -q -m base \
+    && t64_git -C "$t64_case/work" remote add origin "$t64_case/origin.git" \
+    && t64_git -C "$t64_case/work" push -q origin main \
+    && t64_git -C "$t64_case/work" switch -q -c feature \
+    && printf 'feature\n' > "$t64_case/work/feature.txt" \
+    && t64_git -C "$t64_case/work" add feature.txt \
+    && t64_git -C "$t64_case/work" commit -q -m feature \
+    && t64_git -C "$t64_case/work" push -q origin feature \
+    || { case_err="setup-failed:$(tail -n 1 "$t64_case/setup.log" 2>/dev/null)"; return 1; }
+  t64_sha=$(t64_git -C "$t64_case/work" rev-parse HEAD)
+  t64_head=$t64_sha; t64_old=$t64_sha; t64_mergeoid=""; t64_id=""
+}
+t64_expect() { # step label, wanted exit code
+  [ "$t64_rc" = "$2" ] || case_err="$case_err $1:exit-$t64_rc(want-$2)"
+}
+t64_bucket() { # check name -> bucket in the last JSON read
+  printf '%s\n' "$t64_stdout" | grep -o '{[^}]*}' | grep -F "\"name\":\"$1\"" \
+    | sed -n 's/.*"bucket":"\([^"]*\)".*/\1/p'
+}
+t64_field() { # key -> string value in the last JSON view
+  printf '%s\n' "$t64_stdout" | sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p"
+}
+t64_span() { # command prefix, required fragment -> first documented span
+  grep -o '`[^`]*`' "$t64_ship" 2>/dev/null | tr -d '`' \
+    | awk -v p="$1" -v s="$2" 'index($0, p) == 1 && index($0, s) { print; exit }'
+}
+t64_cmd_watch=$(t64_span 'gh pr checks <pr> ' '--watch')
+t64_cmd_read=$(t64_span 'gh pr checks <pr> ' '--json')
+t64_cmd_view=$(t64_span 'gh pr view <pr> ' '--json')
+t64_cmd_log=$(t64_span 'gh run view ' '--log-failed')
+t64_cmd_fetch=$(t64_span 'git fetch ' 'origin')
+t64_cmd_eligible=$(t64_span 'git merge-base ' '--is-ancestor')
+t64_cmd_rangediff=$(t64_span 'git range-diff ' 'origin/')
+t64_cmd_merge=$(t64_span 'gh pr merge <pr> ' '--match-head-commit')
+t64_cmd_tree=$(t64_span 'git diff ' '--quiet')
+t64_cmd_push=$(t64_span 'git push ' '--force-with-lease=')
+t64_cmd_watch_all=${t64_cmd_watch/ --required/}
+t64_cmd_read_all=${t64_cmd_read/ --required/}
+t64_missing=""
+for t64_v in watch read view log fetch eligible push rangediff merge tree; do
+  t64_n="t64_cmd_$t64_v"
+  [ -n "${!t64_n}" ] || t64_missing="$t64_missing $t64_v"
+done
+if [ -n "$t64_missing" ]; then
+  bad "T64 behavior: documented fc-ship commands" "undocumented:$t64_missing"
+else
+  # Failure: --fail-fast returns at the first failed check while another is
+  # still pending; the run id in its link fetches the failed log as evidence.
+  if t64_setup failure $'build|yes|FAILURE|https://github.com/o/r/actions/runs/101/job/1\ntest|yes|IN_PROGRESS,SUCCESS|https://github.com/o/r/actions/runs/102/job/2'; then
+    printf '%s\n' 'build  Run tests  ##[error] expected 3 checks, got 2' > "$t64_case/run-101.log"
+    t64_run "$t64_cmd_watch"; t64_expect watch 1
+    t64_run "$t64_cmd_read"; t64_expect read 0
+    [ "$(t64_bucket build)" = fail ] || case_err="$case_err build-not-fail"
+    [ "$(t64_bucket test)" = pending ] || case_err="$case_err watch-waited-past-first-failure"
+    t64_id=$(printf '%s\n' "$t64_stdout" | grep -o '{[^}]*"bucket":"fail"[^}]*}' \
+      | sed -n 's|.*/actions/runs/\([0-9]*\)/.*|\1|p')
+    t64_run "$t64_cmd_view"; t64_expect view 0
+    [ "$(t64_field headRefOid)" = "$t64_sha" ] || case_err="$case_err head-moved"
+    t64_run "$t64_cmd_log"; t64_expect log 0
+    case "$t64_stdout" in *'expected 3 checks, got 2'*) ;; *) case_err="$case_err no-failed-log-evidence" ;; esac
+  fi
+  installer_result "T64 behavior: failure exits fast with the failed run log as evidence"
+
+  # Cancellation: gh exits 0 for a cancelled check, so only the read states
+  # can report it.
+  if t64_setup cancelled 'build|yes|IN_PROGRESS,CANCELLED|https://github.com/o/r/actions/runs/201/job/1'; then
+    t64_run "$t64_cmd_watch"; t64_expect watch 0
+    t64_run "$t64_cmd_read"; t64_expect read 0
+    [ "$(t64_bucket build)" = cancel ] || case_err="$case_err cancel-not-read"
+    t64_run "$t64_cmd_view"; t64_expect view 0
+    [ "$(t64_field headRefOid)" = "$t64_sha" ] || case_err="$case_err head-moved"
+  fi
+  installer_result "T64 behavior: cancellation exits 0, so only the read states report it"
+
+  # Success: --required keeps a failing optional check out of the watch and
+  # the read, and the head is still the recorded one.
+  if t64_setup success $'build|yes|IN_PROGRESS,SUCCESS|https://github.com/o/r/actions/runs/301/job/1\nlint|no|FAILURE|https://github.com/o/r/actions/runs/302/job/2'; then
+    t64_run "$t64_cmd_watch"; t64_expect watch 0
+    t64_run "$t64_cmd_read"; t64_expect read 0
+    [ "$(t64_bucket build)" = pass ] || case_err="$case_err build-not-pass"
+    [ -z "$(t64_bucket lint)" ] || case_err="$case_err optional-check-read"
+    t64_run "$t64_cmd_view"; t64_expect view 0
+    [ "$(t64_field headRefOid)" = "$t64_sha" ] || case_err="$case_err head-moved"
+    [ "$(t64_field state)" = OPEN ] || case_err="$case_err pr-not-open"
+  fi
+  installer_result "T64 behavior: success on required checks at the recorded head"
+
+  # No checks: with no required checks gh errors and the documented fallback
+  # (drop --required) watches all checks; with none at all both report it.
+  if t64_setup no-checks 'lint|no|SUCCESS|https://github.com/o/r/actions/runs/401/job/1'; then
+    t64_run "$t64_cmd_watch"; t64_expect watch-required 1
+    case "$t64_stderr" in *'no required checks reported'*) ;; *) case_err="$case_err no-required-not-reported" ;; esac
+    t64_run "$t64_cmd_watch_all"; t64_expect watch-all 0
+    t64_run "$t64_cmd_read_all"; t64_expect read-all 0
+    [ "$(t64_bucket lint)" = pass ] || case_err="$case_err fallback-not-read"
+    : > "$t64_case/checks"
+    t64_run "$t64_cmd_watch_all"; t64_expect watch-none 1
+    case "$t64_stderr" in *'no checks reported'*) ;; *) case_err="$case_err no-checks-not-reported" ;; esac
+    t64_run "$t64_cmd_read_all"; t64_expect read-none 1
+  fi
+  installer_result "T64 behavior: no required checks falls back to all checks; none at all is reported"
+
+  # Head changed: the watch follows the latest PR commit, so only the head
+  # comparison notices, and --match-head-commit refuses the stale SHA.
+  if t64_setup head-changed 'build|yes|SUCCESS|https://github.com/o/r/actions/runs/501/job/1'; then
+    printf 'more\n' >> "$t64_case/work/feature.txt"
+    t64_git -C "$t64_case/work" commit -q -am concurrent \
+      && t64_git -C "$t64_case/work" push -q origin feature \
+      || case_err="$case_err concurrent-push-failed"
+    t64_run "$t64_cmd_watch"; t64_expect watch 0
+    t64_run "$t64_cmd_view"; t64_expect view 0
+    [ "$(t64_field headRefOid)" != "$t64_sha" ] || case_err="$case_err head-change-missed"
+    t64_run "$t64_cmd_merge"; t64_expect merge 1
+    case "$t64_stderr" in *'Head branch was modified'*) ;; *) case_err="$case_err stale-head-merge-not-refused" ;; esac
+    t64_run "$t64_cmd_view"
+    [ "$(t64_field state)" = OPEN ] || case_err="$case_err stale-head-merged"
+  fi
+  installer_result "T64 behavior: a moved head is detected and the pinned merge refuses it"
+
+  # Watcher error: an API failure exits 1 like a CI failure, but the read
+  # shows no verdict; one re-arm settles it.
+  if t64_setup watcher-error 'build|yes|IN_PROGRESS,SUCCESS|https://github.com/o/r/actions/runs/601/job/1'; then
+    echo 1 > "$t64_case/watch-errors"
+    t64_run "$t64_cmd_watch"; t64_expect watch 1
+    case "$t64_stderr" in *'HTTP 502'*) ;; *) case_err="$case_err watcher-error-hidden" ;; esac
+    t64_run "$t64_cmd_read"; t64_expect read 0
+    [ "$(t64_bucket build)" = pending ] || case_err="$case_err watcher-error-read-as-verdict"
+    t64_run "$t64_cmd_watch"; t64_expect rearm 0
+    t64_run "$t64_cmd_read"; t64_expect reread 0
+    [ "$(t64_bucket build)" = pass ] || case_err="$case_err rearm-did-not-settle"
+  fi
+  installer_result "T64 behavior: a watcher error is not a verdict; one re-arm settles it"
+
+  # Base advance: the head no longer contains the base tip, so the merge is
+  # refused until a rebase; the rebased head merges and the trees match.
+  if t64_setup base-advance 'build|yes|SUCCESS|https://github.com/o/r/actions/runs/701/job/1'; then
+    t64_git clone -q "$t64_case/origin.git" "$t64_case/other" \
+      && printf 'base2\n' > "$t64_case/other/base2.txt" \
+      && t64_git -C "$t64_case/other" add base2.txt \
+      && t64_git -C "$t64_case/other" commit -q -m base2 \
+      && t64_git -C "$t64_case/other" push -q origin main \
+      || case_err="$case_err base-advance-failed"
+    t64_run "$t64_cmd_watch"; t64_expect watch 0
+    t64_run "$t64_cmd_fetch"; t64_expect fetch 0
+    t64_run "$t64_cmd_eligible"; t64_expect stale-head-contains-base 1
+    t64_run "$t64_cmd_view"
+    [ "$(t64_field state)" = OPEN ] || case_err="$case_err merged-before-rebase"
+    t64_git -C "$t64_case/work" rebase -q origin/main || case_err="$case_err rebase-failed"
+    t64_run "$t64_cmd_push"; t64_expect push 0
+    t64_head=$(t64_git -C "$t64_case/work" rev-parse HEAD); t64_sha=$t64_head
+    t64_run "$t64_cmd_watch"; t64_expect rebased-watch 0
+    t64_run "$t64_cmd_eligible"; t64_expect rebased-head-contains-base 0
+    t64_run "$t64_cmd_rangediff"; t64_expect range-diff 0
+    printf '%s\n' "$t64_stdout" | grep -qE '^1: +[0-9a-f]+ = 1: +[0-9a-f]+ feature$' \
+      || case_err="$case_err range-diff-not-unchanged:$(printf '%s' "$t64_stdout" | tr '\n' ' ')"
+    t64_run "$t64_cmd_merge"; t64_expect merge 0
+    t64_run "$t64_cmd_view"; t64_expect view 0
+    [ "$(t64_field state)" = MERGED ] || case_err="$case_err not-merged"
+    t64_mergeoid=$(t64_field oid)
+    t64_run "$t64_cmd_fetch"; t64_expect refetch 0
+    t64_run "$t64_cmd_tree"; t64_expect tree-equal 0
+    t64_head=$t64_old; t64_run "$t64_cmd_tree"; t64_expect stale-tree-differs 1; t64_head=$t64_sha
+    [ ! -s "$t64_case/bypass" ] || case_err="$case_err bypass:$(tr '\n' ' ' < "$t64_case/bypass")"
+  fi
+  installer_result "T64 behavior: an advanced base refuses the merge until rebased, then merges the verified tree"
+
+  # Stale base: `git fetch origin <base>` refreshed the base's lease but left
+  # the local base behind. Under push.default=matching an unqualified
+  # --force-with-lease push would rewind the remote base to that stale tip; the
+  # documented push names the feature branch and its old head, so only it moves.
+  if t64_setup stale-base-push ''; then
+    t64_git -C "$t64_case/work" config push.default matching \
+      && t64_git clone -q "$t64_case/origin.git" "$t64_case/other" \
+      && printf 'base2\n' > "$t64_case/other/base2.txt" \
+      && t64_git -C "$t64_case/other" add base2.txt \
+      && t64_git -C "$t64_case/other" commit -q -m base2 \
+      && t64_git -C "$t64_case/other" push -q origin main \
+      || case_err="$case_err base-advance-failed"
+    t64_base=$(t64_git --git-dir="$t64_case/origin.git" rev-parse refs/heads/main)
+    t64_run "$t64_cmd_fetch"; t64_expect fetch 0
+    t64_git -C "$t64_case/work" rebase -q origin/main || case_err="$case_err rebase-failed"
+    t64_head=$(t64_git -C "$t64_case/work" rev-parse HEAD)
+    [ "$t64_head" != "$t64_old" ] || case_err="$case_err rebase-did-not-move-head"
+    t64_run "$t64_cmd_push"; t64_expect push 0
+    t64_refs=$(t64_git --git-dir="$t64_case/origin.git" for-each-ref --format='%(refname) %(objectname)')
+    [ "$t64_refs" = "refs/heads/feature $t64_head"$'\n'"refs/heads/main $t64_base" ] \
+      || case_err="$case_err remote-refs:$(printf '%s' "$t64_refs" | tr '\n' ' ')"
+    # Control: in this same repository the unqualified form does rewind the
+    # remote base, so the assertion above is not vacuous.
+    t64_git -C "$t64_case/work" push -q --force-with-lease origin || case_err="$case_err control-push-failed"
+    [ "$(t64_git --git-dir="$t64_case/origin.git" rev-parse refs/heads/main)" != "$t64_base" ] \
+      || case_err="$case_err control-did-not-rewind-base"
+  fi
+  installer_result "T64 behavior: with push.default=matching and a stale local base, the documented push moves only the feature ref"
 fi
 
 echo
