@@ -4722,6 +4722,8 @@ permission-swap|default permissions must be contents: read|t67_sub .github/workf
 job-guard|publish job must run only on main|t67_sub .github/workflows/publish-wiki.yml "if: github.ref == 'refs/heads/main'" 'if: true'
 serialized|serialized without cancellation|t67_sub .github/workflows/publish-wiki.yml 'cancel-in-progress: false' 'cancel-in-progress: true'
 stale-deletion|retained a deleted page|t67_sub scripts/publish-wiki.sh ' -delete' ''
+nested-deletion|touched a nested destination page|t67_sub scripts/publish-wiki.sh ' -maxdepth 1' ''
+nested-copy|copied a nested source page|t67_sub scripts/publish-wiki.sh 'pages=("$source_dir"/*.md)' 'pages=("$source_dir"/*.md "$source_dir"/*/*.md)'
 branch-guard|not on master|t67_sub scripts/publish-wiki.sh '== "master" ]] ||' '== "master" ]] || true ||'
 canonical-rule|makes wiki/ canonical|t67_sub CLAUDE.md 'only source of truth' 'primary source'
 verify-rule|post-merge publish check|t67_sub CLAUDE.md 'confirm the `Publish wiki` run' 'watch the wiki'

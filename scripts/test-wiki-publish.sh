@@ -33,12 +33,16 @@ git -C "$wiki_repo" config user.name test
 git -C "$wiki_repo" config user.email test@example.invalid
 printf '# stale\n' > "$wiki_repo/Stale.md"
 printf '# old\n' > "$wiki_repo/Keep.md"
+mkdir "$wiki_repo/nested"
+echo '# nested page' > "$wiki_repo/nested/Deep.md"
 git -C "$wiki_repo" add --all
 git -C "$wiki_repo" commit -q -m seed
 
 printf '# home\n' > "$source_dir/Home.md"
 printf '# current\n' > "$source_dir/Keep.md"
 printf 'not a wiki page\n' > "$source_dir/ignored.txt"
+mkdir "$source_dir/nested"
+echo '# nested source' > "$source_dir/nested/Child.md"
 
 first_output="$tmp/first-output"
 GITHUB_OUTPUT="$first_output" "$publisher" "$source_dir" "$wiki_repo" 0123456789abcdef > /dev/null
@@ -49,6 +53,9 @@ GITHUB_OUTPUT="$first_output" "$publisher" "$source_dir" "$wiki_repo" 0123456789
 [[ "$(<"$wiki_repo/Keep.md")" == "# current" ]] || fail "publisher did not update a page"
 [[ ! -e "$wiki_repo/Stale.md" ]] || fail "publisher retained a deleted page"
 [[ ! -e "$wiki_repo/ignored.txt" ]] || fail "publisher copied a non-Markdown file"
+# Only top-level pages are in scope: nested Markdown is never copied or deleted.
+[[ -f "$wiki_repo/nested/Deep.md" && "$(<"$wiki_repo/nested/Deep.md")" == "# nested page" ]] || fail "publisher touched a nested destination page"
+[[ ! -e "$wiki_repo/Child.md" && ! -e "$wiki_repo/nested/Child.md" ]] || fail "publisher copied a nested source page"
 [[ "$(git -C "$wiki_repo" rev-list --count HEAD)" == "2" ]] || fail "first publish did not create one commit"
 [[ "$(git -C "$wiki_repo" log -1 --pretty=%s)" == "Publish wiki from 0123456" ]] || fail "commit does not identify source SHA"
 
