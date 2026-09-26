@@ -12,7 +12,7 @@ Tasks can each be correct and still fail together. Focus where per-task reviewer
 
 **Integration** — do components actually work together? Are the interfaces compatible in practice? Trace one operation end to end. Do errors from inner components surface correctly at the outer ones? Any shared mutable state, races, or inconsistency?
 
-**Architecture** — does the implementation match the design? Any shortcuts that will hurt later? Is the dependency graph clean? Would a new team member find the structure legible?
+**Architecture** — does the implementation match the design and its component map? Any shortcuts that will hurt later? Is the dependency graph clean? Would a new team member find the structure legible?
 
 **Test coverage** — integration tests present, not just unit? Happy path covered end to end? Error paths tested? Name a scenario that isn't covered.
 
