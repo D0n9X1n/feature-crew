@@ -20,7 +20,7 @@ Every model-authored review below uses the canonical artifact-author selector in
 
 ## Worked example
 
-> "Build OAuth + SAML auth."
+> "Build OAuth + SAML auth." (Illustrative. In an Opus-family session the same rules request `model: opus` for authoring and select `model: sonnet` for review.)
 >
 > PM proposes Complex in a Sonnet-family session. `/fc-brainstorm` returns a chosen approach; `/fc-grill-me` returns settled provider/session/RBAC decisions. Spec written, 850 words. The harness records a Sonnet-family author, selecting `model: opus`; the recorded reviewer is Opus. The audit flags a missing logout criterion → addressed → user approves.
 >
@@ -37,5 +37,5 @@ Every model-authored review below uses the canonical artifact-author selector in
 - **Plan over 500 lines** → decompose. Never ship an oversized plan "because the feature is big."
 - **Parallel devs on shared files** → merge conflicts and duplicated work. Group by file independence, not by task count.
 - **Spec approval assumed** → the most common gate leak. A spec doc existing is not a user approving it.
-- **Plan shipped unaudited** → the rule names `plan` as a must-audit artifact, and it is the easiest one to skip because the architect's output reads as authoritative. Step 6 exists because this flow omitted it for two versions and five reviewers caught it.
+- **Plan shipped unaudited** → the rule names `plan` as a must-audit artifact, and it is the easiest one to skip because the architect's output reads as authoritative.
 - **QA findings batched to the end** → fix loops stack. QA each task as its developer finishes.

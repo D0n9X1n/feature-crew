@@ -1,6 +1,6 @@
 ---
 name: fc-build-or-fix
-description: Runs a code change through a right-sized track (Just Do It / Standard / Complex) with hard gates, TDD, and cross-family review. Use when the user asks naturally to build, fix, change, refactor, implement, add, or extend code. Do NOT use for an open question whose primary need is facts, an approach, or review of an artifact this pipeline did not produce; route that need with the classifier below.
+description: Runs a code change through a right-sized track (Just Do It / Standard / Complex) with hard gates, TDD, and cross-family review. Use when the user asks naturally to build, fix, change, refactor, implement, add, or extend code. Do NOT use for an open question whose primary need is facts (look them up, or use /fc-research), an approach (use /fc-brainstorm), or review of an artifact this pipeline did not produce (use /fc-review).
 ---
 
 # fc-build-or-fix
