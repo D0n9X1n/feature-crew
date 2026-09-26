@@ -1551,6 +1551,47 @@ echo "$research_caps" | grep -qiE 'max 5 dispatches.*descendants.*any depth' \
   || t56_err="$t56_err descendant-dispatches-not-counted"
 echo "$research_caps" | grep -qiE 'pause.*user.*approval|user.*OK.*first' \
   || t56_err="$t56_err cap-expansion-not-approved"
+# The focused path drops the fan-out, never the safeguards: one pinned author,
+# one selector-chosen validator, raw evidence, the shared suffix, the cap, and
+# one revise cycle. Scope the clauses to the intro that chooses the path;
+# removal mutations run only after the control passes and must each produce
+# exactly their own diagnostic.
+t56_focused_labels=(
+  focused-author-model focused-raw-evidence focused-validator-selector
+  focused-safeguards focused-broader-full-pipeline
+)
+t56_focused_rules=(
+  'For one bounded question or angle, dispatch one author with an explicit `model` override from the authoring rule in `/fc-build-or-fix` to search and synthesize in the Phase 2 format; record its actual author model for the selector.'
+  'The author returns raw evidence beside the synthesis: each claim with a concrete source (`file:line`, URL, or command output).'
+  'One validator chosen by the canonical selector then checks both as in Phase 3: two dispatches.'
+  'The Worker boundary suffix, the five-dispatch cap, and one revise cycle still apply.'
+  'Broader questions keep the full pipeline below.'
+)
+t56_focused_contract() { # research text
+  local intro i errors=""
+  intro=$(printf '%s\n' "$1" | sed -n '/^# fc-research$/,/^## /p')
+  for ((i=0; i<${#t56_focused_rules[@]}; i++)); do
+    printf '%s\n' "$intro" | grep -qF "${t56_focused_rules[$i]}" \
+      || errors="$errors ${t56_focused_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t56_research_text=$(cat "$research")
+t56_focused_out=$(t56_focused_contract "$t56_research_text")
+t56_err="$t56_err$t56_focused_out"
+if [ -z "$t56_focused_out" ]; then
+  for ((t56_i=0; t56_i<${#t56_focused_rules[@]}; t56_i++)); do
+    t56_rule="${t56_focused_rules[$t56_i]}"
+    t56_research_mut="${t56_research_text/"$t56_rule"/}"
+    t56_mut_out=$(t56_focused_contract "$t56_research_mut")
+    if [ "$t56_mut_out" = " ${t56_focused_labels[$t56_i]}" ]; then
+      ok "T56 removal mutation: ${t56_focused_labels[$t56_i]} rejected by its own check"
+    else
+      bad "T56 removal mutation: ${t56_focused_labels[$t56_i]}" \
+        "got '${t56_mut_out:-<empty>}', want ' ${t56_focused_labels[$t56_i]}'"
+    fi
+  done
+fi
 [ -z "$t56_err" ] && ok "T56 static contract alarm: research workers cannot delegate past the cap" \
                    || bad "T56 research dispatch boundary" "missing:$t56_err"
 
@@ -1573,8 +1614,119 @@ done
 refute=$(sed -n '/^## 3 — Refute/,/^## /p' .claude/skills/fc-second-opinion/SKILL.md)
 echo "$refute" | grep -qiE 'each refuter.*explicit.*`model` override.*selector.*`/fc-build-or-fix`' \
   || t57_err="$t57_err refuter-selector-override-missing"
-[ -z "$t57_err" ] && ok "T57 static contract alarm: honest read-only policy + explicit refuter models" \
+# Review lenses carry their own model: an unpinned lens runs whatever the
+# harness resolves, and an excluded lens must never read as PASS. Scope the
+# clauses to the lens section; each removal mutation must produce exactly its
+# own diagnostic, and runs only after the unmodified skill passes the control.
+t57_lens_labels=(
+  lens-selector-model lens-unknown-author-advisory lens-recorded-model-exclusion
+  lens-zero-usable-unavailable
+)
+t57_lens_rules=(
+  'Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author.'
+  'For a human or unknown author, request `sonnet` and label the review advisory with independence unverified.'
+  'Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family.'
+  'Zero usable lenses makes the review unavailable, never PASS.'
+)
+t57_lens_contract() { # review text
+  local lenses i errors=""
+  lenses=$(printf '%s\n' "$1" | sed -n '/^## 2 — Pick lenses/,/^## /p')
+  for ((i=0; i<${#t57_lens_rules[@]}; i++)); do
+    printf '%s\n' "$lenses" | grep -qF "${t57_lens_rules[$i]}" \
+      || errors="$errors ${t57_lens_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t57_review_text=$(cat .claude/skills/fc-review/SKILL.md)
+t57_lens_out=$(t57_lens_contract "$t57_review_text")
+t57_err="$t57_err$t57_lens_out"
+if [ -z "$t57_lens_out" ]; then
+  for ((t57_i=0; t57_i<${#t57_lens_rules[@]}; t57_i++)); do
+    t57_rule="${t57_lens_rules[$t57_i]}"
+    t57_review_mut="${t57_review_text/"$t57_rule"/}"
+    t57_mut_out=$(t57_lens_contract "$t57_review_mut")
+    if [ "$t57_mut_out" = " ${t57_lens_labels[$t57_i]}" ]; then
+      ok "T57 removal mutation: ${t57_lens_labels[$t57_i]} rejected by its own check"
+    else
+      bad "T57 removal mutation: ${t57_lens_labels[$t57_i]}" \
+        "got '${t57_mut_out:-<empty>}', want ' ${t57_lens_labels[$t57_i]}'"
+    fi
+  done
+fi
+[ -z "$t57_err" ] && ok "T57 static contract alarm: honest read-only policy + explicit refuter and lens models" \
                    || bad "T57 standalone review policy contract" "missing:$t57_err"
+
+# ---------------------------------------------------------------- T65
+# Run discipline loads at entry and on resume. Each clause is checked inside
+# its own section, so an unrelated mention elsewhere cannot satisfy it; each
+# removal mutation must produce exactly its own diagnostic, and runs only after
+# the unmodified documents pass the control.
+t65_err=""
+discipline=.claude/skills/fc-build-or-fix/reference/run-discipline.md
+[ -f "$discipline" ] || t65_err="$t65_err run-discipline-missing"
+t65_labels=(
+  run-discipline-pointer
+  feedback-checked-against-code-and-spec feedback-reproduce-before-fix feedback-reject-unsupported
+  checkpoint-refresh-git-private checkpoint-contents checkpoint-resume-reconcile
+  runtime-proof-executed runtime-proof-static-insufficient runtime-proof-unavailable-not-done
+  runtime-proof-non-behavioral-na
+)
+t65_sections=(pointer feedback feedback feedback checkpoint checkpoint checkpoint runtime runtime runtime runtime)
+t65_rules=(
+  'Load [reference/run-discipline.md](reference/run-discipline.md) at entry and on resume.'
+  'Check every incoming finding, such as QA results or PR comments, against the code and spec before acting on it.'
+  'Reproduce a runnable failure before fixing it.'
+  'Reject or defer an unsupported claim with a stated reason.'
+  'After each task or gate transition, and before a requested handoff or compaction, refresh a checkpoint of at most 25 lines at `$(git rev-parse --git-path fc-checkpoint.md)`, which is git-private and worktree-local.'
+  'Record worktree and HEAD, approvals, stage, next action, blockers, and evidence and provenance links.'
+  'On resume, reconcile HEAD, status, and diff against it, and re-verify stale evidence.'
+  'Changed user-visible behavior needs actual CLI/API execution or rendered interaction, with output or screenshot evidence.'
+  'Existing end-to-end evidence counts; static or unit tests alone do not.'
+  'If the runtime is unavailable, do not claim done.'
+  'Non-behavioral changes state "N/A".'
+)
+t65_discipline_contract() { # build-or-fix text, run-discipline text
+  local pointer feedback checkpoint runtime section i errors=""
+  pointer=$(printf '%s\n' "$1" | sed -n '/^# fc-build-or-fix$/,/^## /p')
+  feedback=$(printf '%s\n' "$2" | sed -n '/^## Feedback/,/^## /p')
+  checkpoint=$(printf '%s\n' "$2" | sed -n '/^## Checkpoint/,/^## /p')
+  runtime=$(printf '%s\n' "$2" | sed -n '/^## Runtime proof/,/^## /p')
+  for ((i=0; i<${#t65_rules[@]}; i++)); do
+    case "${t65_sections[$i]}" in
+      pointer) section="$pointer" ;;
+      feedback) section="$feedback" ;;
+      checkpoint) section="$checkpoint" ;;
+      runtime) section="$runtime" ;;
+    esac
+    printf '%s\n' "$section" | grep -qF "${t65_rules[$i]}" \
+      || errors="$errors ${t65_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t65_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
+t65_discipline_text=$(cat "$discipline" 2>/dev/null)
+t65_out=$(t65_discipline_contract "$t65_build_text" "$t65_discipline_text")
+t65_err="$t65_err$t65_out"
+if [ -z "$t65_err" ]; then
+  for ((t65_i=0; t65_i<${#t65_rules[@]}; t65_i++)); do
+    t65_rule="${t65_rules[$t65_i]}"
+    t65_build_mut="$t65_build_text"
+    t65_discipline_mut="$t65_discipline_text"
+    case "${t65_sections[$t65_i]}" in
+      pointer) t65_build_mut="${t65_build_mut/"$t65_rule"/}" ;;
+      *) t65_discipline_mut="${t65_discipline_mut/"$t65_rule"/}" ;;
+    esac
+    t65_mut_out=$(t65_discipline_contract "$t65_build_mut" "$t65_discipline_mut")
+    if [ "$t65_mut_out" = " ${t65_labels[$t65_i]}" ]; then
+      ok "T65 removal mutation: ${t65_labels[$t65_i]} rejected by its own check"
+    else
+      bad "T65 removal mutation: ${t65_labels[$t65_i]}" \
+        "got '${t65_mut_out:-<empty>}', want ' ${t65_labels[$t65_i]}'"
+    fi
+  done
+fi
+[ -z "$t65_err" ] && ok "T65 static contract alarm: feedback checks, resumable checkpoints, runtime proof" \
+                   || bad "T65 run-discipline contract" "missing:$t65_err"
 
 # ---------------------------------------------------------------- T35
 # Exercise both PowerShell invocation forms, not just parameter-name tokens.
