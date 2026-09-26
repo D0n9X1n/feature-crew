@@ -2987,6 +2987,7 @@ t63_shipped=$( { for t63_f in agents/*.md; do printf '%s\n' "$t63_f"; done
 t63_agents=$(printf '%s\n' "$t63_shipped" | grep -c '^agents/')
 t63_skills=$(printf '%s\n' "$t63_shipped" | grep -c '^skills/[^/]*/SKILL\.md$')
 t63_record=1
+t63_via=""
 t63_detail=""
 t63_normalize() { # prefix, source, captured output
   T63_P="$1" T63_S="$2" awk '
@@ -3002,10 +3003,28 @@ t63_normalize() { # prefix, source, captured output
   ' "$3"
 }
 t63_expect() { printf '%s\n' "$@" > "$t63_root/expected"; }
-t63_run() { # engine, prefix, want-exit, label, installer directory, flags...
+# Start an engine the way a user does: by relative path, from $t63_via.
+t63_run_relative() { # engine, prefix, flags...
+  local engine="$1" prefix="$2"; shift 2
+  if [ "$engine" = sh ]; then
+    ( cd "$t63_via" && HOME="$installer_root/home" "$installer_bash" install.sh --prefix "$prefix" "$@" ) \
+      > "$installer_root/run.out" 2>&1
+  else
+    ( cd "$t63_via" && env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
+        POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+        "$PWSH_BIN" -NonInteractive -File install.ps1 --prefix "$prefix" "$@" ) > "$installer_root/run.out" 2>&1
+  fi
+  installer_rc=$?
+  installer_out=$(cat "$installer_root/run.out")
+}
+t63_run() { # engine, prefix, want-exit, label, installer directory, flags...; relative when t63_via is set
   local engine="$1" prefix="$2" want="$3" label="$4" installer_repo="$5"; shift 5
   snapshot_tree "$prefix" > "$t63_root/before" 2>/dev/null
-  run_installer_at "$t63_cwd" "$engine" "$prefix" "$@"
+  if [ -n "$t63_via" ]; then
+    t63_run_relative "$engine" "$prefix" "$@"
+  else
+    run_installer_at "$t63_cwd" "$engine" "$prefix" "$@"
+  fi
   [ "$installer_rc" -eq "$want" ] || case_err="$case_err $label:exit=$installer_rc(want-$want)"
   t63_normalize "$prefix" "$installer_repo" "$installer_root/run.out" > "$t63_root/actual"
   if ! cmp -s "$t63_root/expected" "$t63_root/actual"; then
@@ -3028,6 +3047,17 @@ t63_result() {
     [ -z "$t63_detail" ] || printf '        first difference: %s\n' "$t63_detail"
   fi
   t63_detail=""
+}
+# Lock one source path, run both modes, then restore it. t63_run never aborts,
+# so the restore always runs; cleanup unlocks too if the suite dies mid-case.
+t63_lock_pair() { # engine, prefix, source path to lock, path the error names, label
+  local mode=644
+  [ -d "$t63_fixture/$3" ] && mode=755
+  t63_expect "ERROR: cannot read installer source ($4)"
+  chmod 000 "$t63_fixture/$3"
+  t63_run "$1" "$2" 2 "$5-check" "$t63_fixture" --check
+  t63_run "$1" "$2" 2 "$5-verify" "$t63_fixture" --verify
+  chmod "$mode" "$t63_fixture/$3"
 }
 t63_pin_model() { # copied installer inputs: pin one role agent; add body prose to another
   { printf -- '---\nname: fc-qa-code\ndescription: "Pinned fixture."\nmodel: opus\n---\n\n'
@@ -3284,8 +3314,8 @@ for engine in "${INSTALLERS[@]}"; do
   t63_result "T63 $engine operational errors (no agents/ source, unreadable file) exit 2 without a verdict"
 
   # An unreadable source is an operational error on every walk, never a
-  # mismatch: exit 2 and one ERROR line naming the walk that failed, identical
-  # from both engines. The mode is restored after each pair, even on failure.
+  # mismatch: exit 2 and one ERROR line naming the unreadable path relative to
+  # the source root, identical from both engines however they were started.
   if [ "$t63_can_lock" -eq 1 ]; then
     case_err=""
     p="$base/fresh"
@@ -3295,16 +3325,24 @@ for engine in "${INSTALLERS[@]}"; do
     fi
     for t63_locked in agents agents/fc-pm.md .claude/skills .claude/skills/fc-review \
         .claude/skills/fc-build-or-fix/reference .claude/skills/fc-review/SKILL.md; do
-      t63_perm=644
-      [ -d "$t63_fixture/$t63_locked" ] && t63_perm=755
-      t63_label="source-$(printf '%s' "${t63_locked#.claude/}" | tr '/.' '--')"
-      t63_expect "ERROR: cannot read installer source (<SRC>/${t63_locked%/reference})"
-      chmod 000 "$t63_fixture/$t63_locked"
-      t63_run "$engine" "$p" 2 "$t63_label-check" "$t63_fixture" --check
-      t63_run "$engine" "$p" 2 "$t63_label-verify" "$t63_fixture" --verify
-      chmod "$t63_perm" "$t63_fixture/$t63_locked"
+      t63_lock_pair "$engine" "$p" "$t63_locked" "${t63_locked%/reference}" \
+        "source-$(printf '%s' "${t63_locked#.claude/}" | tr '/.' '--')"
     done
     t63_result "T63 $engine an unreadable source (agents, skills, a skill, a nested dir, a file) exits 2 identically"
+
+    # Every file is current, so only an eager read of the table can fail.
+    case_err=""
+    t63_lock_pair "$engine" "$p" published.sha256 published.sha256 source-published
+    t63_result "T63 $engine an unreadable published.sha256 exits 2 in both modes, even when every file is current"
+
+    # Through a symlinked directory sh keeps the logical path and pwsh the
+    # resolved one, so only a source-relative path prints the same from both.
+    case_err=""
+    [ -L "$t63_root/locked-link" ] || ln -s "$t63_fixture" "$t63_root/locked-link" || case_err="$case_err link-failed"
+    t63_via="$t63_root/locked-link"
+    t63_lock_pair "$engine" "$p" .claude/skills/fc-build-or-fix/reference .claude/skills/fc-build-or-fix linked-reference
+    t63_via=""
+    t63_result "T63 $engine run by relative path through a symlinked directory names the same source-relative path"
   fi
 
   case_err=""

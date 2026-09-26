@@ -508,9 +508,12 @@ check_report() { # label, prefix-relative paths...
 
 # An unreadable source is an operational error, never a mismatch: a glob or a
 # process substitution drops a failed walk, so every walk checks its status.
-# Mirrored by Read-Source in install.ps1.
+# The path is named relative to the installer directory, so both engines print
+# the same line however each resolved its own directory. Mirrored by
+# Read-Source in install.ps1.
 source_error() {
-  say "ERROR: cannot read installer source ($1)" >&2
+  local rel="${1#"$SCRIPT_DIR"/}"
+  say "ERROR: cannot read installer source ($rel)" >&2
   exit 2
 }
 
@@ -529,6 +532,11 @@ check_install() {
   if [ "$MANIFEST_VALID" -eq 0 ]; then
     say "ERROR: not a Feature-Crew manifest (left untouched): $MANIFEST" >&2
     exit 2
+  fi
+  # Read the historical-hash table now: published_file reads it only for a file
+  # that differs, so an unreadable table would otherwise go unnoticed.
+  if [ -f "$PUBLISHED_HASHES" ] && ! cat "$PUBLISHED_HASHES" > /dev/null 2>&1; then
+    source_error "$PUBLISHED_HASHES"
   fi
   CHECK_ENTRIES=()
   CHECK_MISSING=()

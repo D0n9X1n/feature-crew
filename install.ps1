@@ -121,9 +121,17 @@ $EmDash = [char]0x2014
 $DryDirs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $PublishedHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $publishedTable = Join-Path $ScriptDir "published.sha256"
+$PublishedUnreadable = $false
 if (Test-Path -LiteralPath $publishedTable -PathType Leaf) {
-  foreach ($line in [IO.File]::ReadAllLines($publishedTable)) {
-    [void]$PublishedHashes.Add($line)
+  try {
+    foreach ($line in [IO.File]::ReadAllLines($publishedTable)) {
+      [void]$PublishedHashes.Add($line)
+    }
+  } catch {
+    # -Check and -Verify report an unreadable table as an operational error
+    # (Invoke-InstallCheck); every other mode stops here, as before.
+    if (-not ($Check -or $Verify)) { throw }
+    $PublishedUnreadable = $true
   }
 }
 
@@ -570,10 +578,20 @@ function Get-CheckState($rel, $want) {
   return 'uncertain'
 }
 
+# Name a source path relative to the installer directory with forward slashes,
+# as source_error does in install.sh, so both engines print the same line
+# however each resolved its own directory.
+function Get-SourceRelative($path) {
+  $p = [string]$path
+  $root = $ScriptDir + [IO.Path]::DirectorySeparatorChar
+  if ($p.StartsWith($root, [StringComparison]::Ordinal)) { $p = $p.Substring($root.Length) }
+  return $p.Replace([string][IO.Path]::DirectorySeparatorChar, '/')
+}
+
 # An unreadable source is an operational error, never a mismatch: report the
 # path that failed, exactly as source_error does in install.sh.
 function Read-Source($path, [scriptblock]$read) {
-  try { & $read } catch { throw "cannot read installer source ($path)" }
+  try { & $read } catch { throw "cannot read installer source ($(Get-SourceRelative $path))" }
 }
 
 # Get-ChildItem lists an unreadable directory as empty when it filters without
@@ -598,6 +616,8 @@ function Invoke-InstallCheck {
     $script:CheckExitCode = 2
     return
   }
+  # The table was read at startup; the dispatch turns this into exit 2.
+  if ($PublishedUnreadable) { throw "cannot read installer source ($(Get-SourceRelative $publishedTable))" }
   $found = @{}
   foreach ($kind in @('missing', 'outdated', 'uncertain', 'stale', 'model key')) {
     $found[$kind] = New-Object 'System.Collections.Generic.List[string]'
