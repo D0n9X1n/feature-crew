@@ -1,6 +1,6 @@
 # Feature-Crew
 
-**v5.1.1** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates.
+**v5.2.0** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates.
 
 ## Install
 
@@ -15,7 +15,7 @@ Flags: `--force`, `--dry-run`, `--uninstall`, `--check`, `--verify`, `--prefix D
 
 Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, adversarial confidence in a chosen consequential decision, and an unexplained failure. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
 
-The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`; this README does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-build-or-fix`, `/fc-ship`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
+The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`; this README does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-explain`, `/fc-build-or-fix`, `/fc-ship`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
 
 ## Complexity tracks
 
@@ -65,7 +65,7 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── .claude/skills/fc-*/       # nine skills
+├── .claude/skills/fc-*/       # ten skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test and release pipelines
 ├── tests/framework_test.sh
