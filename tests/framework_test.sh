@@ -820,8 +820,9 @@ echo
 # carries a component map, and compares a blind second design unless it is
 # super straightforward. Section-scoped like T55: each clause counts only in
 # its own section, and after the unmodified documents pass, removing one clause
-# must produce exactly its own diagnostic. Rules avoid glob characters, so
-# matching and removal stay literal in bash 3.2 and 5.
+# must produce exactly its own diagnostic. Handoff rules include their links,
+# so a dropped link trips its own clause. Every match and removal quotes its
+# rule, so link brackets match literally, never as a glob.
 t61_err=""
 t61_docs=(
   .claude/skills/fc-build-or-fix/reference/design-check.md
@@ -830,6 +831,7 @@ t61_docs=(
   agents/fc-architect.md agents/fc-qa-code.md agents/fc-tech-lead.md agents/fc-developer.md
 )
 t61_labels=(
+  paste-into-architect
   top-down bottom-up-map reconcile-paths fitness-gate fitness-one-job fitness-home
   fitness-interface fitness-change fitness-testable component-map
   second-opinion-mandatory second-opinion-parallel second-opinion-selector second-opinion-dispatcher second-opinion-blind
@@ -842,11 +844,13 @@ t61_labels=(
   qa-component-map lead-component-map developer-component-map
 )
 t61_sections=(
+  intro
   both both both fitness fitness fitness fitness fitness fitness fitness
   second second second second second second second second second second second second second second
   dispatch standard standard step5 step5 step6 phase1 output output review report qa lead dev
 )
 t61_rules=(
+  "paste it into the architect's task."
   'requirements → responsibilities → components → interfaces. Every requirement has a home; every component traces to a requirement.'
   'map the existing code near the change before creating anything, one row per component: `component | job | key files | depends on | evidence (file:line)`. Mark inferences and unknowns. Reuse or extend before creating.'
   'fit the design to existing seams, walk one normal and one failure path through it, and raise real conflicts as decisions, never guesses.'
@@ -871,10 +875,10 @@ t61_rules=(
   'means all of: reversible; one unambiguous design that extends an existing pattern; objectively verifiable; no new component, interface, or dependency; no unresolved decision. Record the reason in the spec.'
   'Complex work is never exempt'
   'approval waivers do not waive this step.'
-  'Exception: the blind second design runs alongside the first'
+  'Exception: the blind second design runs alongside the first ([reference/design-check.md](reference/design-check.md)).'
   'files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets'
-  'including its blind second opinion unless the design is super straightforward.'
-  'In parallel, dispatch the blind second designer per'
+  'Run [reference/design-check.md](reference/design-check.md), including its blind second opinion unless the design is super straightforward.'
+  'In parallel, dispatch the blind second designer per [design-check.md](design-check.md)'
   'then resume the architect with its sketch to compare and reconcile in the plan.'
   'components that duplicate existing code or fail the fitness check'
   'Start from the design check pasted into your task: work both directions, top-down and bottom-up; run the fitness check on every new or changed component; and write the component map.'
@@ -887,8 +891,9 @@ t61_rules=(
   "Follow the plan's file structure and component map; if the task needs a component the map lacks, stop and report DONE_WITH_CONCERNS."
 )
 t61_design_contract() { # the seven t61_docs texts, in order
-  local both fitness second dispatch standard step5 step6 phase1 review output report
+  local intro both fitness second dispatch standard step5 step6 phase1 review output report
   local qa lead dev section i errors=""
+  intro=$(printf '%s\n' "$1" | sed -n '/^# Design check/,/^## /p')
   both=$(printf '%s\n' "$1" | sed -n '/^## Both directions/,/^## /p')
   fitness=$(printf '%s\n' "$1" | sed -n '/^## Fitness check/,/^## /p')
   second=$(printf '%s\n' "$1" | sed -n '/^## Second opinion/,/^## /p')
@@ -906,6 +911,7 @@ t61_design_contract() { # the seven t61_docs texts, in order
   dev=$(printf '%s\n' "$7" | sed -n '/^## Code organization/,/^## /p')
   for ((i=0; i<${#t61_rules[@]}; i++)); do
     case "${t61_sections[$i]}" in
+      intro) section="$intro" ;;
       both) section="$both" ;;
       fitness) section="$fitness" ;;
       second) section="$second" ;;
@@ -938,7 +944,7 @@ t61_err="$t61_err$t61_out"
 if [ -z "$t61_err" ]; then
   for ((t61_i=0; t61_i<${#t61_rules[@]}; t61_i++)); do
     case "${t61_sections[$t61_i]}" in
-      both|fitness|second) t61_doc_i=0 ;;
+      intro|both|fitness|second) t61_doc_i=0 ;;
       dispatch|standard) t61_doc_i=1 ;;
       step5|step6) t61_doc_i=2 ;;
       phase1|review|output|report) t61_doc_i=3 ;;
