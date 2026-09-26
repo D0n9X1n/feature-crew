@@ -815,6 +815,153 @@ fi
                   || bad "T26 rule/flow mismatch" "issues:$t26_err"
 
 echo
+# ---------------------------------------------------------------- T61
+# Every Standard/Complex design checks both directions and component fitness,
+# carries a component map, and compares a blind second design unless it is
+# super straightforward. Section-scoped like T55: each clause counts only in
+# its own section, and after the unmodified documents pass, removing one clause
+# must produce exactly its own diagnostic. Rules avoid glob characters, so
+# matching and removal stay literal in bash 3.2 and 5.
+t61_err=""
+t61_docs=(
+  .claude/skills/fc-build-or-fix/reference/design-check.md
+  .claude/skills/fc-build-or-fix/SKILL.md
+  .claude/skills/fc-build-or-fix/reference/complex-track.md
+  agents/fc-architect.md agents/fc-qa-code.md agents/fc-tech-lead.md agents/fc-developer.md
+)
+t61_labels=(
+  top-down bottom-up-map reconcile-paths fitness-gate fitness-one-job fitness-home
+  fitness-interface fitness-change fitness-testable component-map
+  second-opinion-mandatory second-opinion-parallel second-opinion-selector second-opinion-blind
+  second-opinion-brief second-opinion-one-round comparison-table input-not-author
+  audit-not-replaced fail-closed super-straightforward complex-never-exempt waivers-do-not-waive
+  parallel-design-exception standard-component-map standard-design-check
+  complex-parallel-designer complex-reconcile complex-plan-audit-focus
+  architect-design-check architect-output-map architect-output-comparison
+  architect-fitness-review architect-report-comparison
+  qa-component-map lead-component-map developer-component-map
+)
+t61_sections=(
+  both both both fitness fitness fitness fitness fitness fitness fitness
+  second second second second second second second second second second second second second
+  dispatch standard standard step5 step5 step6 phase1 output output review report qa lead dev
+)
+t61_rules=(
+  'requirements → responsibilities → components → interfaces. Every requirement has a home; every component traces to a requirement.'
+  'map the existing code near the change before creating anything, one row per component: `component | job | key files | depends on | evidence (file:line)`. Mark inferences and unknowns. Reuse or extend before creating.'
+  'fit the design to existing seams, walk one normal and one failure path through it, and raise real conflicts as decisions, never guesses.'
+  'Every new or changed component passes all five, or is redesigned, merged, or deleted:'
+  'One job, stated in one sentence.'
+  'The right home, with dependencies pointing one way.'
+  'An interface smaller than what it hides.'
+  'The most likely future change touches only this component.'
+  'Testable through its interface.'
+  '`component | job | interface | reuses or extends | likely change | test seam` — and plan audits, `fc-qa-code`, and `fc-tech-lead` check the work against it.'
+  'Mandatory unless the design is super straightforward.'
+  'When the first design starts, dispatch a blind second designer in parallel'
+  "choosing its model with the canonical selector from the first author's recorded model."
+  'Give it the same brief but not the first design.'
+  'It leads with the bottom-up view and returns at most 300 words — a component map and key decisions, never artifact text.'
+  'One round only.'
+  'The first author compares both in a table — `agree | differ | chosen and why` — recorded in the spec or plan.'
+  'The second designer is an input, not an author: record its recorded model in the gate record.'
+  'It never replaces the cross-family audit, which reviews the reconciled artifact.'
+  'Unknown provenance, a family collision, or an unavailable dispatch stops the step, as the selector does.'
+  'means all of: reversible; one unambiguous design that extends an existing pattern; objectively verifiable; no new component, interface, or dependency; no unresolved decision. Record the reason in the spec.'
+  'Complex work is never exempt'
+  'approval waivers do not waive this step.'
+  'Exception: the blind second design runs alongside the first'
+  'files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets'
+  'including its blind second opinion unless the design is super straightforward.'
+  'In parallel, dispatch the blind second designer per'
+  'then resume the architect with its sketch to compare and reconcile in the plan.'
+  'components that duplicate existing code or fail the fitness check'
+  'Start from the design check pasted into your task: work both directions, top-down and bottom-up; run the fitness check on every new or changed component; and write the component map.'
+  'Component Map'
+  'Design comparison'
+  'every mapped component passes the fitness check, and nothing duplicates existing code'
+  'Design approach and design comparison, in brief'
+  'Does the change match the planned component map without duplicating an existing component or bypassing an existing seam'
+  'does the implementation match the design and its component map'
+  "Follow the plan's file structure and component map; if the task needs a component the map lacks, stop and report DONE_WITH_CONCERNS."
+)
+t61_design_contract() { # the seven t61_docs texts, in order
+  local both fitness second dispatch standard step5 step6 phase1 review output report
+  local qa lead dev section i errors=""
+  both=$(printf '%s\n' "$1" | sed -n '/^## Both directions/,/^## /p')
+  fitness=$(printf '%s\n' "$1" | sed -n '/^## Fitness check/,/^## /p')
+  second=$(printf '%s\n' "$1" | sed -n '/^## Second opinion/,/^## /p')
+  dispatch=$(printf '%s\n' "$2" | sed -n '/^## Dispatch rules/,/^## /p')
+  standard=$(printf '%s\n' "$2" | sed -n '/^### Standard/,/^### /p' | grep -E '^2\. ')
+  step5=$(printf '%s\n' "$3" | sed -n '/^## Flow/,/^## /p' | grep -E '^5\. ')
+  step6=$(printf '%s\n' "$3" | sed -n '/^## Flow/,/^## /p' | grep -E '^6\. ')
+  phase1=$(printf '%s\n' "$4" | sed -n '/^## Phase 1/,/^## /p')
+  review=$(printf '%s\n' "$4" | sed -n '/^## Self-review/,/^## /p')
+  # The Output template holds its own ## headings, so it ends at ## Report.
+  output=$(printf '%s\n' "$4" | sed -n '/^## Output/,/^## Report/p')
+  report=$(printf '%s\n' "$4" | sed -n '/^## Report/,/^## /p')
+  qa=$(printf '%s\n' "$5" | sed -n '/^## What to look for/,/^## /p' | grep '^\*\*Architecture\*\*')
+  lead=$(printf '%s\n' "$6" | sed -n '/^## What only you can see/,/^## /p' | grep '^\*\*Architecture\*\*')
+  dev=$(printf '%s\n' "$7" | sed -n '/^## Code organization/,/^## /p')
+  for ((i=0; i<${#t61_rules[@]}; i++)); do
+    case "${t61_sections[$i]}" in
+      both) section="$both" ;;
+      fitness) section="$fitness" ;;
+      second) section="$second" ;;
+      dispatch) section="$dispatch" ;;
+      standard) section="$standard" ;;
+      step5) section="$step5" ;;
+      step6) section="$step6" ;;
+      phase1) section="$phase1" ;;
+      review) section="$review" ;;
+      output) section="$output" ;;
+      report) section="$report" ;;
+      qa) section="$qa" ;;
+      lead) section="$lead" ;;
+      dev) section="$dev" ;;
+      *) section="" ;;
+    esac
+    [[ "$section" == *"${t61_rules[$i]}"* ]] || errors="$errors ${t61_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t61_texts=()
+for t61_doc in "${t61_docs[@]}"; do
+  [ -f "$t61_doc" ] || t61_err="$t61_err file:$t61_doc"
+  t61_texts+=("$(cat "$t61_doc" 2>/dev/null)")
+done
+[ "${#t61_labels[@]}" -eq "${#t61_rules[@]}" ] && [ "${#t61_sections[@]}" -eq "${#t61_rules[@]}" ] \
+  || t61_err="$t61_err rule-table-misaligned"
+t61_out=$(t61_design_contract "${t61_texts[@]}")
+t61_err="$t61_err$t61_out"
+if [ -z "$t61_err" ]; then
+  for ((t61_i=0; t61_i<${#t61_rules[@]}; t61_i++)); do
+    case "${t61_sections[$t61_i]}" in
+      both|fitness|second) t61_doc_i=0 ;;
+      dispatch|standard) t61_doc_i=1 ;;
+      step5|step6) t61_doc_i=2 ;;
+      phase1|review|output|report) t61_doc_i=3 ;;
+      qa) t61_doc_i=4 ;;
+      lead) t61_doc_i=5 ;;
+      *) t61_doc_i=6 ;;
+    esac
+    t61_rule="${t61_rules[$t61_i]}"
+    t61_mut=("${t61_texts[@]}")
+    t61_text="${t61_mut[$t61_doc_i]}"
+    t61_text="${t61_text/"$t61_rule"/}"
+    t61_mut[$t61_doc_i]="$t61_text"
+    t61_mut_out=$(t61_design_contract "${t61_mut[@]}")
+    if [ "$t61_mut_out" = " ${t61_labels[$t61_i]}" ]; then
+      ok "T61 removal mutation: ${t61_labels[$t61_i]} rejected by its own check"
+    else
+      bad "T61 removal mutation: ${t61_labels[$t61_i]}" \
+        "got '${t61_mut_out:-<empty>}', want ' ${t61_labels[$t61_i]}'"
+    fi
+  done
+fi
+[ -z "$t61_err" ] && ok "T61 static contract alarm: two-direction design check + component map + blind second design" \
+                   || bad "T61 design check and blind second design contract" "missing:$t61_err"
+
 # ---------------------------------------------------------------- T27
 # The provenance classifier's real boundaries, both directions. Each case here
 # is a bug that actually shipped or a false negative a reviewer demonstrated.
