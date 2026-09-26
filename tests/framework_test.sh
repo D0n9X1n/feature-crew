@@ -1512,22 +1512,29 @@ t37_legacy_case() { # engine, actual prefix, given prefix, cwd, label
 for engine in "${INSTALLERS[@]}"; do
   p="$installer_root/t37-$engine"
   t37_legacy_case "$engine" "$p" "$p" "$installer_repo" "T37 $engine v3.1 cleanup is per-file on install and uninstall"
-  for form in dot parent; do
+  for form in dot parent absolute-dot absolute-parent; do
     cwd="$installer_root/t37-$engine-$form/feature-crew"
     mkdir -p "$cwd"
-    if [ "$form" = dot ]; then given='./p'; p="$cwd/p"
-    else given='../p'; p="$(dirname "$cwd")/p"; fi
+    case "$form" in
+      dot) given='./p'; p="$cwd/p" ;;
+      parent) given='../p'; p="$(dirname "$cwd")/p" ;;
+      absolute-dot) given="$cwd/./p"; p="$cwd/p" ;;
+      absolute-parent) given="$cwd/../p"; p="$(dirname "$cwd")/p" ;;
+    esac
     t37_legacy_case "$engine" "$p" "$given" "$cwd" "T37 $engine v3.1 cleanup through $given from feature-crew"
   done
 
-  # Both dot forms also cover a fresh install. A long cwd name makes ../'s
-  # uncanonicalized root longer than a listed file, exposing Substring errors.
+  # Rooted paths still need normalization before FullName slicing.
   case_err=""
-  for form in dot parent; do
+  for form in dot parent absolute-dot absolute-parent; do
     cwd="$installer_root/t37-fresh-$engine-$form/feature-crew"
     mkdir -p "$cwd"
-    if [ "$form" = dot ]; then given='./u'; p="$cwd/u"
-    else given='../u'; p="$(dirname "$cwd")/u"; fi
+    case "$form" in
+      dot) given='./u'; p="$cwd/u" ;;
+      parent) given='../u'; p="$(dirname "$cwd")/u" ;;
+      absolute-dot) given="$cwd/./u"; p="$cwd/u" ;;
+      absolute-parent) given="$cwd/../u"; p="$(dirname "$cwd")/u" ;;
+    esac
     run_installer_at "$cwd" "$engine" "$given"
     expect_installer_success "$given/install"
     [ -f "$p/agents/fc-pm.md" ] && [ -f "$p/skills/fc-review/SKILL.md" ] \
@@ -1537,7 +1544,7 @@ for engine in "${INSTALLERS[@]}"; do
     count=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
     [ "$count" -eq 0 ] || case_err="$case_err $given:files-left=$count"
   done
-  installer_result "T37 $engine fresh ./u and ../u installs uninstall completely"
+  installer_result "T37 $engine fresh relative and absolute dot-segment prefixes uninstall completely"
 done
 
 # ---------------------------------------------------------------- T38

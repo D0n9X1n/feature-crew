@@ -495,8 +495,9 @@ jobs:
           [IO.Directory]::CreateDirectory($cwd) | Out-Null
           Push-Location $cwd
           try {
-            foreach ($prefix in @('..\u', '.\p')) {
-              $actual = [IO.Path]::GetFullPath((Join-Path $cwd $prefix))
+            foreach ($prefix in @('..\u', '.\p', "$cwd\..\absolute-parent", "$cwd\.\absolute-dot")) {
+              $actual = if ([IO.Path]::IsPathRooted($prefix)) { $prefix } else { Join-Path $cwd $prefix }
+              $actual = [IO.Path]::GetFullPath($actual)
               $global:LASTEXITCODE = 0
               & $installer --prefix $prefix
               if ($LASTEXITCODE -ne 0) { throw "$prefix install exited $LASTEXITCODE" }
