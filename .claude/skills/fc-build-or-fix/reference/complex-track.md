@@ -16,7 +16,7 @@ Every model-authored review below uses the canonical artifact-author selector in
 8. **Implementation.** Group tasks by file independence. Dispatch `fc-developer` with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, in parallel only at ≥3 genuinely independent tasks; 1–2 run sequentially. Paste each task's full text inline and record the actual author models for tests-as-spec and implementation before QA.
 9. **Per-task QA.** Select and record an explicit override for the tests-as-spec author before `fc-qa-spec`, and for the implementation author before `fc-qa-code`. In Complex, `fc-qa-code` skips spec compliance.
 10. **Tech Lead final.** Select and record the override, then dispatch `fc-tech-lead` with spec, plan, full diff, and task summaries. Hard gate before merge.
-11. **Cost telemetry.** Record dispatch count, wall-clock estimate, and exact selected aliases in the PR description.
+11. **Cost telemetry.** Append the `Cost:` line defined in `/fc-build-or-fix` to the PR description.
 
 ## Worked example
 
@@ -30,7 +30,7 @@ Every model-authored review below uses the canonical artifact-author selector in
 >
 > Per-task QA catches a CRITICAL: session token not invalidated on logout. Fixed in one dev cycle. `fc-tech-lead` approves. PR opened.
 >
-> `Cost: 17 dispatches, ~3h wall-clock, models: opus + sonnet (explicit gate overrides)`
+> `Cost: 17 dispatches, ~30M dispatch tokens, ~3h wall-clock, models: Sonnet + Opus (recorded)`
 
 ## Failure modes
 

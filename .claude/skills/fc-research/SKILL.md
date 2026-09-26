@@ -61,7 +61,7 @@ On REVISE: drop or qualify the flagged claim, or dispatch one targeted search on
 Present the synthesis with each claim annotated `[SUPPORTED]` / `[PARTIAL]` / `[UNSUPPORTED]`, then:
 
 ```
-Cost: <N> dispatches, ~<M> min wall-clock, models: <list>
+Cost: <N> dispatches, ~<T> dispatch tokens, ~<M> min wall-clock, models: <recorded models>
 ```
 
 Report any angle that returned nothing — a silent gap reads as coverage.

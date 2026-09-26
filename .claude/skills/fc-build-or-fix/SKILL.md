@@ -90,7 +90,7 @@ Before every such review, derive the author family from the model the harness re
 
 Use family aliases for requests, not version-specific IDs; aliases are not family evidence. Whoever authored tests-as-spec determines their author family. The reviewer must not infer or self-identify its runtime family from prompt or context; provenance and selection belong to the dispatcher.
 
-Unknown author family/provenance, or a computed same-family collision: do not dispatch; record `GATE UNSATISFIED`. If selected-model dispatch fails or is unavailable, record `GATE UNSATISFIED`; no fallback or retry to the author family. After each review, the dispatcher reads the recorded reviewer model: missing, unmappable, or in the author's family → `GATE UNSATISFIED`. A third family is recorded as a substitution and stands; never reject it merely for differing from the requested alias. Run fewer reviewers rather than a same-family substitute.
+Unknown author family/provenance, or a computed same-family collision: do not dispatch; record `GATE UNSATISFIED`. If selected-model dispatch fails or is unavailable, record `GATE UNSATISFIED`; no fallback or retry to the author family. After each review, the dispatcher reads the recorded reviewer model and the reviewer record's tool calls: a missing or unmappable model, a model in the author's family, or any `Agent`, `Skill`, or `Workflow` call → `GATE UNSATISFIED`. A third family is recorded as a substitution and stands; never reject it merely for differing from the requested alias. Run fewer reviewers rather than a same-family substitute.
 
 **Exemptions:** Just Do It produces no model-authored artifact. A Standard spec outside the escalation list is also exempt because the user approves it inline and combined QA later checks compliance. Every other named artifact is audited.
 
@@ -111,7 +111,7 @@ Every QA dispatch in Standard and Complex reports one verdict: **PASS**, **CRITI
 
 ## Cost telemetry
 
-Standard and Complex append `Cost: <N> dispatches, ~<M> min wall-clock, models: <selected overrides>` to the PR description, or authorized final commit body when there is no PR. Just Do It is exempt.
+Standard and Complex append `Cost: <N> dispatches, ~<T> dispatch tokens, ~<M> min wall-clock, models: <recorded models>` to the PR description, or authorized final commit body when there is no PR. Sum `.message.usage` tokens once per unique `.message.id` in each dispatch record, because a record repeats a response's usage on every content block; write `?` for `<T>` when a record has no usage. Name the models those records show, not the requested aliases. Just Do It is exempt.
 
 ## Anti-patterns
 
