@@ -9,7 +9,7 @@
 .\install.ps1        # native Windows PowerShell
 ```
 
-Flags: `--force`, `--dry-run`, `--uninstall`, `--prefix DIR`; `install.ps1` also accepts `-Force`, `-DryRun`, `-Uninstall`, `-Prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
+Flags: `--force`, `--dry-run`, `--uninstall`, `--check`, `--verify`, `--prefix DIR`; `install.ps1` also accepts `-Force`, `-DryRun`, `-Uninstall`, `-Check`, `-Verify`, `-Prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
 
 ## Describe the need
 

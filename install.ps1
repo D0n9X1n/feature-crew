@@ -8,14 +8,19 @@
 #   .\install.ps1 --force                   # or -Force: overwrite existing files
 #   .\install.ps1 --dry-run                 # or -DryRun: print actions, change nothing
 #   .\install.ps1 --uninstall               # or -Uninstall: remove installed files
+#   .\install.ps1 --check                   # or -Check: read-only, report whether an update is needed
+#   .\install.ps1 --verify                  # or -Verify: read-only, verify the install against this clone
 #   .\install.ps1 --prefix DIR              # or -Prefix DIR: override ~/.claude
 #   .\install.ps1 --help                    # or -Help / -h: show usage
+# --check/--verify exit 0 when current/verified, 1 on any mismatch, 2 on an error.
 
 [CmdletBinding(PositionalBinding=$false)]
 param(
   [switch]$Force,
   [switch]$DryRun,
   [switch]$Uninstall,
+  [switch]$Check,
+  [switch]$Verify,
   [Alias('h')][switch]$Help,
   [string]$Prefix = (Join-Path $HOME ".claude"),
   [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest = @()
@@ -31,6 +36,8 @@ for ($i = 0; $i -lt $Rest.Count; $i++) {
     "--force"     { $Force = $true }
     "--dry-run"   { $DryRun = $true }
     "--uninstall" { $Uninstall = $true }
+    "--check"     { $Check = $true }
+    "--verify"    { $Verify = $true }
     "--help"      { $Help = $true }
     "--prefix" {
       if ($i + 1 -ge $Rest.Count) {
@@ -48,8 +55,14 @@ for ($i = 0; $i -lt $Rest.Count; $i++) {
 }
 if ($Help) {
   Write-Host "Usage: .\install.ps1 [--force|-Force] [--dry-run|-DryRun] [--uninstall|-Uninstall]"
+  Write-Host "                     [--check|-Check] [--verify|-Verify]"
   Write-Host "                     [--prefix DIR|-Prefix DIR] [--help|-Help|-h]"
+  Write-Host "--check/--verify are read-only; exit 0 when current/verified, 1 on any mismatch, 2 on an error."
   exit 0
+}
+if (($Check -or $Verify) -and (($Check -and $Verify) -or $Force -or $DryRun -or $Uninstall)) {
+  [Console]::Error.WriteLine("--check and --verify cannot be combined with each other, --force, --uninstall, or --dry-run")
+  exit 2
 }
 
 function Find-GitBash {
@@ -71,6 +84,8 @@ if ($gitBash) {
   if ($Force)     { $bashArgs += "--force" }
   if ($DryRun)    { $bashArgs += "--dry-run" }
   if ($Uninstall) { $bashArgs += "--uninstall" }
+  if ($Check)     { $bashArgs += "--check" }
+  if ($Verify)    { $bashArgs += "--verify" }
   $bashArgs += @("--prefix", $Prefix)
   $bashExitCode = 127
   try {
@@ -514,8 +529,164 @@ function Uninstall-ClaudeGlobal {
   Remove-Legacy
 }
 
+# --- Read-only -Check / -Verify (mirrors check_install in install.sh) ---
+# Compare the prefix with what this clone would install, using the same
+# ownership order as install and uninstall: current bytes, then the recorded
+# baseline, then published hashes only when no baseline exists. Never create
+# the prefix, rewrite the manifest, or clean anything up.
+
+function Get-Sha256Bytes([byte[]]$bytes) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
+  } finally { $sha.Dispose() }
+}
+
+# A model key in role-agent frontmatter would bypass the dispatch-time
+# selector. Only the leading --- block counts; body prose may say "model:".
+function Test-AgentHasModelKey($path) {
+  $lines = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Resolve-AbsPath $path))).Split([char]10)
+  for ($i = 0; $i -lt $lines.Length; $i++) {
+    $line = $lines[$i]
+    if ($line.Length -gt 0 -and $line[$line.Length - 1] -eq [char]13) { $line = $line.Substring(0, $line.Length - 1) }
+    if ($i -eq 0) {
+      if (-not $line.Equals('---')) { return $false }
+    } elseif ($line.Equals('---')) {
+      return $false
+    } elseif ($line.StartsWith('model:', [StringComparison]::Ordinal)) {
+      return $true
+    }
+  }
+  return $false
+}
+
+# Classify one expected file: current, outdated, uncertain, or missing.
+function Get-CheckState($rel, $want) {
+  $file = Join-Path $Prefix $rel
+  if (-not (Test-Path -LiteralPath $file)) { return 'missing' }
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return 'uncertain' }
+  if ((Get-Sha256Raw $file) -ceq $want) { return 'current' }
+  if (Test-HistoricalFileIsOurs $file $rel) { return 'outdated' }
+  return 'uncertain'
+}
+
+# Sets $script:CheckExitCode instead of returning it, so no stream can leak
+# into the exit code: 0 current/verified, 1 mismatch, 2 error.
+function Invoke-InstallCheck {
+  if (-not (Test-Path -LiteralPath $SrcAgents -PathType Container)) {
+    [Console]::Error.WriteLine("ERROR: cannot find agents/ next to the installer ($SrcAgents)")
+    $script:CheckExitCode = 2
+    return
+  }
+  if (-not $ManifestValid) {
+    [Console]::Error.WriteLine("ERROR: not a Feature-Crew manifest (left untouched): $Manifest")
+    $script:CheckExitCode = 2
+    return
+  }
+  $found = @{}
+  foreach ($kind in @('missing', 'outdated', 'uncertain', 'stale', 'model key')) {
+    $found[$kind] = New-Object 'System.Collections.Generic.List[string]'
+  }
+  $expected = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+  $agents = 0; $agentsOk = 0; $skills = 0; $skillsOk = 0
+  foreach ($src in @(Get-SortedChildren $SrcAgents -Filter '*.md')) {
+    $meta = $AgentMeta[$src.Name]
+    if (-not $meta) { $meta = "Feature-Crew agent." }
+    $name = [IO.Path]::GetFileNameWithoutExtension($src.Name)
+    $rel = 'agents/' + $name + '.md'
+    $want = Get-Sha256Bytes (Get-AgentBytes $src.FullName $name $meta)
+    $expected[$rel] = $want
+    $state = Get-CheckState $rel $want
+    if ($state -ne 'current') { $found[$state].Add($rel) }
+    $agents++
+    $dest = Join-Path $Prefix $rel
+    if ($Verify -and (Test-Path -LiteralPath $dest -PathType Leaf) -and (Test-AgentHasModelKey $dest)) {
+      $found['model key'].Add($rel)
+    } elseif ($state -eq 'current') {
+      $agentsOk++
+    }
+  }
+  if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
+    foreach ($dir in @(Get-SortedChildren $SrcSkillsDir -Directories)) {
+      if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName "SKILL.md") -PathType Leaf)) { continue }
+      $skills++
+      $skillOk = $true
+      foreach ($file in @(Get-SortedChildren $dir.FullName -Recurse)) {
+        $rel = 'skills/' + $dir.Name + '/' + $file.FullName.Substring($dir.FullName.Length).TrimStart('\','/').Replace('\','/')
+        $want = Get-Sha256Raw $file.FullName
+        $expected[$rel] = $want
+        $state = Get-CheckState $rel $want
+        if ($state -ne 'current') { $found[$state].Add($rel); $skillOk = $false }
+      }
+      if ($skillOk) { $skillsOk++ }
+    }
+  }
+  # fc-* entries this clone no longer ships linger; report them, never delete.
+  if (Test-Path -LiteralPath $DestAgents -PathType Container) {
+    foreach ($file in @(Get-SortedChildren $DestAgents)) {
+      if ($file.Name -clike 'fc-*.md' -and
+          -not (Test-Path -LiteralPath (Join-Path $SrcAgents $file.Name) -PathType Leaf)) {
+        $found['stale'].Add('agents/' + $file.Name)
+      }
+    }
+  }
+  if (Test-Path -LiteralPath $DestSkillsDir -PathType Container) {
+    foreach ($dir in @(Get-SortedChildren $DestSkillsDir -Directories)) {
+      if ($dir.Name -clike 'fc-*' -and
+          -not (Test-Path -LiteralPath (Join-Path (Join-Path $SrcSkillsDir $dir.Name) "SKILL.md") -PathType Leaf)) {
+        $found['stale'].Add('skills/' + $dir.Name)
+      }
+    }
+  }
+  $paths = New-Object 'System.Collections.Generic.List[string]'
+  foreach ($rel in $expected.Keys) { $paths.Add($rel) }
+  $paths.Sort([StringComparer]::Ordinal)
+  $text = New-Object Text.StringBuilder
+  foreach ($rel in $paths) {
+    [void]$text.Append($expected[$rel]).Append('  ').Append($rel).Append("`n")
+  }
+  $utf8 = New-Object Text.UTF8Encoding($false)
+  $bytes = $utf8.GetBytes($text.ToString())
+  if (-not $ManifestPresent) {
+    $found['missing'].Add('feature-crew.sha256')
+  } elseif (-not (Test-BytesEqual $bytes ([IO.File]::ReadAllBytes((Resolve-AbsPath $Manifest))))) {
+    $found['outdated'].Add('feature-crew.sha256')
+  }
+
+  if ($Verify) { Write-Host "feature-crew: verifying $Prefix" } else { Write-Host "feature-crew: checking $Prefix" }
+  $bad = 0
+  foreach ($kind in @('missing', 'outdated', 'uncertain', 'stale', 'model key')) {
+    $list = $found[$kind]
+    $list.Sort([StringComparer]::Ordinal)
+    foreach ($rel in $list) { Write-Host "${kind}: $rel" }
+    if ($kind -ne 'stale') { $bad += $list.Count }
+  }
+  if ($Verify) {
+    Write-Host "agents: $agentsOk/$agents verified"
+    Write-Host "skills: $skillsOk/$skills verified"
+    if ($bad -eq 0) { Write-Host "verify: ok" } else { Write-Host "verify: failed" }
+  } elseif ($bad -eq 0) {
+    Write-Host "check: current"
+  } else {
+    Write-Host "check: update-needed"
+  }
+  $script:CheckExitCode = [int]($bad -ne 0)
+}
+
 # --- Main dispatch (mirrors install.sh) ---
 
+# Read-only modes: any operational failure exits 2, never 1.
+if ($Check -or $Verify) {
+  $CheckExitCode = 2
+  try {
+    Read-InstallManifest
+    Invoke-InstallCheck
+  } catch {
+    [Console]::Error.WriteLine("ERROR: $($_.Exception.Message)")
+    exit 2
+  }
+  exit $CheckExitCode
+}
 Read-InstallManifest
 if ($Uninstall) {
   Uninstall-ClaudeGlobal
