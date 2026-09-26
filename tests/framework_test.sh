@@ -1387,15 +1387,21 @@ fi
 # evidence. Its eight behaviors and the Worker boundary suffix on every helper
 # prompt are literal sentences scoped to their own sections, and fc-research's
 # pointer to it must sit in fc-research's own "Do NOT use for" list, so a stray
-# mention elsewhere cannot satisfy either. As in T62, each removal mutation must
-# produce exactly its own diagnostic, and mutations run only after the
-# unmodified documents pass the control.
+# mention elsewhere cannot satisfy either. As T64 does for /fc-ship, the README
+# direct-command list and both installer "Available:" banners must name
+# /fc-explain, and README line 3 must carry this release's version. The skill
+# stays within its approved 30 lines, counted byte-exactly so trailing blank
+# lines count. As in T62, each mutation must produce exactly its own
+# diagnostic, and mutations run only after the unmodified documents pass the
+# control.
 t66_labels=(
   infer-scope bottom-up-map default-views mermaid-only readable-diagrams
   after-each-diagram verify-evidence chat-output
   helper-worker-suffix research-pointer
+  readme-direct-command readme-version banner-sh banner-ps1 line-budget
 )
-t66_sections=(map map diagrams diagrams diagrams answer verify answer map research)
+t66_sections=(map map diagrams diagrams diagrams answer verify answer map research
+  commands version sh ps1 budget)
 t66_rules=(
   'Run in the main conversation. Infer the scope (the whole project, a subsystem, or one flow) and ask only when it is genuinely ambiguous.'
   'Build the component map with the bottom-up mapping contract in [design-check.md](../fc-build-or-fix/reference/design-check.md): read small scopes directly; for large ones use at most three read-only `Explore` helpers, each helper prompt ending with the Worker boundary suffix below. Keep the map for follow-ups and refresh its evidence before answering them.'
@@ -1407,16 +1413,30 @@ t66_rules=(
   'Answer in chat; write a repository file or publish a page only on request.'
   '> Perform the assigned work yourself. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
   "explaining a project's structure with diagrams (use /fc-explain)"
+  '`/fc-explain`'
+  '**v5.2.0**'
+  '/fc-explain'
+  '/fc-explain'
+  30
 )
-t66_explain_contract() { # fc-explain SKILL.md text, fc-research SKILL.md text
-  local map diagrams verify answer pointer section i errors=""
+t66_load() { # file -> t66_loaded, byte-exact: $(cat) alone drops trailing blank lines
+  t66_loaded=$(cat "$1" 2>/dev/null; printf x)
+  t66_loaded=${t66_loaded%x}
+}
+t66_explain_contract() { # fc-explain, fc-research, README, install.sh, install.ps1 text
+  local map diagrams verify answer pointer commands version sh ps1 lines section i errors=""
   map=$(printf '%s\n' "$1" | sed -n '/^## Scope and map$/,/^## /p')
   diagrams=$(printf '%s\n' "$1" | sed -n '/^## Diagrams$/,/^## /p')
   verify=$(printf '%s\n' "$1" | sed -n '/^## Verify$/,/^## /p')
   answer=$(printf '%s\n' "$1" | sed -n '/^## Answer$/,/^## /p')
+  lines=$(printf '%s' "$1" | wc -l | tr -d ' ')
   # Only fc-research's own frontmatter "Do NOT use for" list counts.
   pointer=$(printf '%s\n' "$2" | awk '/^---$/{c++; if(c==2) exit; next} c==1' \
     | grep '^description:' | sed -n 's/.*Do NOT use for //p')
+  commands=$(printf '%s\n' "$3" | sed -n '/^## Describe the need/,/^## /p')
+  version=$(printf '%s\n' "$3" | sed -n '3p')
+  sh=$(printf '%s\n' "$4" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
+  ps1=$(printf '%s\n' "$5" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
   for ((i=0; i<${#t66_rules[@]}; i++)); do
     case "${t66_sections[$i]}" in
       map) section="$map" ;;
@@ -1424,34 +1444,67 @@ t66_explain_contract() { # fc-explain SKILL.md text, fc-research SKILL.md text
       verify) section="$verify" ;;
       answer) section="$answer" ;;
       research) section="$pointer" ;;
+      commands) section="$commands" ;;
+      version) section="$version" ;;
+      sh) section="$sh" ;;
+      ps1) section="$ps1" ;;
+      budget)
+        [ "$lines" -le "${t66_rules[$i]}" ] || errors="$errors ${t66_labels[$i]}"
+        continue ;;
     esac
     printf '%s\n' "$section" | grep -qF -- "${t66_rules[$i]}" \
       || errors="$errors ${t66_labels[$i]}"
   done
   printf '%s\n' "$errors"
 }
-t66_explain_text=$(cat .claude/skills/fc-explain/SKILL.md 2>/dev/null)
+t66_load .claude/skills/fc-explain/SKILL.md
+t66_explain_text=$t66_loaded
 t66_research_text=$(cat .claude/skills/fc-research/SKILL.md 2>/dev/null)
-t66_err=$(t66_explain_contract "$t66_explain_text" "$t66_research_text")
+t66_readme_text=$(cat README.md 2>/dev/null)
+t66_sh_text=$(cat install.sh 2>/dev/null)
+t66_ps1_text=$(cat install.ps1 2>/dev/null)
+t66_err=$(t66_explain_contract "$t66_explain_text" "$t66_research_text" \
+  "$t66_readme_text" "$t66_sh_text" "$t66_ps1_text")
 if [ -z "$t66_err" ]; then
+  t66_root=$(mktemp -d)
+  CLEANUP_PATHS+=("$t66_root")
   for ((t66_i=0; t66_i<${#t66_rules[@]}; t66_i++)); do
     t66_rule="${t66_rules[$t66_i]}"
+    t66_kind=removal
     t66_explain_mut="$t66_explain_text"
     t66_research_mut="$t66_research_text"
+    t66_readme_mut="$t66_readme_text"
+    t66_sh_mut="$t66_sh_text"
+    t66_ps1_mut="$t66_ps1_text"
     case "${t66_sections[$t66_i]}" in
       research) t66_research_mut="${t66_research_mut/"$t66_rule"/}" ;;
+      commands|version) t66_readme_mut="${t66_readme_mut/"$t66_rule"/}" ;;
+      sh) t66_sh_mut="${t66_sh_mut/"$t66_rule"/}" ;;
+      ps1) t66_ps1_mut="${t66_ps1_mut/"$t66_rule"/}" ;;
+      budget)
+        # A real copy one line over budget, padded with blank lines and read
+        # back the same way as the skill, so trailing blank lines cannot hide.
+        t66_kind="$((t66_rule + 1))-line copy"
+        printf '%s' "$t66_explain_text" > "$t66_root/SKILL.md"
+        t66_pad=$((t66_rule + 1 - $(wc -l < "$t66_root/SKILL.md")))
+        for ((t66_j=0; t66_j<t66_pad; t66_j++)); do printf '\n' >> "$t66_root/SKILL.md"; done
+        t66_load "$t66_root/SKILL.md"
+        t66_explain_mut=$t66_loaded
+        ;;
       *) t66_explain_mut="${t66_explain_mut/"$t66_rule"/}" ;;
     esac
-    t66_mut_out=$(t66_explain_contract "$t66_explain_mut" "$t66_research_mut")
+    t66_mut_out=$(t66_explain_contract "$t66_explain_mut" "$t66_research_mut" \
+      "$t66_readme_mut" "$t66_sh_mut" "$t66_ps1_mut")
     if [ "$t66_mut_out" = " ${t66_labels[$t66_i]}" ]; then
-      ok "T66 removal mutation: ${t66_labels[$t66_i]} rejected by its own check"
+      ok "T66 ${t66_kind} mutation: ${t66_labels[$t66_i]} rejected by its own check"
     else
-      bad "T66 removal mutation: ${t66_labels[$t66_i]}" \
+      bad "T66 ${t66_kind} mutation: ${t66_labels[$t66_i]}" \
         "got '${t66_mut_out:-<empty>}', want ' ${t66_labels[$t66_i]}'"
     fi
   done
+  rm -rf "$t66_root"
 fi
-[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams" \
+[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams; README entry, version, banners, and 30-line budget pinned" \
                    || bad "T66 fc-explain explanation contract" "missing:$t66_err"
 
 # ---------------------------------------------------------------- T34
