@@ -58,7 +58,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 6. Run the must-pass full suite and paste output.
 7. Dispatch `fc-qa-code` in one-clue mode for combined spec + code review, using the selector below.
 8. Judge the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
-9. Commit only when authorized; use a feature branch and offer a PR.
+9. Commit only when authorized; use a feature branch, then continue with `/fc-ship`.
 
 ### Complex
 
