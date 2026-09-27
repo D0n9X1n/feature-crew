@@ -1,94 +1,22 @@
 # Feature-Crew
 
-**v5.2.0** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates.
+**v5.2.1** · A need-based agent-team framework for **Claude Code**. Describe what you need naturally; Feature-Crew looks up facts, resolves decisions and approaches, then runs code through right-sized TDD and hard gates. Full documentation lives in the [wiki](https://github.com/D0n9X1n/feature-crew/wiki) ([简体中文](https://github.com/D0n9X1n/feature-crew/wiki/Home-zh-CN)). MIT licensed.
 
-## Install
+## Quick start
 
 ```bash
 ./install.sh         # macOS / Linux / Git Bash / WSL
 .\install.ps1        # native Windows PowerShell
 ```
 
-Flags: `--force`, `--dry-run`, `--uninstall`, `--check`, `--verify`, `--prefix DIR`; `install.ps1` also accepts `-Force`, `-DryRun`, `-Uninstall`, `-Check`, `-Verify`, `-Prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
+Then describe the change you want in plain words inside Claude Code; Feature-Crew picks the skill and the track. Flags, commands, and updating are in [Usage](https://github.com/D0n9X1n/feature-crew/wiki/Usage).
 
-## Describe the need
+## Features
 
-Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, adversarial confidence in a chosen consequential decision, and an unexplained failure. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
-
-The exact classifier is stated once in `.claude/skills/fc-build-or-fix/SKILL.md`; this README does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-explain`, `/fc-build-or-fix`, `/fc-ship`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
-
-## Complexity tracks
-
-| Track | Behavior |
-|---|---|
-| **Just Do It** | Straightforward, bounded, obvious, low-risk, reversible work; PM explores, writes the failing test first, implements, and verifies without approval/spec/role dispatch |
-| **Standard** | Coherent feature; approved bullet spec with a blind second design compared, TDD, one selected QA pass |
-| **Complex** | Multi-module or architectural work; approved spec and plan with a blind second design compared, developers, selected QA, Tech Lead |
-
-File count is only a warning signal. A mirrored low-risk content change across several files can be Just Do It; a one-line runtime/config/API/deploy change cannot. The canonical escalation list and track rules live in `/fc-build-or-fix`.
-
-Just Do It is auto-selected from natural language and does not ask for track approval. If exploration finds ambiguity, coupling, risk, unresolved decisions, or escalation-list scope, the PM stops before production edits and escalates to Standard. Standard and Complex retain user approval gates unless waived; observed verification, spec compliance, and Complex Tech Lead approval remain mandatory.
-
-## Dynamic hard-gate review
-
-All six role agents install without a `model` frontmatter key; authoring and review dispatches carry explicit model overrides. Author and reviewer families come from the model the harness recorded, not the requested alias. The dispatcher records the author's evidence in an audit envelope, selects an override, then verifies the recorded reviewer model after the review. Missing/unknown provenance, a family collision, or an unavailable dispatch leaves the gate unsatisfied; there is no same-family fallback. A verified third-family substitution is logged and stands. Record lookup and environment assumptions live in [gate provenance](.claude/skills/fc-build-or-fix/reference/gate-provenance.md).
-
-The exact selector is canonical in `/fc-build-or-fix`; other docs point there rather than copying it. Standalone `/fc-review` and `/fc-second-opinion` remain useful but do not substitute for pipeline hard gates.
-
-## Hard gates
-
-1. Standard/Complex track approval unless waived
-2. Standard/Complex spec approval unless waived
-3. Complex plan approval unless waived
-4. Observed verification evidence for every done claim
-5. Implementation matches the approved spec
-6. Tech Lead approval before merging Complex work
-
-## Non-negotiables
-
-- **TDD** — no production code without an observed failing test first; docs use objective acceptance checks first
-- **Verify before claiming** — paste output, do not describe it
-- **Root cause first** — three failed fixes means rethink
-- **No guessing** — look up facts, ask about decisions
-- **YAGNI** — build only what was requested
-- **Cross-platform parity** — `install.sh` and `install.ps1` ship together
-
-## Framework caps
-
-Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md` plus every `SKILL.md`) stays ≤600 lines; the total stays ≤1500 and under the ratcheted baseline. The suite needs pwsh (set `PWSH` to its path if it is not on PATH). Run:
-
-```bash
-FC_STRICT=1 bash tests/framework_test.sh
-```
-
-## Layout
-
-```text
-feature-crew/
-├── .claude/skills/fc-*/       # ten skills
-├── agents/fc-*.md             # six unpinned role prompts
-├── .github/workflows/         # test and release pipelines
-├── tests/framework_test.sh
-├── CLAUDE.md                  # repository instructions
-└── install.sh / install.ps1
-```
-
-## Releasing
-
-Milestone → issues → PR → merge → tag. CI publishes on tag push; see [CLAUDE.md](CLAUDE.md). The GitHub release body is the changelog; there is no changelog file.
-
-```bash
-git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
-```
-
-## Updating
-
-Run `/fc-update`, or `git pull origin main && ./install.sh --force`. Before overwriting, the update flow reports installed files you edited. Legacy cleanup and uninstall remove only files whose exact content proves Feature-Crew installed them. Each install records what it wrote in `~/.claude/feature-crew.sha256`, so the update flow can tell your edits from upstream changes.
-
-## Credits
-
-`/fc-grill-me` adapts the grilling mechanic from [mattpocock/skills](https://github.com/mattpocock/skills). The evidence-in-message rule is from [obra/superpowers](https://github.com/obra/superpowers). The description contract follows [tech-leads-club/agent-skills](https://github.com/tech-leads-club/agent-skills).
-
-## License
-
-MIT
+- **Need-based routing:** facts are looked up; evidence, decisions, approaches, confidence checks, and unexplained failures each go to one skill that returns to the flow.
+- **Right-sized tracks:** Just Do It, Standard, and Complex, each with TDD and hard gates.
+- **Cross-family review:** every hard-gate artifact is reviewed by a model from another family, proven from the session record.
+- **Two designs before building:** Standard and Complex designs are compared against an independent second design; only a super straightforward Standard design skips it.
+- **Verified shipping:** `/fc-ship` watches CI in the background and merges only the verified head.
+- **Explained projects:** `/fc-explain` draws evidence-tied Mermaid diagrams.
+- **Safe installers:** `install.sh` and `install.ps1` record what they install and remove only their own files.

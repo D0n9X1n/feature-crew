@@ -1,5 +1,7 @@
 # Development and Release
 
+[简体中文](Development-and-Release-zh-CN)
+
 How a change to Feature-Crew reaches `main`, how a release is cut, and how this wiki is published. The binding rules are in [CLAUDE.md][claude]; this page shows the flow. The diagram was drawn with `/fc-explain`; each node traces to the files in the table below it.
 
 ## Pipeline
@@ -38,24 +40,46 @@ flowchart TB
 **Walkthrough**
 
 1. **Pull request.** Each work item has an issue in the version's milestone. The PR is assigned to the milestone and closes its issues with `Closes #N` lines.
-2. **test.yml** runs on every pull request and every push to `main`. `framework` runs on Ubuntu: the strict suite with pwsh, the wiki publisher test, and a clean-prefix install and uninstall. `powershell` and `powershell-delegation` run on Windows: the PowerShell installer under PowerShell 7 and Windows PowerShell 5.1, and its hand-off to Git Bash.
+2. **test.yml** runs on every pull request and every push to `main`. `framework` runs on Ubuntu: the strict suite with pwsh, the wiki publisher and checker test, and a clean-prefix install and uninstall. `powershell` and `powershell-delegation` run on Windows: the PowerShell installer under PowerShell 7 and Windows PowerShell 5.1, and its hand-off to Git Bash.
 3. **Ruleset.** The repository ruleset "Require test workflow on main" requires all three checks before a merge.
 4. **Merge.** `/fc-ship` squash-merges with `--match-head-commit` and no admin bypass, then confirms the PR shows MERGED and that the merged tree equals the head tree.
 5. **Wiki.** `publish-wiki.yml` runs after each push to `main`. It checks out `main` as it is at run time, so re-running an older run cannot publish stale pages. It clones the wiki repository with the job's short-lived token, rebuilds the top-level pages from `wiki/` with `scripts/publish-wiki.sh`, and pushes to the wiki's `master` only when a page changed. Runs are serialized, and only this job may write.
-6. **Release.** A maintainer tags `main` as `vMAJOR.MINOR.PATCH` and pushes the tag last. `release.yml` reruns `test.yml`, refuses a tag that is not on `main`, and publishes a release body built from the commits since the previous tag. That body is the only changelog.
+6. **Release.** A maintainer tags `main` as `vMAJOR.MINOR.PATCH` and pushes the tag last (`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`). `release.yml` reruns `test.yml`, refuses a tag that is not on `main`, and publishes a release body built from the commits since the previous tag. That body is the only changelog.
 
 | Component | Job | Key files | Evidence |
 |---|---|---|---|
 | test.yml | Required checks for every PR and every push to `main` | [test.yml][test] | triggers `push` (main), `pull_request`, `workflow_call`; jobs `framework` (ubuntu-latest), `powershell` and `powershell-delegation` (windows-latest) |
 | Ruleset | Blocks a merge until the three checks pass | repository settings | GitHub API: ruleset "Require test workflow on main" |
 | fc-ship | Merges only the verified head, then cleans up | [fc-ship SKILL.md][ship] | section 5, *Merge* |
-| publish-wiki.yml | Mirrors `wiki/` to the GitHub wiki after every push to `main` | [publish-wiki.yml][pubwf], [publish-wiki.sh][pubsh], [test-wiki-publish.sh][pubtest] | job `publish`: serialized, `contents: write` on this job only |
+| publish-wiki.yml | Mirrors `wiki/` to the GitHub wiki after every push to `main` | [publish-wiki.yml][pubwf], [publish-wiki.sh][pubsh], [test-wiki-publish.sh][pubtest], [check-wiki.py][checkwiki] | job `publish`: serialized, `contents: write` on this job only |
 | release.yml | Reruns the tests, then publishes the release body | [release.yml][rel] | trigger: tags `v*`; jobs `test` and `release` |
 | Release rules | Milestone, issues, green CI, tag last, no changelog file | [CLAUDE.md][claude] | *Release process* |
 
+## Framework caps and self-test
+
+Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md` plus every `SKILL.md`) stays ≤600 lines; the framework total stays ≤1500 and under the ratcheted baseline. The suite needs pwsh (set `PWSH` to its path if it is not on PATH):
+
+```bash
+FC_STRICT=1 bash tests/framework_test.sh
+```
+
+## Layout
+
+```text
+feature-crew/
+├── .claude/skills/fc-*/       # ten skills
+├── agents/fc-*.md             # six unpinned role prompts
+├── .github/workflows/         # test, release, and wiki pipelines
+├── scripts/                   # wiki publisher, checker, and their test
+├── wiki/                      # this wiki: English pages and -zh-CN twins
+├── tests/framework_test.sh
+├── CLAUDE.md                  # repository instructions
+└── install.sh / install.ps1
+```
+
 ## Editing this wiki
 
-Change `wiki/*.md` in the same PR as the behavior it documents. Link pages by page name, for example `[Architecture](Architecture)`, and source files by full GitHub URL. Check locally with `bash scripts/test-wiki-publish.sh`; the strict suite also runs it as T67. After merging, confirm that the `Publish wiki` run for the merge commit succeeded.
+Every page has an English file and a Chinese twin, `<Page>.md` and `<Page>-zh-CN.md`, with the same headings; change both in the same PR as the behavior they document. Link pages by page name, for example `[Architecture](Architecture)`, keep links within one language except the switch link on line 3, and link source files by full GitHub URL. Check locally with `bash scripts/test-wiki-publish.sh`, which also runs `scripts/check-wiki.py`; the strict suite runs it as T67. After merging, confirm that the `Publish wiki` run for the merge commit succeeded.
 
 ## Verified facts, inferences, and unknowns
 
@@ -66,7 +90,7 @@ Change `wiki/*.md` in the same PR as the behavior it documents. Link pages by pa
 ## Where to start reading
 
 1. [test.yml][test]: the required checks.
-2. [publish-wiki.yml][pubwf], [publish-wiki.sh][pubsh], and [test-wiki-publish.sh][pubtest]: the wiki pipeline.
+2. [publish-wiki.yml][pubwf], [publish-wiki.sh][pubsh], [test-wiki-publish.sh][pubtest], and [check-wiki.py][checkwiki]: the wiki pipeline.
 3. [release.yml][rel] and the *Release process* in [CLAUDE.md][claude].
 
 [claude]: https://github.com/D0n9X1n/feature-crew/blob/main/CLAUDE.md
@@ -74,5 +98,6 @@ Change `wiki/*.md` in the same PR as the behavior it documents. Link pages by pa
 [pubwf]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/publish-wiki.yml
 [pubsh]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/publish-wiki.sh
 [pubtest]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/test-wiki-publish.sh
+[checkwiki]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/check-wiki.py
 [rel]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/release.yml
 [ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
