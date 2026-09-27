@@ -79,7 +79,7 @@ feature-crew/
 
 ## 编辑本 Wiki
 
-每个页面都有一个英文文件和一个中文副本，即 `<Page>.md` 和 `<Page>-zh-CN.md`，二者标题结构相同；在与其所描述行为相同的 PR 中同时修改两者。按页面名链接页面，例如 `[架构](Architecture-zh-CN)`，除第 3 行的语言切换链接外，链接都保持在同一种语言内，源文件用完整的 GitHub URL 链接。本地用 `bash scripts/test-wiki-publish.sh` 检查，它也会运行 `scripts/check-wiki.py`；严格测试套件把它作为 T67 运行。合并后，确认该合并提交的 `Publish wiki` 运行已成功。
+每个页面都有一个英文文件和一个中文副本，即 `<Page>.md` 和 `<Page>-zh-CN.md`，二者标题结构相同；在与其所描述行为相同的 PR 中同时修改两者。按页面名链接页面，例如 `[架构](Architecture-zh-CN)`，除第 3 行的语言切换链接外，链接都保持在同一种语言内，源文件用完整的 GitHub URL 链接。只有两种形式算作导航：第 3 行单独一行的语言切换链接（第 2 行为空行），以及首页中位于顶层列表项开头、指向每个页面的链接；不允许使用原始 HTML。本地用 `bash scripts/test-wiki-publish.sh` 检查，它也会运行 `scripts/check-wiki.py`；严格测试套件把它作为 T67 运行。合并后，确认该合并提交的 `Publish wiki` 运行已成功。
 
 ## 已验证事实、推断与未知项
 

@@ -79,7 +79,7 @@ feature-crew/
 
 ## Editing this wiki
 
-Every page has an English file and a Chinese twin, `<Page>.md` and `<Page>-zh-CN.md`, with the same headings; change both in the same PR as the behavior they document. Link pages by page name, for example `[Architecture](Architecture)`, keep links within one language except the switch link on line 3, and link source files by full GitHub URL. Check locally with `bash scripts/test-wiki-publish.sh`, which also runs `scripts/check-wiki.py`; the strict suite runs it as T67. After merging, confirm that the `Publish wiki` run for the merge commit succeeded.
+Every page has an English file and a Chinese twin, `<Page>.md` and `<Page>-zh-CN.md`, with the same headings; change both in the same PR as the behavior they document. Link pages by page name, for example `[Architecture](Architecture)`, keep links within one language except the switch link on line 3, and link source files by full GitHub URL. Navigation counts only in two forms: the switch link alone on line 3 after a blank line, and Home's link to each page at the start of a top-level bullet; raw HTML is not allowed. Check locally with `bash scripts/test-wiki-publish.sh`, which also runs `scripts/check-wiki.py`; the strict suite runs it as T67. After merging, confirm that the `Publish wiki` run for the merge commit succeeded.
 
 ## Verified facts, inferences, and unknowns
 
