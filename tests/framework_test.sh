@@ -5073,6 +5073,9 @@ nested-page|nested Markdown pages are not allowed|mkdir wiki/sub && printf '# Ne
 ascii-name|flat ASCII name|printf '# Page\n' > wiki/Über.md
 english-cjk|Chinese text in an English page|printf '\n中文\n' >> wiki/Usage.md
 chinese-without-cjk|no Chinese text in a Chinese page|printf '# Usage\n\n[English](Usage)\n' > wiki/Usage-zh-CN.md
+ref-missing|target does not exist: Missing-Ref|printf '\n[gone]: Missing-Ref\n' >> wiki/Home.md
+ref-md|must omit .md: Usage.md|printf '\n[md]: Usage.md\n' >> wiki/Home.md
+ref-cross-language|must stay in the same language: Development-and-Release-zh-CN|printf '\n[zh]: Development-and-Release-zh-CN\n' >> wiki/Usage.md
 T67
   rm -rf -- "$t67_dir"
   if [ -z "$t67_missed" ]; then
