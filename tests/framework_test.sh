@@ -5076,6 +5076,8 @@ chinese-without-cjk|no Chinese text in a Chinese page|printf '# Usage\n\n[Englis
 ref-missing|target does not exist: Missing-Ref|printf '\n[gone]: Missing-Ref\n' >> wiki/Home.md
 ref-md|must omit .md: Usage.md|printf '\n[md]: Usage.md\n' >> wiki/Home.md
 ref-cross-language|must stay in the same language: Development-and-Release-zh-CN|printf '\n[zh]: Development-and-Release-zh-CN\n' >> wiki/Usage.md
+ref-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '[zh]: Usage-zh-CN'
+ref-home|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' 'Architecture' && printf '\n[arch]: Architecture\n' >> wiki/Home.md
 T67
   rm -rf -- "$t67_dir"
   if [ -z "$t67_missed" ]; then
