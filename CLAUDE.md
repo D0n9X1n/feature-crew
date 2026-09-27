@@ -47,7 +47,7 @@ Feature-Crew changes are **Standard track maximum**. Orchestration (`agents/fc-p
 
 ## Wiki
 
-`wiki/` is the only source of truth for the GitHub wiki: `.github/workflows/publish-wiki.yml` mirrors it there on every push to `main`. Never edit the GitHub wiki directly; browser edits are overwritten on the next publish. A change that alters documented behavior updates `wiki/` in the same PR. After merging, confirm the `Publish wiki` run for the merge commit succeeded, or reported no page changes. Link wiki pages by page name and source files by full GitHub URL.
+The wiki is Feature-Crew's documentation center; README.md keeps only an introduction, a quick start, and the features. `wiki/` is the only source of truth for the GitHub wiki: `.github/workflows/publish-wiki.yml` mirrors it there on every push to `main`. Never edit the GitHub wiki directly; browser edits are overwritten on the next publish. Each page is an English `wiki/<Page>.md` plus a Chinese `wiki/<Page>-zh-CN.md` in a separate file. Load only the English wiki pages for routine agent context. A change that alters documented behavior updates `wiki/` in the same PR, in both languages. After merging, confirm the `Publish wiki` run for the merge commit succeeded, or reported no page changes. Link wiki pages by page name and source files by full GitHub URL.
 
 ## Layout
 
@@ -58,8 +58,8 @@ Feature-Crew changes are **Standard track maximum**. Orchestration (`agents/fc-p
 | Role prompts | `agents/fc-*.md` |
 | Self-test | `tests/framework_test.sh` |
 | CI | `.github/workflows/` |
-| Wiki pages | `wiki/*.md` |
-| Wiki publisher and its test | `scripts/` |
+| Wiki pages (English entry points) | `wiki/Home.md`, `wiki/Usage.md`, `wiki/Architecture.md`, `wiki/Development-and-Release.md` |
+| Wiki publisher, checker, and their test | `scripts/` |
 
 ## Install
 

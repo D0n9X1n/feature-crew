@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Tests the wiki publisher offline, the publish workflow's contract, the
-# CLAUDE.md wiki rule, and the links between wiki pages. Adapted from
-# SonicTerm's scripts/test-wiki-publish.sh; Feature-Crew's wiki is English-only,
-# so the bilingual checker is not ported.
+# CLAUDE.md wiki rule, and the wiki pages. Adapted from SonicTerm's
+# scripts/test-wiki-publish.sh; Feature-Crew's wiki keeps separate English and
+# Chinese pages, which scripts/check-wiki.py validates.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 publisher="$root/scripts/publish-wiki.sh"
 workflow="$root/.github/workflows/publish-wiki.yml"
 guidance="$root/CLAUDE.md"
-wiki="$root/wiki"
+checker="$root/scripts/check-wiki.py"
 
 fail() {
   printf 'wiki publish test: %s\n' "$1" >&2
@@ -18,6 +18,7 @@ fail() {
 
 [[ -x "$publisher" ]] || fail "publisher is missing or not executable"
 [[ -f "$workflow" ]] || fail "workflow is missing"
+[[ -x "$checker" ]] || fail "checker is missing or not executable"
 
 # Fixture commits must not depend on the caller's Git configuration or step output.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -39,6 +40,7 @@ git -C "$wiki_repo" add --all
 git -C "$wiki_repo" commit -q -m seed
 
 printf '# home\n' > "$source_dir/Home.md"
+printf '# 首页\n' > "$source_dir/Home-zh-CN.md"
 printf '# current\n' > "$source_dir/Keep.md"
 printf 'not a wiki page\n' > "$source_dir/ignored.txt"
 mkdir "$source_dir/nested"
@@ -50,6 +52,7 @@ GITHUB_OUTPUT="$first_output" "$publisher" "$source_dir" "$wiki_repo" 0123456789
 [[ -d "$wiki_repo/.git" ]] || fail "publisher removed Git metadata"
 [[ "$(git -C "$wiki_repo" branch --show-current)" == "master" ]] || fail "publisher changed branch"
 [[ -f "$wiki_repo/Home.md" ]] || fail "publisher omitted a new page"
+[[ -f "$wiki_repo/Home-zh-CN.md" ]] || fail "publisher omitted the Chinese page"
 [[ "$(<"$wiki_repo/Keep.md")" == "# current" ]] || fail "publisher did not update a page"
 [[ ! -e "$wiki_repo/Stale.md" ]] || fail "publisher retained a deleted page"
 [[ ! -e "$wiki_repo/ignored.txt" ]] || fail "publisher copied a non-Markdown file"
@@ -158,28 +161,11 @@ grep -Fq 'Never edit the GitHub wiki directly' "$guidance" || fail "guidance per
 grep -Fq 'overwritten on the next publish' "$guidance" || fail "guidance omits one-way mirror behavior"
 grep -Fq 'updates `wiki/` in the same PR' "$guidance" || fail "guidance lets documented behavior drift from the wiki"
 grep -Fq 'confirm the `Publish wiki` run' "$guidance" || fail "guidance omits the post-merge publish check"
+grep -Fq 'documentation center' "$guidance" || fail "guidance no longer makes the wiki the documentation center"
+grep -Fq 'Load only the English wiki pages for routine agent context' "$guidance" || fail "guidance must require English-only agent context"
+grep -Fq '<Page>-zh-CN.md' "$guidance" || fail "guidance must name the separate Chinese files"
+[[ "$(grep -c -- '-zh-CN' "$guidance")" == 1 ]] || fail "guidance mentions Chinese pages outside the naming rule"
 
-[[ -f "$wiki/Home.md" ]] || fail "wiki has no Home page"
-shopt -s nullglob
-pages=("$wiki"/*.md)
-for page in "${pages[@]}"; do
-  name="$(basename "$page" .md)"
-  [[ "$(head -n 1 "$page")" == '# '* ]] || fail "$name does not start with a title"
-  # Links outside fenced blocks and inline code must name an existing page.
-  links="$(awk '/^[[:space:]]*```/ { fence = !fence; next } !fence' "$page" \
-    | sed 's/`[^`]*`//g' | grep -oE '[]][(][^)]*[)]' | sed 's/^](//; s/)$//' || true)"
-  while IFS= read -r target; do
-    case "$target" in
-      '' | http://* | https://* | mailto:* | '#'*) continue ;;
-    esac
-    target="${target%%#*}"
-    [[ "$target" =~ ^[A-Za-z0-9-]+$ ]] || fail "$name links to '$target'; link wiki pages by page name"
-    [[ -f "$wiki/$target.md" ]] || fail "$name links to a missing page: $target"
-  done <<< "$links"
-done
-for page in "${pages[@]}"; do
-  name="$(basename "$page" .md)"
-  [[ "$name" == Home ]] || grep -Fq "]($name)" "$wiki/Home.md" || fail "Home does not link to $name"
-done
+checked="$(python3 "$checker" 2>&1)" || fail "wiki checker failed: $checked"
 
 printf 'wiki publish test: ok\n'

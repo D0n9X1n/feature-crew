@@ -1,8 +1,10 @@
 # Architecture
 
+[简体中文](Architecture-zh-CN)
+
 Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`. Two installers copy the prompts into `~/.claude`, and a bash suite plus CI check the prompts' size and rule text and that the two installers match.
 
-Scope: the whole repository at v5.2.0, focused on the build path. The diagrams were drawn with `/fc-explain`; each node and arrow traces to the files in the table after its diagram. CI, releases, and this wiki's publishing are on [Development and Release](Development-and-Release).
+Scope: the whole repository at v5.2.1, focused on the build path. The diagrams were drawn with `/fc-explain`; each node and arrow traces to the files in the table after its diagram. CI, releases, and this wiki's publishing are on [Development and Release](Development-and-Release).
 
 ## Building blocks
 
@@ -60,8 +62,8 @@ flowchart TB
 | Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five are installed with `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
 | fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and always cleans up | [SKILL.md][ship] | fc-ship: sections 1–7 |
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
-| Installers | Copy agents (adding frontmatter) and every skill directory, record hashes, and delete only files proven to be theirs; `--check` and `--verify` are read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [README][readme]: *Install* |
-| Installed state | The agents, skills, and install manifest | `~/.claude/agents/fc-*.md`, `~/.claude/skills/fc-*/`, `~/.claude/feature-crew.sha256` | [README][readme]: *Install*; [install.sh][sh] names the manifest |
+| Installers | Copy agents (adding frontmatter) and every skill directory, record hashes, and delete only files proven to be theirs; `--check` and `--verify` are read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
+| Installed state | The agents, skills, and install manifest | `~/.claude/agents/fc-*.md`, `~/.claude/skills/fc-*/`, `~/.claude/feature-crew.sha256` | [Usage](Usage): *Install*; [install.sh][sh] names the manifest |
 | Claude Code | Loads the skills (inferred), runs the session and subagents, and records transcripts | not in this repository | [gate-provenance.md][prov]: *Read the record* |
 | Self-test suite | Dev-only bash checks that exit nonzero on any failure; `FC_STRICT=1` turns skipped checks into failures | [framework_test.sh][suite] | the suite's header |
 | CI workflows | Run the suite and clean-prefix installs, publish this wiki, and cut releases | [.github/workflows/][wf] | [Development and Release](Development-and-Release) |
@@ -157,11 +159,33 @@ sequenceDiagram
 | Complex | A cross-audited spec doc (≤1000 words); a plan from `fc-architect` (≤500 lines) with a blind second design, a plan audit, and approval; `fc-developer` per task, in parallel only at three or more independent tasks; `fc-qa-spec` and `fc-qa-code` per task; `fc-tech-lead` approval before merge. See [complex-track.md][complex]. |
 | Changes to Feature-Crew itself | Standard at most, within the line caps. See [meta-work-cap.md][meta]. |
 
+## Hard gates and principles
+
+These block forward motion until satisfied:
+
+1. Standard and Complex track approval, unless waived
+2. Standard and Complex spec approval, unless waived
+3. Complex plan approval, unless waived
+4. Observed verification evidence for every done claim
+5. Implementation matches the approved spec
+6. Tech Lead approval before merging Complex work
+
+Verification, spec compliance, and Complex Tech Lead approval cannot be waived. File count is only a warning signal: a mirrored low-risk change across several files can be Just Do It, while a one-line runtime, config, API, or deploy change cannot. The canonical gates, escalation list, and reviewer rules live in [fc-build-or-fix SKILL.md][bof]; this section summarizes them.
+
+Principles that hold on every track:
+
+- **TDD**: no production code without an observed failing test first; docs use objective acceptance checks first.
+- **Verify before claiming**: paste output; do not describe it.
+- **Root cause first**: three failed fixes means rethink.
+- **No guessing**: look up facts; ask about decisions.
+- **YAGNI**: build only what was requested.
+- **Cross-platform parity**: `install.sh` and `install.ps1` ship together.
+
 ## Verified facts, inferences, and unknowns
 
 **Verified in the repository**
 
-- Everything Claude Code runs is Markdown: ten skills, five reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher.
+- Everything Claude Code runs is Markdown: ten skills, five reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
 - Role prompts carry no `model` key. The installers add `name` and `description`, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - The suite's rule-text checks prove a rule is present, not what it means; its header says so.
@@ -213,6 +237,5 @@ sequenceDiagram
 [sh]: https://github.com/D0n9X1n/feature-crew/blob/main/install.sh
 [ps1]: https://github.com/D0n9X1n/feature-crew/blob/main/install.ps1
 [pub]: https://github.com/D0n9X1n/feature-crew/blob/main/published.sha256
-[readme]: https://github.com/D0n9X1n/feature-crew/blob/main/README.md
 [suite]: https://github.com/D0n9X1n/feature-crew/blob/main/tests/framework_test.sh
 [wf]: https://github.com/D0n9X1n/feature-crew/tree/main/.github/workflows

@@ -1343,7 +1343,7 @@ if grep -q '^disable-model-invocation: true$' .claude/skills/fc-grill-me/SKILL.m
   t33_err="$t33_err grill-not-model-invocable"
 fi
 # Pointer docs must not grow a second copy of the canonical route table.
-dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md CLAUDE.md agents/fc-pm.md \
+dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md CLAUDE.md 'wiki/*.md' agents/fc-pm.md \
   '.claude/skills/fc-brainstorm/SKILL.md' 2>/dev/null || true)
 [ -z "$dup_classifier" ] || t33_err="$t33_err duplicated-classifier:$(echo "$dup_classifier" | tr '\n' ',')"
 [ -z "$t33_err" ] && ok "T33 static contract alarm: six need routes + bounded return-to-origin" \
@@ -1435,7 +1435,7 @@ fi
 # evidence. Its eight behaviors and the Worker boundary suffix on every helper
 # prompt are literal sentences scoped to their own sections, and fc-research's
 # pointer to it must sit in fc-research's own "Do NOT use for" list, so a stray
-# mention elsewhere cannot satisfy either. As T64 does for /fc-ship, the README
+# mention elsewhere cannot satisfy either. As T64 does for /fc-ship, the wiki Usage
 # direct-command list and both installer "Available:" banners must name
 # /fc-explain, and README line 3 must carry this release's version. The skill
 # stays within its approved 30 lines, counted byte-exactly so trailing blank
@@ -1446,7 +1446,7 @@ t66_labels=(
   infer-scope bottom-up-map default-views mermaid-only readable-diagrams
   after-each-diagram verify-evidence chat-output
   helper-worker-suffix research-pointer
-  readme-direct-command readme-version banner-sh banner-ps1 line-budget
+  usage-direct-command readme-version banner-sh banner-ps1 line-budget
 )
 t66_sections=(map map diagrams diagrams diagrams answer verify answer map research
   commands version sh ps1 budget)
@@ -1462,7 +1462,7 @@ t66_rules=(
   '> Perform the assigned work yourself. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
   "explaining a project's structure with diagrams (use /fc-explain)"
   '`/fc-explain`'
-  '**v5.2.0**'
+  '**v5.2.1**'
   '/fc-explain'
   '/fc-explain'
   30
@@ -1471,7 +1471,7 @@ t66_load() { # file -> t66_loaded, byte-exact: $(cat) alone drops trailing blank
   t66_loaded=$(cat "$1" 2>/dev/null; printf x)
   t66_loaded=${t66_loaded%x}
 }
-t66_explain_contract() { # fc-explain, fc-research, README, install.sh, install.ps1 text
+t66_explain_contract() { # fc-explain, fc-research, README, install.sh, install.ps1, wiki Usage text
   local map diagrams verify answer pointer commands version sh ps1 lines section i errors=""
   map=$(printf '%s\n' "$1" | sed -n '/^## Scope and map$/,/^## /p')
   diagrams=$(printf '%s\n' "$1" | sed -n '/^## Diagrams$/,/^## /p')
@@ -1481,7 +1481,7 @@ t66_explain_contract() { # fc-explain, fc-research, README, install.sh, install.
   # Only fc-research's own frontmatter "Do NOT use for" list counts.
   pointer=$(printf '%s\n' "$2" | awk '/^---$/{c++; if(c==2) exit; next} c==1' \
     | grep '^description:' | sed -n 's/.*Do NOT use for //p')
-  commands=$(printf '%s\n' "$3" | sed -n '/^## Describe the need/,/^## /p')
+  commands=$(printf '%s\n' "$6" | sed -n '/^## Describe the need/,/^## /p')
   version=$(printf '%s\n' "$3" | sed -n '3p')
   sh=$(printf '%s\n' "$4" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
   ps1=$(printf '%s\n' "$5" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
@@ -1509,10 +1509,11 @@ t66_load .claude/skills/fc-explain/SKILL.md
 t66_explain_text=$t66_loaded
 t66_research_text=$(cat .claude/skills/fc-research/SKILL.md 2>/dev/null)
 t66_readme_text=$(cat README.md 2>/dev/null)
+t66_usage_text=$(cat wiki/Usage.md 2>/dev/null)
 t66_sh_text=$(cat install.sh 2>/dev/null)
 t66_ps1_text=$(cat install.ps1 2>/dev/null)
 t66_err=$(t66_explain_contract "$t66_explain_text" "$t66_research_text" \
-  "$t66_readme_text" "$t66_sh_text" "$t66_ps1_text")
+  "$t66_readme_text" "$t66_sh_text" "$t66_ps1_text" "$t66_usage_text")
 if [ -z "$t66_err" ]; then
   t66_root=$(mktemp -d)
   CLEANUP_PATHS+=("$t66_root")
@@ -1522,11 +1523,13 @@ if [ -z "$t66_err" ]; then
     t66_explain_mut="$t66_explain_text"
     t66_research_mut="$t66_research_text"
     t66_readme_mut="$t66_readme_text"
+    t66_usage_mut="$t66_usage_text"
     t66_sh_mut="$t66_sh_text"
     t66_ps1_mut="$t66_ps1_text"
     case "${t66_sections[$t66_i]}" in
       research) t66_research_mut="${t66_research_mut/"$t66_rule"/}" ;;
-      commands|version) t66_readme_mut="${t66_readme_mut/"$t66_rule"/}" ;;
+      commands) t66_usage_mut="${t66_usage_mut/"$t66_rule"/}" ;;
+      version) t66_readme_mut="${t66_readme_mut/"$t66_rule"/}" ;;
       sh) t66_sh_mut="${t66_sh_mut/"$t66_rule"/}" ;;
       ps1) t66_ps1_mut="${t66_ps1_mut/"$t66_rule"/}" ;;
       budget)
@@ -1542,7 +1545,7 @@ if [ -z "$t66_err" ]; then
       *) t66_explain_mut="${t66_explain_mut/"$t66_rule"/}" ;;
     esac
     t66_mut_out=$(t66_explain_contract "$t66_explain_mut" "$t66_research_mut" \
-      "$t66_readme_mut" "$t66_sh_mut" "$t66_ps1_mut")
+      "$t66_readme_mut" "$t66_sh_mut" "$t66_ps1_mut" "$t66_usage_mut")
     if [ "$t66_mut_out" = " ${t66_labels[$t66_i]}" ]; then
       ok "T66 ${t66_kind} mutation: ${t66_labels[$t66_i]} rejected by its own check"
     else
@@ -1552,7 +1555,7 @@ if [ -z "$t66_err" ]; then
   done
   rm -rf "$t66_root"
 fi
-[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams; README entry, version, banners, and 30-line budget pinned" \
+[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams; wiki Usage entry, README version, banners, and 30-line budget pinned" \
                    || bad "T66 fc-explain explanation contract" "missing:$t66_err"
 
 # ---------------------------------------------------------------- T34
@@ -1560,10 +1563,10 @@ fi
 # intentional standalone skill pins (fc-review/fc-second-opinion) outside scope.
 t34_err=""
 stale_track=$(printf 'Tri%s' 'vial')
-stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md agents '*.sh' '*.ps1' '.github/workflows/*' '.claude/skills/**' 2>/dev/null || true)
+stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' '.claude/skills/**' 2>/dev/null || true)
 [ -z "$stale_track_files" ] || t34_err="$t34_err stale-track:$(echo "$stale_track_files" | tr '\n' ',')"
 stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned to `?model: sonnet|review-family model|review family|different model family|session default model' -- \
-  README.md CLAUDE.md agents install.sh install.ps1 '.github/workflows/*' '.claude/skills/fc-build-or-fix/**' '.claude/skills/fc-brainstorm/**' '.claude/skills/fc-research/**' '.claude/skills/fc-update/**' 2>/dev/null || true)
+  README.md CLAUDE.md 'wiki/*.md' agents install.sh install.ps1 '.github/workflows/*' '.claude/skills/fc-build-or-fix/**' '.claude/skills/fc-brainstorm/**' '.claude/skills/fc-research/**' '.claude/skills/fc-update/**' 2>/dev/null || true)
 [ -z "$stale_pins" ] || t34_err="$t34_err stale-role-pin:$(echo "$stale_pins" | tr '\n' ',')"
 [ -z "$t34_err" ] && ok "T34 no stale legacy-track or role-pin wording in active shipped content" \
                    || bad "T34 stale framework wording" "issues:$t34_err"
@@ -2404,10 +2407,10 @@ grep -qxF 'Missing value for --prefix' "$t35_case/stderr" || t35_err="$t35_err m
 t35_unchanged
 t35_result "T35g install.sh --prefix requires a value with exit 2"
 
-if grep '^Flags:' README.md | grep -qF -- '-DryRun'; then
-  ok "T35i README Flags line names the PowerShell spelling"
+if grep '^Flags:' wiki/Usage.md | grep -qF -- '-DryRun'; then
+  ok "T35i wiki Usage Flags line names the PowerShell spelling"
 else
-  bad "T35i README Flags line names the PowerShell spelling" "-DryRun absent from Flags line"
+  bad "T35i wiki Usage Flags line names the PowerShell spelling" "-DryRun absent from Flags line"
 fi
 
 # --------------------------------------------------------- T36-T46 helpers
@@ -4019,9 +4022,9 @@ else
 fi
 
 case_err=""
-t63_flags=$(grep '^Flags:' README.md)
+t63_flags=$(grep '^Flags:' wiki/Usage.md)
 for t63_flag in --check --verify -Check -Verify; do
-  printf '%s\n' "$t63_flags" | grep -qF -- "\`$t63_flag\`" || case_err="$case_err README-missing:$t63_flag"
+  printf '%s\n' "$t63_flags" | grep -qF -- "\`$t63_flag\`" || case_err="$case_err usage-missing:$t63_flag"
 done
 HOME="$installer_root/home" "$installer_bash" "$installer_repo/install.sh" --help > "$t63_root/help.out" 2>&1 \
   || case_err="$case_err sh-help-failed"
@@ -4037,7 +4040,7 @@ if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
     grep -qF -- "$t63_flag" "$t63_root/help.out" || case_err="$case_err ps1-help-missing:$t63_flag"
   done
 fi
-t63_result "T63 README Flags line and both installers' help name --check/-Check and --verify/-Verify"
+t63_result "T63 wiki Usage Flags line and both installers' help name --check/-Check and --verify/-Verify"
 
 if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
   skip "T63 native Windows check/verify workflow steps (PyYAML unavailable)"
@@ -4158,10 +4161,13 @@ fi
 
 # ---------------------------------------------------------------- T54
 case_err=""
-sed -n '/^## Updating$/,/^## Credits$/p' README.md | grep -qF 'feature-crew.sha256' || case_err="$case_err update-paragraph-does-not-name-manifest"
+sed -n '/^## Updating$/,/^## /p' wiki/Usage.md | grep -qF 'feature-crew.sha256' || case_err="$case_err update-section-does-not-name-manifest"
+t54_heads=$(grep -E '^#{1,6} ' README.md | tr '\n' '|')
+[ "$t54_heads" = "# Feature-Crew|## Quick start|## Features|" ] || case_err="$case_err README-headings=$t54_heads"
 count=$(wc -l < README.md | tr -d ' ')
-[ "$count" -eq 94 ] || case_err="$case_err README-lines=$count(want-94)"
-installer_result "T54 README explains the install manifest without gaining lines"
+[ "$count" -le 40 ] || case_err="$case_err README-lines=$count(want<=40)"
+grep -qF 'https://github.com/D0n9X1n/feature-crew/wiki' README.md || case_err="$case_err README-no-wiki-link"
+installer_result "T54 wiki Usage explains the install manifest; README keeps only an introduction, quick start, and features"
 
 # ---------------------------------------------------------------- T58
 # Parse the workflow graph: a Linux-only suite in release.yml cannot substantiate
@@ -4536,7 +4542,7 @@ t64_rules=(
   '/fc-ship'
   '/fc-ship'
 )
-t64_contract() { # fc-ship, build-or-fix, README, install.sh, install.ps1 text
+t64_contract() { # fc-ship, build-or-fix, wiki Usage and Development-and-Release, install.sh, install.ps1 text
   local auth watch outcome failure merge release clean standard commands layout sh ps1
   local i section="" errors=""
   auth=$(printf '%s\n' "$1" | sed -n '/^## 1 — Authorize/,/^## /p')
@@ -4572,7 +4578,7 @@ t64_contract() { # fc-ship, build-or-fix, README, install.sh, install.ps1 text
 }
 t64_ship_text=$(cat "$t64_ship" 2>/dev/null)
 t64_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
-t64_readme_text=$(cat README.md)
+t64_readme_text=$(cat wiki/Usage.md wiki/Development-and-Release.md 2>/dev/null)
 t64_sh_text=$(cat install.sh)
 t64_ps1_text=$(cat install.ps1)
 t64_contract_out=$(t64_contract "$t64_ship_text" "$t64_build_text" "$t64_readme_text" "$t64_sh_text" "$t64_ps1_text")
@@ -5049,9 +5055,47 @@ nested-copy|copied a nested source page|t67_sub scripts/publish-wiki.sh 'pages=(
 branch-guard|not on master|t67_sub scripts/publish-wiki.sh '== "master" ]] ||' '== "master" ]] || true ||'
 canonical-rule|makes wiki/ canonical|t67_sub CLAUDE.md 'only source of truth' 'primary source'
 verify-rule|post-merge publish check|t67_sub CLAUDE.md 'confirm the `Publish wiki` run' 'watch the wiki'
-broken-link|missing page: Missing-Page|printf '\n[Gone](Missing-Page)\n' >> wiki/Home.md
-md-link|link wiki pages by page name|printf '\n[Home](Home.md)\n' >> wiki/Home.md
-home-coverage|Home does not link to Architecture|t67_sub wiki/Home.md '](Architecture)' '](Development-and-Release)'
+broken-link|target does not exist: Missing-Page|printf '\n[Gone](Missing-Page)\n' >> wiki/Home.md
+md-link|must omit .md|printf '\n[Home](Home.md)\n' >> wiki/Home.md
+home-coverage|missing link to Architecture|t67_sub wiki/Home.md '](Architecture)' '](Development-and-Release)'
+doc-center-rule|documentation center|t67_sub CLAUDE.md 'documentation center' 'documentation home'
+english-only-rule|English-only agent context|t67_sub CLAUDE.md 'Load only the English wiki pages for routine agent context' 'Load the wiki pages'
+zh-naming-rule|name the separate Chinese files|t67_sub CLAUDE.md '<Page>-zh-CN.md' '<Page>-cn.md'
+zh-mention|outside the naming rule|printf '\nSee Home-zh-CN.\n' >> CLAUDE.md
+home-zh-coverage|missing link to Usage-zh-CN|t67_sub wiki/Home-zh-CN.md '](Usage-zh-CN)' '](Architecture-zh-CN)'
+missing-counterpart|missing language counterpart: Usage-zh-CN|rm wiki/Usage-zh-CN.md
+missing-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' ''
+cross-language|must stay in the same language|printf '\n[Other](Architecture-zh-CN)\n' >> wiki/Usage.md
+heading-parity|heading-depth sequences differ|printf '\n## Extra\n' >> wiki/Usage.md
+legacy-marker|legacy language marker|printf '\n## English\n' >> wiki/Usage.md
+title|does not start with a title|t67_sub wiki/Usage.md '# Usage' 'Usage'
+nested-page|nested Markdown pages are not allowed|mkdir wiki/sub && printf '# Nested\n' > wiki/sub/Deep.md
+ascii-name|flat ASCII name|printf '# Page\n' > wiki/Über.md
+english-cjk|Chinese text in an English page|printf '\n中文\n' >> wiki/Usage.md
+chinese-without-cjk|no Chinese text in a Chinese page|printf '# Usage\n\n[English](Usage)\n' > wiki/Usage-zh-CN.md
+ref-missing|target does not exist: Missing-Ref|printf '\n[gone]: Missing-Ref\n' >> wiki/Home.md
+ref-md|must omit .md: Usage.md|printf '\n[md]: Usage.md\n' >> wiki/Home.md
+ref-cross-language|must stay in the same language: Development-and-Release-zh-CN|printf '\n[zh]: Development-and-Release-zh-CN\n' >> wiki/Usage.md
+ref-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '[zh]: Usage-zh-CN'
+ref-home|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' 'Architecture' && printf '\n[arch]: Architecture\n' >> wiki/Home.md
+code-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '`[简体中文](Usage-zh-CN)`'
+code-home|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '`[Architecture](Architecture)`'
+indented-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '    [简体中文](Usage-zh-CN)'
+raw-html|raw HTML is not allowed|t67_sub wiki/Home.md '- [Architecture](Architecture)' $'<!--\n- [Architecture](Architecture)\n-->'
+html-link|raw HTML is not allowed|printf '\nSee <a href="Missing">this</a>.\n' >> wiki/Home.md
+switch-label|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '[Chinese](Usage-zh-CN)'
+home-pipe|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Archi|tecture](Architecture)'
+home-escape|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Architecture\](Architecture)'
+home-backtick|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Arch`itecture](Architecture) x`'
+fence-info|missing link to Usage|t67_sub wiki/Home.md '- [Usage](Usage)' $'```\n```text\n- [Usage](Usage)\n```'
+fence-backtick-info|raw HTML is not allowed|printf '\n``` a`b\n<details>\n' >> wiki/Home.md
+fence-indent|code fences must start at column 0|printf '\n\t```\n' >> wiki/Home.md
+html-details|raw HTML is not allowed|printf '\nSee <details>\n' >> wiki/Home.md
+multiline-link|target does not exist: Missing-Multi|printf '\n[broken\nlink](Missing-Multi)\n' >> wiki/Home.md
+nested-link|target does not exist: Missing-Nested|printf '\n[a [b] c](Missing-Nested)\n' >> wiki/Home.md
+quote-def|target does not exist: Missing-Quote|printf '\n> [q]: Missing-Quote\n' >> wiki/Home.md
+nextline-def|target does not exist: Missing-Next|printf '\n[n]:\n  Missing-Next\n' >> wiki/Home.md
+multiline-def|target does not exist: Missing-Label|printf '\n[multi\nlabel]: Missing-Label\n' >> wiki/Home.md
 T67
   rm -rf -- "$t67_dir"
   if [ -z "$t67_missed" ]; then
