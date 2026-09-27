@@ -5,11 +5,19 @@ Adapted from SonicTerm's scripts/check-wiki.py without its crate rules. Pages
 come from the filesystem, the same top-level set the publisher copies, so the
 checker also runs on scratch copies that have no Git metadata.
 
-Navigation counts only in two canonical forms that always render as links:
-the language-switch link alone on line 3 after a blank line 2, and Home's
-link to each page at the start of a top-level bullet. Link validation stays
-broad (every link-shaped string outside fences, including reference
-definitions), and raw HTML is rejected, so no link can hide from the checks.
+This is not a Markdown parser. It checks a restricted wiki dialect and rejects
+some valid Markdown to keep its rules simple:
+
+- Navigation counts only in two canonical forms: line 3, after a blank line 2,
+  is exactly the language-switch link, labeled with the other language's name;
+  and Home links each page at the start of a column-0 "- " bullet whose label
+  is plain readable text.
+- Code fences open and close at column 0; an indented fence-like line is an
+  error, not a guess at container rules.
+- HTML-like text ("<" before a letter, "!", "/", or "?") is rejected anywhere
+  outside fenced blocks, inline code included.
+- Link-shaped destinations are validated on every line, code examples
+  included, so fence rules cannot hide a broken target.
 """
 
 from __future__ import annotations
@@ -23,14 +31,32 @@ CHINESE_SUFFIX = "-zh-CN"
 LEGACY_MARKERS = frozenset({"## English", "## 中文"})
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 HEADING_PATTERN = re.compile(r"^(#{1,6})[ \t]+")
-LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
-REFERENCE_PATTERN = re.compile(r"^[ \t]{0,3}\[(?!\^)[^\]]+\]:[ \t]*(\S+)")
-SWITCH_PATTERN = re.compile(r"^\[[^\]]+\]\(([A-Za-z0-9-]+)\)$")
-HOME_LINK_PATTERN = re.compile(r"^- \[[^\]]+\]\(([A-Za-z0-9-]+)\)")
-RAW_HTML_PATTERN = re.compile(r"^[ \t]{0,3}<|<a[\s>]", re.IGNORECASE)
-FENCE_PATTERN = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+# The destination after every "](", whatever the label holds. The lookahead
+# consumes only "](", so overlapping candidates are each checked.
+LINK_PATTERN = re.compile(r"\]\((?=([^)]+)\))")
+# Block-quote and list markers that may open a line before a definition.
+CONTAINER = r"(?:[ \t]|>|(?:[-+*]|[0-9]{1,9}[.)])[ \t])*"
+# A reference definition at a line start after optional container markers. Its
+# label may span lines and its destination may start on the next line. A label
+# holds no unescaped bracket, so prose such as "[a][b]: text" is not one.
+REFERENCE_PATTERN = re.compile(
+    rf"^(?={CONTAINER}\[(?!\^)(?:[^\[\]\\]|\\.)*\]:[ \t]*(?:\n{CONTAINER})?([^ \t\n]+))",
+    re.MULTILINE | re.DOTALL,
+)
+SPACE_RUN = re.compile(r"[ \t\n]+")
+# The language-switch label names the other language.
+SWITCH_LABEL_ON_ENGLISH_PAGE = "简体中文"
+SWITCH_LABEL_ON_CHINESE_PAGE = "English"
+# Home's link to a page opens a column-0 "- " bullet. Its label is plain
+# readable text: at least one letter or digit, and no bracket, pipe, backslash,
+# or backtick, any of which could stop it rendering as a link.
+HOME_LINK_PATTERN = re.compile(r"- \[(?=[^\]]*[^\W_])[^\[\]|\\`]+\]\(([A-Za-z0-9-]+)\)")
+# A fence opens at column 0; a backtick fence's info string holds no backtick.
+FENCE_OPEN_PATTERN = re.compile(r"(`{3,})[^`]*$|(~{3,})")
+INDENTED_FENCE_PATTERN = re.compile(r"[ \t]+(?:`{3}|~{3})")
+RAW_HTML_PATTERN = re.compile(r"<[A-Za-z!/?]")
 # CJK symbols and punctuation, ideographs, compatibility ideographs, full-width forms.
-CJK_PATTERN = re.compile("[　-〿㐀-䶿一-鿿豈-﫿＀-￯]")
+CJK_PATTERN = re.compile(r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
 EXTERNAL_SCHEMES = frozenset(
     {"data", "ftp", "ftps", "http", "https", "irc", "ircs", "mailto", "news", "ssh", "tel"}
 )
@@ -47,19 +73,20 @@ def counterpart_stem(stem: str) -> str:
 
 
 def outside_fences(lines: list[str]):
-    """Yield (line number, line) for lines outside fenced code blocks."""
-    fence: str | None = None
-    fence_length = 0
+    """Yield (line number, line) for lines outside fenced code blocks.
+
+    A fence opens at column 0 and closes only on a column-0 run of its own
+    character at least as long as the opener, followed by nothing but
+    whitespace. Indented fence-like lines are rejected separately.
+    """
+    fence = ""
     for number, line in enumerate(lines, start=1):
-        marker = FENCE_PATTERN.match(line)
-        if marker:
-            run = marker.group(1)
-            if fence is None:
-                fence, fence_length = run[0], len(run)
-            elif run[0] == fence and len(run) >= fence_length:
-                fence, fence_length = None, 0
-            continue
-        if fence is None:
+        if fence:
+            if line.startswith(fence) and not line.lstrip(fence[0]).strip(" \t"):
+                fence = ""
+        elif opener := FENCE_OPEN_PATTERN.match(line):
+            fence = opener.group(1) or opener.group(2)
+        else:
             yield number, line
 
 
@@ -72,22 +99,41 @@ def heading_depths(lines: list[str]) -> list[int]:
     ]
 
 
-def link_targets(lines: list[str]) -> list[tuple[int, str]]:
-    """Return every link-shaped destination outside fenced code blocks.
+def blocks(lines: list[str]):
+    """Yield (first line number, joined text) for each run of non-blank lines."""
+    first, run = 0, []
+    for number, line in enumerate(lines, start=1):
+        if line.strip(" \t"):
+            if not run:
+                first = number
+            run.append(line)
+        elif run:
+            yield first, "\n".join(run)
+            run = []
+    if run:
+        yield first, "\n".join(run)
 
-    Deliberately broad: inline links and reference definitions count even in
-    inline or indented code, so validation can only be stricter, never miss one.
+
+def link_targets(lines: list[str]) -> list[tuple[int, str]]:
+    """Return every link-shaped destination with the line it starts on.
+
+    Deliberately broad and fence-blind: the destination after every "](" and
+    every reference definition count, code examples included. Labels and
+    destinations may continue across lines within one block of non-blank lines.
     """
     links: list[tuple[int, str]] = []
-    for number, line in outside_fences(lines):
-        destinations = [match.group(1) for match in LINK_PATTERN.finditer(line)]
-        if reference := REFERENCE_PATTERN.match(line):
-            destinations.append(reference.group(1))
-        for destination in destinations:
-            destination = destination.strip()
+    for first, text in blocks(lines):
+        candidates = [
+            (match.start(1), match.group(1))
+            for pattern in (LINK_PATTERN, REFERENCE_PATTERN)
+            for match in pattern.finditer(text)
+        ]
+        for offset, raw in candidates:
+            leading = len(raw) - len(raw.lstrip(" \t\n"))
+            destination = SPACE_RUN.sub(" ", raw).strip(" ")
             if destination.startswith("<") and destination.endswith(">"):
-                destination = destination[1:-1].strip()
-            links.append((number, destination))
+                destination = destination[1:-1]
+            links.append((first + text.count("\n", 0, offset + leading), destination))
     return links
 
 
@@ -110,17 +156,18 @@ def validate_links(path: PurePosixPath, lines: list[str], page_stems: set[str], 
 
 
 def switch_line(path: PurePosixPath, lines: list[str]) -> bool:
-    """True when line 3 is the language-switch link alone, after a blank line 2."""
-    if len(lines) < 3 or lines[1].strip():
+    """True when line 2 is blank and line 3, outside fences, is exactly the switch link."""
+    if len(lines) < 3 or lines[1].strip(" \t"):
         return False
     if 3 not in {number for number, _ in outside_fences(lines)}:
         return False
-    match = SWITCH_PATTERN.match(lines[2])
-    return bool(match) and match.group(1) == counterpart_stem(path.stem)
+    chinese = path.stem.endswith(CHINESE_SUFFIX)
+    label = SWITCH_LABEL_ON_CHINESE_PAGE if chinese else SWITCH_LABEL_ON_ENGLISH_PAGE
+    return lines[2] == f"[{label}]({counterpart_stem(path.stem)})"
 
 
 def home_link_stems(lines: list[str]) -> set[str]:
-    """Return the pages that Home links from the start of a top-level bullet."""
+    """Return the pages that Home links from the start of a column-0 bullet."""
     return {
         match.group(1)
         for _, line in outside_fences(lines)
@@ -171,6 +218,9 @@ def main() -> int:
         switch_ok = switch_line(path, lines)
         if not switch_ok:
             errors.append(f"{path}: missing language-switch link to {counterpart} on line 3")
+        for number, line in enumerate(lines, start=1):
+            if INDENTED_FENCE_PATTERN.match(line):
+                errors.append(f"{path}:{number}: code fences must start at column 0")
         for number, line in outside_fences(lines):
             if RAW_HTML_PATTERN.search(line):
                 errors.append(f"{path}:{number}: raw HTML is not allowed")

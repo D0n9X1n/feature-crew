@@ -5086,6 +5086,7 @@ html-link|raw HTML is not allowed|printf '\nSee <a href="Missing">this</a>.\n' >
 switch-label|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '[Chinese](Usage-zh-CN)'
 home-pipe|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Archi|tecture](Architecture)'
 home-escape|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Architecture\](Architecture)'
+home-backtick|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Arch`itecture](Architecture) x`'
 fence-info|missing link to Usage|t67_sub wiki/Home.md '- [Usage](Usage)' $'```\n```text\n- [Usage](Usage)\n```'
 fence-backtick-info|raw HTML is not allowed|printf '\n``` a`b\n<details>\n' >> wiki/Home.md
 fence-indent|code fences must start at column 0|printf '\n\t```\n' >> wiki/Home.md

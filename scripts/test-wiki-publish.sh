@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests the wiki publisher offline, the publish workflow's contract, the
-# CLAUDE.md wiki rule, and the links between wiki pages. Adapted from
-# SonicTerm's scripts/test-wiki-publish.sh; Feature-Crew's wiki is English-only,
-# so the bilingual checker is not ported.
+# CLAUDE.md wiki rule, and the wiki pages. Adapted from SonicTerm's
+# scripts/test-wiki-publish.sh; Feature-Crew's wiki keeps separate English and
+# Chinese pages, which scripts/check-wiki.py validates.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
