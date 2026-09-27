@@ -18,6 +18,7 @@ LEGACY_MARKERS = frozenset({"## English", "## 中文"})
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 HEADING_PATTERN = re.compile(r"^(#{1,6})[ \t]+")
 LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
+REFERENCE_PATTERN = re.compile(r"^[ \t]{0,3}\[(?!\^)[^\]]+\]:[ \t]*(\S+)")
 FENCE_PATTERN = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
 # CJK symbols and punctuation, ideographs, compatibility ideographs, full-width forms.
 CJK_PATTERN = re.compile("[　-〿㐀-䶿一-鿿豈-﫿＀-￯]")
@@ -63,11 +64,14 @@ def heading_depths(lines: list[str]) -> list[int]:
 
 
 def link_targets(lines: list[str]) -> list[tuple[int, str]]:
-    """Return inline Markdown link destinations outside fenced code blocks."""
+    """Return inline link and reference-definition destinations outside fenced code blocks."""
     links: list[tuple[int, str]] = []
     for number, line in outside_fences(lines):
-        for match in LINK_PATTERN.finditer(line):
-            destination = match.group(1).strip()
+        destinations = [match.group(1) for match in LINK_PATTERN.finditer(line)]
+        if reference := REFERENCE_PATTERN.match(line):
+            destinations.append(reference.group(1))
+        for destination in destinations:
+            destination = destination.strip()
             if destination.startswith("<") and destination.endswith(">"):
                 destination = destination[1:-1].strip()
             links.append((number, destination))
