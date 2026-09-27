@@ -63,12 +63,16 @@ def heading_depths(lines: list[str]) -> list[int]:
     ]
 
 
-def link_targets(lines: list[str]) -> list[tuple[int, str]]:
-    """Return inline link and reference-definition destinations outside fenced code blocks."""
+def link_targets(lines: list[str], definitions: bool = True) -> list[tuple[int, str]]:
+    """Return link destinations outside fenced code blocks.
+
+    Inline links always count; reference definitions count only when
+    `definitions` is true, because a definition alone renders no link.
+    """
     links: list[tuple[int, str]] = []
     for number, line in outside_fences(lines):
         destinations = [match.group(1) for match in LINK_PATTERN.finditer(line)]
-        if reference := REFERENCE_PATTERN.match(line):
+        if definitions and (reference := REFERENCE_PATTERN.match(line)):
             destinations.append(reference.group(1))
         for destination in destinations:
             destination = destination.strip()
@@ -79,9 +83,13 @@ def link_targets(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def local_link_stems(lines: list[str]) -> set[str]:
-    """Return linked page names, excluding URLs and same-page anchors."""
+    """Return page names that inline links navigate to, excluding URLs and same-page anchors.
+
+    Reference definitions are validated elsewhere but never count as navigation:
+    the language switch and Home links must be inline links.
+    """
     linked: set[str] = set()
-    for _, target in link_targets(lines):
+    for _, target in link_targets(lines, definitions=False):
         parsed = urlsplit(unquote(target))
         if target.startswith("#") or parsed.scheme or parsed.netloc:
             continue
