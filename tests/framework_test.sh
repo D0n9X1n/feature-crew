@@ -5083,6 +5083,18 @@ code-home|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Arch
 indented-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '    [简体中文](Usage-zh-CN)'
 raw-html|raw HTML is not allowed|t67_sub wiki/Home.md '- [Architecture](Architecture)' $'<!--\n- [Architecture](Architecture)\n-->'
 html-link|raw HTML is not allowed|printf '\nSee <a href="Missing">this</a>.\n' >> wiki/Home.md
+switch-label|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' '[Chinese](Usage-zh-CN)'
+home-pipe|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Archi|tecture](Architecture)'
+home-escape|missing link to Architecture|t67_sub wiki/Home.md '[Architecture](Architecture)' '[Architecture\](Architecture)'
+fence-info|missing link to Usage|t67_sub wiki/Home.md '- [Usage](Usage)' $'```\n```text\n- [Usage](Usage)\n```'
+fence-backtick-info|raw HTML is not allowed|printf '\n``` a`b\n<details>\n' >> wiki/Home.md
+fence-indent|code fences must start at column 0|printf '\n\t```\n' >> wiki/Home.md
+html-details|raw HTML is not allowed|printf '\nSee <details>\n' >> wiki/Home.md
+multiline-link|target does not exist: Missing-Multi|printf '\n[broken\nlink](Missing-Multi)\n' >> wiki/Home.md
+nested-link|target does not exist: Missing-Nested|printf '\n[a [b] c](Missing-Nested)\n' >> wiki/Home.md
+quote-def|target does not exist: Missing-Quote|printf '\n> [q]: Missing-Quote\n' >> wiki/Home.md
+nextline-def|target does not exist: Missing-Next|printf '\n[n]:\n  Missing-Next\n' >> wiki/Home.md
+multiline-def|target does not exist: Missing-Label|printf '\n[multi\nlabel]: Missing-Label\n' >> wiki/Home.md
 T67
   rm -rf -- "$t67_dir"
   if [ -z "$t67_missed" ]; then
