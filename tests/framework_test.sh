@@ -1617,6 +1617,13 @@ fi
 t66_typed=$(grep -noE '(^|[^0-9A-Za-z.])v[0-9]+[.][0-9]+[.][0-9]+' README.md | head -3 | tr '\n' ' ')
 [ -z "$t66_typed" ] && ok "T66 README shows no typed version; the release badge is live" \
                     || bad "T66 README typed version" "found: $t66_typed"
+# The README says MIT licensed; a LICENSE file and a badge must back the claim.
+t66_lic=""
+head -1 LICENSE 2>/dev/null | grep -qx 'MIT License' || t66_lic="$t66_lic license-file-missing"
+grep -qF 'Permission is hereby granted, free of charge' LICENSE 2>/dev/null || t66_lic="$t66_lic mit-grant-missing"
+sed -n 3p README.md | grep -qF '](LICENSE)' || t66_lic="$t66_lic readme-license-badge-missing"
+[ -z "$t66_lic" ] && ok "T66 README's MIT claim is backed by LICENSE and a badge" \
+                  || bad "T66 license" "missing:$t66_lic"
 
 # ---------------------------------------------------------------- T34
 # Reject obsolete track/pin language from active shipped content. Skill model
