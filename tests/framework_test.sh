@@ -1188,10 +1188,15 @@ grep -q 'feature-crew ' .github/workflows/release.yml     || t31_err="$t31_err w
 b=.claude/skills/fc-build-or-fix/SKILL.md
 t32_err=""
 selector=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
-echo "$selector" | grep -qiE 'Sonnet.family author.*model: *opus|author.*Sonnet.family.*`?opus`?' \
-  || t32_err="$t32_err sonnet-author-to-opus-missing"
-echo "$selector" | grep -qiE '(non-Sonnet.family|known.*other.*family).*model: *sonnet|(non-Sonnet.family|known.*other.*family).*`?sonnet`?' \
-  || t32_err="$t32_err non-sonnet-author-to-sonnet-missing"
+# The pair is picked at each gate from the harness's current model list; no
+# rule assumes which model runs the main agent (issue #54).
+echo "$selector" | grep -qiE 'review pair.*two most capable.*different.*families' \
+  || t32_err="$t32_err review-pair-missing"
+echo "$selector" | grep -qiE 'Claude Code.*`opus`.*`sonnet`' || t32_err="$t32_err claude-code-pair-example-missing"
+echo "$selector" | grep -qiE 'Copilot.*Opus.*GPT-6 Astra' || t32_err="$t32_err copilot-pair-example-missing"
+echo "$selector" | grep -qiE 'first pair member outside.*author family' \
+  || t32_err="$t32_err pair-reviewer-rule-missing"
+echo "$selector" | grep -qiE 'non-Sonnet.family' && t32_err="$t32_err stale-sonnet-centric-rule"
 echo "$selector" | grep -qiE 'Agent.*model.*override|explicit.*model.*override' \
   || t32_err="$t32_err explicit-agent-override-missing"
 echo "$selector" | grep -qi 'artifact.*identity' || t32_err="$t32_err artifact-identity-missing"
@@ -1220,8 +1225,10 @@ echo "$selector" | grep -qiE 'recorded reviewer model.*author.s family.*GATE UNS
   || t32_err="$t32_err recorded-family-collision-not-fail-closed"
 echo "$selector" | grep -qiE 'third family.*recorded as a substitution.*stands' \
   || t32_err="$t32_err third-family-substitution-not-recorded"
-echo "$selector" | grep -qiE 'this session.s record.*sonnet.*author.s family.*model: *opus' \
-  || t32_err="$t32_err recorded-sonnet-collision-not-rerouted"
+echo "$selector" | grep -qiE 'skip.*member.*this session.s record shows.*author.s family' \
+  || t32_err="$t32_err recorded-alias-collision-not-skipped"
+echo "$selector" | grep -qiE 'no member.*left.*same.family collision' \
+  || t32_err="$t32_err exhausted-pair-not-collision"
 echo "$selector" | grep -qF '(reference/gate-provenance.md)' \
   || t32_err="$t32_err provenance-reference-not-linked"
 # A hard-gate reviewer that delegates hides models from its own record, and
@@ -1234,8 +1241,56 @@ t32_calls=$(git grep -cF "reviewer record's tool calls" -- '*.md' 2>/dev/null | 
 # The delegated-reviewer predicate is stated once, in the canonical rule; other docs link to it.
 t32_pred=$(git grep -cF '`Agent`, `Skill`, or `Workflow`' -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
 [ "$t32_pred" = "1" ] || t32_err="$t32_err reviewer-delegation-predicate-stated-${t32_pred}-times"
+# Each per-gate clause and each Claude Code outcome is pinned literally, so
+# rewriting one clause (a Sonnet author sent to `sonnet`, a dropped Haiku case,
+# a lost `availableModels` narrowing) fails its own check, not just a regex.
+t32_pair_labels=(
+  per-gate-model-list available-models-narrowing preference-order pair-recorded
+  fewer-than-two-families sonnet-author-to-opus opus-author-to-sonnet other-author-to-opus
+)
+t32_pair_rules=(
+  "At each gate, check the harness's current model list"
+  'narrowed by `availableModels`'
+  'the two most capable models from different mapped families, in preference order'
+  'Record the pair in the gate record'
+  'fewer than two qualifying families → `GATE UNSATISFIED`'
+  'Sonnet-family author → `model: opus`'
+  'Opus-family author → `model: sonnet`'
+  'Haiku- or GPT-family author → `model: opus`'
+)
+t32_pair_contract() { # selector text
+  local i errors=""
+  for ((i=0; i<${#t32_pair_rules[@]}; i++)); do
+    printf '%s\n' "$1" | grep -qF -- "${t32_pair_rules[$i]}" || errors="$errors ${t32_pair_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t32_pair_out=$(t32_pair_contract "$selector")
+t32_err="$t32_err$t32_pair_out"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
+if [ -z "$t32_pair_out" ]; then
+  for ((t32_i=0; t32_i<${#t32_pair_rules[@]}; t32_i++)); do
+    t32_mut_out=$(t32_pair_contract "${selector/"${t32_pair_rules[$t32_i]}"/}")
+    if [ "$t32_mut_out" = " ${t32_pair_labels[$t32_i]}" ]; then
+      ok "T32 removal mutation: ${t32_pair_labels[$t32_i]} rejected by its own check"
+    else
+      bad "T32 removal mutation: ${t32_pair_labels[$t32_i]}" \
+        "got '${t32_mut_out:-<empty>}', want ' ${t32_pair_labels[$t32_i]}'"
+    fi
+  done
+  # The two rewrites QA showed passing the old regex checks.
+  for t32_case in 'sonnet-author-sent-to-sonnet|Sonnet-family author → `model: opus`|Sonnet-family author → `model: sonnet`|sonnet-author-to-opus' \
+                  'haiku-case-dropped|Haiku- or GPT-family author|GPT-family author|other-author-to-opus'; do
+    IFS='|' read -r t32_label t32_from t32_to t32_want <<<"$t32_case"
+    t32_mut_out=$(t32_pair_contract "${selector/"$t32_from"/$t32_to}")
+    if [ "$t32_mut_out" = " $t32_want" ]; then
+      ok "T32 rewrite mutation: $t32_label rejected by its own check"
+    else
+      bad "T32 rewrite mutation: $t32_label" "got '${t32_mut_out:-<empty>}', want ' $t32_want'"
+    fi
+  done
+fi
 
 # Duplicate YAML keys can hide an override even when installed files look
 # superficially right. Mutate one generated agent and require the shared T5
@@ -1559,8 +1614,8 @@ fi
                    || bad "T66 fc-explain explanation contract" "missing:$t66_err"
 
 # ---------------------------------------------------------------- T34
-# Reject obsolete track/pin language from active shipped content, while leaving
-# intentional standalone skill pins (fc-review/fc-second-opinion) outside scope.
+# Reject obsolete track/pin language from active shipped content. Skill model
+# pins in frontmatter are rejected separately by T71.
 t34_err=""
 stale_track=$(printf 'Tri%s' 'vial')
 stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' '.claude/skills/**' 2>/dev/null || true)
@@ -1601,6 +1656,12 @@ if [ -f "$provenance" ]; then
     || t55_err="$t55_err vendor-line-family-boundary-missing"
   echo "$families" | grep -qiE 'unknown only when.*vendor cannot be (told|identified)' \
     || t55_err="$t55_err unknown-vendor-boundary-missing"
+  echo "$families" | grep -qiE 'Opus, Sonnet, Haiku, and GPT are four separate families' \
+    || t55_err="$t55_err four-families-missing"
+  echo "$families" | grep -qiE 'unmapped.*never qualifies for the review pair' \
+    || t55_err="$t55_err unmapped-family-qualifies"
+  echo "$record" | grep -qiE 'harness without this record.*own per-dispatch record.*unknown' \
+    || t55_err="$t55_err other-harness-record-missing"
   echo "$families" | grep -qiE 'non-Claude id.*requires.*verified.*mapping|without.*(reliable|verified).*mapping.*unknown' \
     && t55_err="$t55_err verified-mapping-still-required"
   for assumption in 2.1.251 CLAUDE_CODE_SUBAGENT_MODEL_FORCE availableModels 'fallback chains' 'alias-remapping gateways'; do
@@ -1614,7 +1675,7 @@ else
 fi
 # Pin the caller's choice, not a fixed author family. Each call site must use
 # the canonical default so a Sonnet session is not silently moved to Opus.
-echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*alias.*session.s own model.*unless the user chose another' \
+echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*pair member in the session.s own family.*otherwise the first pair member.*unless the user chose another' \
   || t55_err="$t55_err session-authoring-alias-default-missing"
 complex_flow=$(sed -n '/^## Flow/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
 architect_dispatch=$(echo "$complex_flow" | grep -E '^5\. ')
@@ -1778,8 +1839,8 @@ fi
                    || bad "T56 research dispatch boundary" "missing:$t56_err"
 
 # ---------------------------------------------------------------- T57
-# Tool/model frontmatter ends with the loading turn. The standalone skills
-# promise a read-only policy, not shell-write isolation or a persistent model.
+# Tool frontmatter ends with the loading turn. The standalone skills promise a
+# read-only policy, not shell-write isolation, and pin no model (issue #54).
 t57_err=""
 for skill in fc-review fc-second-opinion; do
   f=".claude/skills/$skill/SKILL.md"
@@ -1789,7 +1850,7 @@ for skill in fc-review fc-second-opinion; do
   echo "$intro" | grep -qiE 'frontmatter removes.*`Write`.*`Edit`.*`NotebookEdit`.*only for the turn that loads the skill' \
     || t57_err="$t57_err $skill:tool-restriction-lifetime-missing"
   echo "$intro" | grep -qiE '`model` override.*only for that turn' \
-    || t57_err="$t57_err $skill:model-override-lifetime-missing"
+    && t57_err="$t57_err $skill:stale-model-override-claim"
   echo "$intro" | grep -qiE 'Bash and PowerShell.*write-capable' \
     || t57_err="$t57_err $skill:shell-write-limit-unacknowledged"
 done
@@ -1801,15 +1862,17 @@ echo "$refute" | grep -qiE 'each refuter.*explicit.*`model` override.*selector.*
 # clauses to the lens section; each removal mutation must produce exactly its
 # own diagnostic, and runs only after the unmodified skill passes the control.
 t57_lens_labels=(
-  lens-every-finding lens-selector-model lens-unknown-author-advisory lens-recorded-model-exclusion
-  lens-zero-usable-unavailable
+  lens-always-dispatched lens-every-finding lens-inline-notes-same-session lens-selector-model
+  lens-unknown-author-advisory lens-recorded-model-exclusion lens-zero-usable-unavailable
 )
 t57_lens_rules=(
+  'Dispatch at least one lens subagent for every review, whatever the diff size; add parallel lenses when the diff is large.'
   'One lens per agent; each returns every finding that has a failure scenario, most severe first.'
+  'Notes the main session writes itself are labeled same-session and never count as the independent review.'
   'Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author.'
-  'For a human or unknown author, request `sonnet` and label the review advisory with independence unverified.'
+  'For a human or unknown author, request the first review-pair member and label the review advisory with independence unverified.'
   'Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family.'
-  'Zero usable lenses makes the review unavailable, never PASS.'
+  'Zero usable lenses makes the review unavailable, never PASS or an inline review.'
 )
 t57_lens_contract() { # review text
   local lenses i errors=""
@@ -1820,6 +1883,9 @@ t57_lens_contract() { # review text
   done
   # A one-clue lens would cap the uncapped report at one finding per lens.
   printf '%s\n' "$lenses" | grep -qi 'one-clue' && errors="$errors lens-one-clue-returned"
+  # Issue #55: a size-gated dispatch let small diffs be reviewed inline, same-family.
+  printf '%s\n' "$lenses" | grep -qF 'Run lenses as parallel subagents when the diff is large.' \
+    && errors="$errors lens-size-gated-dispatch"
   printf '%s\n' "$errors"
 }
 t57_review_text=$(cat .claude/skills/fc-review/SKILL.md)
@@ -5104,6 +5170,70 @@ T67
     bad "T67 wiki publisher replays" "not caught:$t67_missed"
   fi
 fi
+
+# ---------------------------------------------------------------- T71
+# A skill's frontmatter `model` switches the main session for the rest of the
+# turn, which hardcodes the main agent's model (issue #54). Only the leading
+# --- block counts; body prose may say "model:".
+# Each engine exits 0 when the leading frontmatter sets a `model` key.
+t71_has_model_yaml() {
+  python3 - "$1" <<'T71PY'
+import sys, yaml
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+if not lines or lines[0].rstrip("\r") != "---":
+    sys.exit(1)
+ends = [i for i in range(1, len(lines)) if lines[i].rstrip("\r") == "---"]
+if not ends:
+    sys.exit(1)
+try:
+    data = yaml.safe_load("\n".join(lines[1:ends[0]])) or {}
+except yaml.YAMLError:
+    sys.exit(0)  # unparsable frontmatter fails closed, as pinned
+sys.exit(0 if isinstance(data, dict) and "model" in data else 1)
+T71PY
+}
+t71_has_model_awk() { # fallback: ignore spaces and quotes around the key
+  awk -v q="'" 'NR == 1 { sub(/\r$/, ""); if ($0 != "---") exit 1; next }
+       { sub(/\r$/, "") } $0 == "---" { exit 1 }
+       { key = $0; gsub(/[ \t"]/, "", key); gsub(q, "", key) }
+       key ~ /^model:/ { found = 1; exit }
+       END { exit !found }' "$1"
+}
+t71_engines=(awk)
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  t71_engines=(yaml awk)
+else
+  skip "T71 no YAML parser — skill pins checked by the awk fallback only"
+fi
+t71_has_model() { "t71_has_model_${t71_engines[0]}" "$1"; }
+t71_pinned=""
+for f in $(skill_files); do t71_has_model "$f" && t71_pinned="$t71_pinned $f"; done
+[ -z "$t71_pinned" ] && ok "T71 no skill frontmatter pins the main agent's model" \
+                     || bad "T71 skill model pin" "pinned:$t71_pinned"
+# Every spelling that parses to a `model` key must be caught; body prose must not.
+t71_dir="$(mktemp -d)"
+CLEANUP_PATHS+=("$t71_dir")
+t71_cases=(
+  'plain|pin|model: sonnet'
+  'spaced|pin|model : sonnet'
+  'double-quoted|pin|"model": sonnet'
+  "single-quoted|pin|'model': sonnet"
+  'body-prose|clean|'
+)
+for t71_engine in "${t71_engines[@]}"; do
+  for t71_case in "${t71_cases[@]}"; do
+    IFS='|' read -r t71_label t71_want t71_line <<<"$t71_case"
+    t71_file="$t71_dir/$t71_label.md"
+    if [ -n "$t71_line" ]; then
+      printf -- '---\nname: x\n%s\ndescription: y\n---\nbody\n' "$t71_line" > "$t71_file"
+    else
+      printf -- '---\nname: x\ndescription: y\n---\nmodel: sonnet\n' > "$t71_file"
+    fi
+    if "t71_has_model_$t71_engine" "$t71_file"; then t71_got=pin; else t71_got=clean; fi
+    [ "$t71_got" = "$t71_want" ] && ok "T71 replay ($t71_engine): $t71_label frontmatter reads as $t71_want" \
+                                 || bad "T71 replay ($t71_engine): $t71_label" "got $t71_got, want $t71_want"
+  done
+done
 
 echo
 if [ "$SKIP" -gt 0 ]; then

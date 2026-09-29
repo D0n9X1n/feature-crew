@@ -1,7 +1,6 @@
 ---
 name: fc-second-opinion
 description: Adversarially stress-tests a claim, decision, or conclusion by trying to refute it from several angles and returning a verdict. Use when the user is about to commit to something and wants it attacked first — "am I right that", "talk me out of", "is this the right call". Do NOT use for reviewing a concrete artifact like a diff or spec (use /fc-review), and do NOT use it to satisfy a Feature-Crew hard gate — gate audits run inside /fc-build-or-fix.
-model: sonnet
 effort: max
 disallowed-tools: Write Edit NotebookEdit
 ---
@@ -10,7 +9,7 @@ disallowed-tools: Write Edit NotebookEdit
 
 Attacks a position. Inverts the usual review bias: a model asked to "review this" tends to bless a plausible-looking answer, so here the burden of proof runs the other way.
 
-Read-only by policy: do not edit files or mutate repository state through any tool, including shell commands or refuters. Frontmatter removes `Write`, `Edit`, and `NotebookEdit` only for the turn that loads the skill; its `model` override also lasts only for that turn. Bash and PowerShell remain write-capable when available; the confirmation reply clears those frontmatter settings, not this policy. Reapply the policy after replies and include it in every refuter prompt; never rely on the loading turn's model for later dispatches.
+Read-only by policy: do not edit files or mutate repository state through any tool, including shell commands or refuters. Frontmatter removes `Write`, `Edit`, and `NotebookEdit` only for the turn that loads the skill. Bash and PowerShell remain write-capable when available; the confirmation reply clears those frontmatter settings, not this policy. Reapply the policy after replies and include it in every refuter prompt; never rely on the loading turn's model for later dispatches.
 
 **This is not a substitute for a hard gate.** The cross-family audits inside `/fc-build-or-fix` are mandatory and automatic; this skill is opt-in, for calls the pipeline is not touching. Never substitute a `/fc-second-opinion` verdict for a required gate audit — if it could stand in, the mandatory gate would quietly become optional.
 

@@ -105,7 +105,7 @@ sequenceDiagram
     Dev-->>PM: 批准或豁免
     PM->>PM: TDD、全量测试、用户可见时附运行时证据
     PM->>Rec: 读取记录的作者模型
-    Note over PM,Rec: Sonnet 作者选择 opus<br/>其他已知家族选择 sonnet，冲突时选择 opus<br/>来源未知则关卡停止
+    Note over PM,Rec: 模型对 = 当前模型列表中能力最强的两个家族<br/>审查者 = 模型对中第一个不属于作者家族的成员<br/>来源未知则关卡停止
     PM->>QA: 规格和提交范围，one-clue 模式，显式模型
     QA-->>PM: 一个结论，列出全部阻断性问题
     PM->>Rec: 读取审查者记录
@@ -186,8 +186,9 @@ sequenceDiagram
 **已在仓库中验证**
 
 - Claude Code 运行的一切都是 Markdown：十个技能、五个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
-- 角色提示词不带 `model` 键。安装器添加 `name` 和 `description`，并为五个被派发的角色添加 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
+- 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。安装器添加 `name` 和 `description`，并为五个被派发的角色添加 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
 - 关卡失败即关闭：来源未知会让关卡不满足，单独运行的 `/fc-review` 或 `/fc-second-opinion` 不能替代关卡。
+- `/fc-review` 无论差异大小，每次审查都至少派发一个由选择器选定模型的审查视角（lens）；主会话自己写的笔记标注为同会话，永远不算作独立审查。
 - 套件的规则文本检查只能证明规则存在，不能证明其含义；套件的文件头就是这么说的。
 - 编排层（`fc-pm.md` 加上每个 `SKILL.md`）上限 600 行，框架总量上限 1500 行并低于棘轮基线。
 

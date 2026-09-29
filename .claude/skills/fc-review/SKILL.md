@@ -1,14 +1,13 @@
 ---
 name: fc-review
 description: Reviews an existing artifact — a diff, a PR, a spec, a plan — against correctness, spec compliance, and maintainability, and returns the findings that matter. Use when the user asks to review, audit, or check work, especially work they did not just watch being written. Do NOT use for judging a decision or claim with no artifact (use /fc-second-opinion), and do NOT use on a diff /fc-build-or-fix just produced — that pipeline reviews its own output.
-model: sonnet
 effort: max
 disallowed-tools: Write Edit NotebookEdit
 ---
 
 # fc-review
 
-Reviews something that already exists. Read-only by policy: do not edit files or mutate repository state through any tool, including shell commands or delegated workers. Frontmatter removes `Write`, `Edit`, and `NotebookEdit` only for the turn that loads the skill; its `model` override also lasts only for that turn. Bash and PowerShell remain write-capable when available; this is not enforced isolation. Reapply the policy after user replies and include it in every worker prompt. This skill cannot approve or block a gate. It reports; the human decides.
+Reviews something that already exists. Read-only by policy: do not edit files or mutate repository state through any tool, including shell commands or delegated workers. Frontmatter removes `Write`, `Edit`, and `NotebookEdit` only for the turn that loads the skill. Bash and PowerShell remain write-capable when available; this is not enforced isolation. Reapply the policy after user replies and include it in every worker prompt. This skill cannot approve or block a gate. It reports; the human decides.
 
 ## 1 — Establish the artifact
 
@@ -33,8 +32,8 @@ Two or three, matched to the artifact. More lenses produce longer reports, not b
 - **Test quality** — do the tests verify behavior or mocks? Would they catch a regression?
 - **Security** — only when the artifact touches auth, secrets, input handling, or persistence.
 
-Run lenses as parallel subagents when the diff is large. One lens per agent; each returns every finding that has a failure scenario, most severe first.
-Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author. For a human or unknown author, request `sonnet` and label the review advisory with independence unverified. Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family. Zero usable lenses makes the review unavailable, never PASS.
+Dispatch at least one lens subagent for every review, whatever the diff size; add parallel lenses when the diff is large. One lens per agent; each returns every finding that has a failure scenario, most severe first. Notes the main session writes itself are labeled same-session and never count as the independent review.
+Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author. For a human or unknown author, request the first review-pair member and label the review advisory with independence unverified. Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family. Zero usable lenses makes the review unavailable, never PASS or an inline review.
 
 ## 3 — Report
 

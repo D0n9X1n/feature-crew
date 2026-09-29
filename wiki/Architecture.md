@@ -105,7 +105,7 @@ sequenceDiagram
     Dev-->>PM: approve, or waive
     PM->>PM: TDD, full suite, runtime proof when user-visible
     PM->>Rec: read recorded author model
-    Note over PM,Rec: Sonnet author selects opus<br/>other known family selects sonnet, or opus on collision<br/>unknown provenance stops the gate
+    Note over PM,Rec: pair = two most capable families in the current model list<br/>reviewer = first pair member outside the author family<br/>unknown provenance stops the gate
     PM->>QA: spec and commit range, one-clue mode, explicit model
     QA-->>PM: one verdict, every blocking finding listed
     PM->>Rec: read the reviewer record
@@ -186,8 +186,9 @@ Principles that hold on every track:
 **Verified in the repository**
 
 - Everything Claude Code runs is Markdown: ten skills, five reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
-- Role prompts carry no `model` key. The installers add `name` and `description`, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and every authoring or review dispatch sets its model explicitly.
+- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. The installers add `name` and `description`, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
+- `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
 - The suite's rule-text checks prove a rule is present, not what it means; its header says so.
 - Orchestration (`fc-pm.md` plus every `SKILL.md`) is capped at 600 lines, and the framework total at 1500 lines and a ratcheted baseline.
 
