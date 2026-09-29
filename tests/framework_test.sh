@@ -1190,8 +1190,20 @@ t32_err=""
 selector=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
 echo "$selector" | grep -qiE 'Sonnet.family author.*model: *opus|author.*Sonnet.family.*`?opus`?' \
   || t32_err="$t32_err sonnet-author-to-opus-missing"
-echo "$selector" | grep -qiE '(non-Sonnet.family|known.*other.*family).*model: *sonnet|(non-Sonnet.family|known.*other.*family).*`?sonnet`?' \
-  || t32_err="$t32_err non-sonnet-author-to-sonnet-missing"
+# The pair is picked at each gate from the harness's current model list; no
+# rule assumes which model runs the main agent (issue #54).
+echo "$selector" | grep -qiE 'current model list' || t32_err="$t32_err current-model-list-missing"
+echo "$selector" | grep -qiE 'review pair.*two most capable.*different.*families' \
+  || t32_err="$t32_err review-pair-missing"
+echo "$selector" | grep -qiE 'Claude Code.*`opus`.*`sonnet`' || t32_err="$t32_err claude-code-pair-example-missing"
+echo "$selector" | grep -qiE 'Copilot.*Opus.*GPT-6 Astra' || t32_err="$t32_err copilot-pair-example-missing"
+echo "$selector" | grep -qiE 'fewer than two.*famil.*GATE UNSATISFIED' \
+  || t32_err="$t32_err one-family-list-not-fail-closed"
+echo "$selector" | grep -qiE 'first pair member outside.*author family' \
+  || t32_err="$t32_err pair-reviewer-rule-missing"
+echo "$selector" | grep -qiE 'Opus.family author.*model: *sonnet' || t32_err="$t32_err opus-author-to-sonnet-missing"
+echo "$selector" | grep -qiE '(Haiku|GPT).*family author.*model: *opus' || t32_err="$t32_err other-author-to-opus-missing"
+echo "$selector" | grep -qiE 'non-Sonnet.family' && t32_err="$t32_err stale-sonnet-centric-rule"
 echo "$selector" | grep -qiE 'Agent.*model.*override|explicit.*model.*override' \
   || t32_err="$t32_err explicit-agent-override-missing"
 echo "$selector" | grep -qi 'artifact.*identity' || t32_err="$t32_err artifact-identity-missing"
@@ -1220,8 +1232,10 @@ echo "$selector" | grep -qiE 'recorded reviewer model.*author.s family.*GATE UNS
   || t32_err="$t32_err recorded-family-collision-not-fail-closed"
 echo "$selector" | grep -qiE 'third family.*recorded as a substitution.*stands' \
   || t32_err="$t32_err third-family-substitution-not-recorded"
-echo "$selector" | grep -qiE 'this session.s record.*sonnet.*author.s family.*model: *opus' \
-  || t32_err="$t32_err recorded-sonnet-collision-not-rerouted"
+echo "$selector" | grep -qiE 'skip.*member.*this session.s record shows.*author.s family' \
+  || t32_err="$t32_err recorded-alias-collision-not-skipped"
+echo "$selector" | grep -qiE 'no member.*left.*same.family collision' \
+  || t32_err="$t32_err exhausted-pair-not-collision"
 echo "$selector" | grep -qF '(reference/gate-provenance.md)' \
   || t32_err="$t32_err provenance-reference-not-linked"
 # A hard-gate reviewer that delegates hides models from its own record, and
@@ -1559,8 +1573,8 @@ fi
                    || bad "T66 fc-explain explanation contract" "missing:$t66_err"
 
 # ---------------------------------------------------------------- T34
-# Reject obsolete track/pin language from active shipped content, while leaving
-# intentional standalone skill pins (fc-review/fc-second-opinion) outside scope.
+# Reject obsolete track/pin language from active shipped content. Skill model
+# pins in frontmatter are rejected separately by T71.
 t34_err=""
 stale_track=$(printf 'Tri%s' 'vial')
 stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' '.claude/skills/**' 2>/dev/null || true)
@@ -1601,6 +1615,12 @@ if [ -f "$provenance" ]; then
     || t55_err="$t55_err vendor-line-family-boundary-missing"
   echo "$families" | grep -qiE 'unknown only when.*vendor cannot be (told|identified)' \
     || t55_err="$t55_err unknown-vendor-boundary-missing"
+  echo "$families" | grep -qiE 'Opus, Sonnet, Haiku, and GPT are four separate families' \
+    || t55_err="$t55_err four-families-missing"
+  echo "$families" | grep -qiE 'unmapped.*never qualifies for the review pair' \
+    || t55_err="$t55_err unmapped-family-qualifies"
+  echo "$record" | grep -qiE 'harness without this record.*own per-dispatch record.*unknown' \
+    || t55_err="$t55_err other-harness-record-missing"
   echo "$families" | grep -qiE 'non-Claude id.*requires.*verified.*mapping|without.*(reliable|verified).*mapping.*unknown' \
     && t55_err="$t55_err verified-mapping-still-required"
   for assumption in 2.1.251 CLAUDE_CODE_SUBAGENT_MODEL_FORCE availableModels 'fallback chains' 'alias-remapping gateways'; do
@@ -1614,7 +1634,7 @@ else
 fi
 # Pin the caller's choice, not a fixed author family. Each call site must use
 # the canonical default so a Sonnet session is not silently moved to Opus.
-echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*alias.*session.s own model.*unless the user chose another' \
+echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*pair member in the session.s own family.*otherwise the first pair member.*unless the user chose another' \
   || t55_err="$t55_err session-authoring-alias-default-missing"
 complex_flow=$(sed -n '/^## Flow/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
 architect_dispatch=$(echo "$complex_flow" | grep -E '^5\. ')
@@ -1778,8 +1798,8 @@ fi
                    || bad "T56 research dispatch boundary" "missing:$t56_err"
 
 # ---------------------------------------------------------------- T57
-# Tool/model frontmatter ends with the loading turn. The standalone skills
-# promise a read-only policy, not shell-write isolation or a persistent model.
+# Tool frontmatter ends with the loading turn. The standalone skills promise a
+# read-only policy, not shell-write isolation, and pin no model (issue #54).
 t57_err=""
 for skill in fc-review fc-second-opinion; do
   f=".claude/skills/$skill/SKILL.md"
@@ -1789,7 +1809,7 @@ for skill in fc-review fc-second-opinion; do
   echo "$intro" | grep -qiE 'frontmatter removes.*`Write`.*`Edit`.*`NotebookEdit`.*only for the turn that loads the skill' \
     || t57_err="$t57_err $skill:tool-restriction-lifetime-missing"
   echo "$intro" | grep -qiE '`model` override.*only for that turn' \
-    || t57_err="$t57_err $skill:model-override-lifetime-missing"
+    && t57_err="$t57_err $skill:stale-model-override-claim"
   echo "$intro" | grep -qiE 'Bash and PowerShell.*write-capable' \
     || t57_err="$t57_err $skill:shell-write-limit-unacknowledged"
 done
@@ -1807,7 +1827,7 @@ t57_lens_labels=(
 t57_lens_rules=(
   'One lens per agent; each returns every finding that has a failure scenario, most severe first.'
   'Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author.'
-  'For a human or unknown author, request `sonnet` and label the review advisory with independence unverified.'
+  'For a human or unknown author, request the first review-pair member and label the review advisory with independence unverified.'
   'Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family.'
   'Zero usable lenses makes the review unavailable, never PASS.'
 )
@@ -5104,6 +5124,19 @@ T67
     bad "T67 wiki publisher replays" "not caught:$t67_missed"
   fi
 fi
+
+# ---------------------------------------------------------------- T71
+# A skill's frontmatter `model` switches the main session for the rest of the
+# turn, which hardcodes the main agent's model (issue #54). Only the leading
+# --- block counts; body prose may say "model:".
+t71_pinned=""
+for f in $(skill_files); do
+  awk 'NR == 1 { sub(/\r$/, ""); if ($0 != "---") exit 1; next }
+       { sub(/\r$/, "") } $0 == "---" { exit 1 } /^model:/ { found = 1; exit }
+       END { exit !found }' "$f" && t71_pinned="$t71_pinned $f"
+done
+[ -z "$t71_pinned" ] && ok "T71 no skill frontmatter pins the main agent's model" \
+                     || bad "T71 skill model pin" "pinned:$t71_pinned"
 
 echo
 if [ "$SKIP" -gt 0 ]; then
