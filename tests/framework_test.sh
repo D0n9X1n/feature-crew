@@ -1492,7 +1492,7 @@ fi
 # pointer to it must sit in fc-research's own "Do NOT use for" list, so a stray
 # mention elsewhere cannot satisfy either. As T64 does for /fc-ship, the wiki Usage
 # direct-command list and both installer "Available:" banners must name
-# /fc-explain, and README line 3 must carry this release's version. The skill
+# /fc-explain, and README line 3 must carry the live release badge. The skill
 # stays within its approved 30 lines, counted byte-exactly so trailing blank
 # lines count. As in T62, each mutation must produce exactly its own
 # diagnostic, and mutations run only after the unmodified documents pass the
@@ -1501,7 +1501,7 @@ t66_labels=(
   infer-scope bottom-up-map default-views mermaid-only readable-diagrams
   after-each-diagram verify-evidence chat-output
   helper-worker-suffix research-pointer
-  usage-direct-command readme-version banner-sh banner-ps1 line-budget
+  usage-direct-command readme-release-badge banner-sh banner-ps1 line-budget
 )
 t66_sections=(map map diagrams diagrams diagrams answer verify answer map research
   commands version sh ps1 budget)
@@ -1517,7 +1517,7 @@ t66_rules=(
   '> Perform the assigned work yourself. Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task.'
   "explaining a project's structure with diagrams (use /fc-explain)"
   '`/fc-explain`'
-  '**v5.2.1**'
+  '[![Release](https://img.shields.io/github/v/release/D0n9X1n/feature-crew?sort=semver)](https://github.com/D0n9X1n/feature-crew/releases/latest)'
   '/fc-explain'
   '/fc-explain'
   30
@@ -1610,8 +1610,13 @@ if [ -z "$t66_err" ]; then
   done
   rm -rf "$t66_root"
 fi
-[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams; wiki Usage entry, README version, banners, and 30-line budget pinned" \
+[ -z "$t66_err" ] && ok "T66 static contract alarm: fc-explain explains from code evidence with readable Mermaid diagrams; wiki Usage entry, README release badge, banners, and 30-line budget pinned" \
                    || bad "T66 fc-explain explanation contract" "missing:$t66_err"
+# A typed version goes stale on the next release (v5.2.1 sat in the README
+# through v5.3.0); the release badge is the only version the README shows.
+t66_typed=$(grep -noE '(^|[^0-9A-Za-z.])v[0-9]+[.][0-9]+[.][0-9]+' README.md | head -3 | tr '\n' ' ')
+[ -z "$t66_typed" ] && ok "T66 README shows no typed version; the release badge is live" \
+                    || bad "T66 README typed version" "found: $t66_typed"
 
 # ---------------------------------------------------------------- T34
 # Reject obsolete track/pin language from active shipped content. Skill model
