@@ -1247,9 +1247,10 @@ t32_pred=$(git grep -cF '`Agent`, `Skill`, or `Workflow`' -- '*.md' 2>/dev/null 
 t32_pair_labels=(
   choose-pair most-capable-cross-family harness-examples request-own-way no-relay-probe
   pair-recorded fewer-than-two-families opus-author-to-sonnet other-author-to-opus
+  example-pair-condition alias-scope
 )
 t32_pair_rules=(
-  'choose the **review pair** yourself'
+  'At each gate, choose the **review pair** yourself'
   'the two most capable models you can dispatch, from different mapped families, most capable first'
   'such as Claude Code `opus`, `sonnet` or GitHub Copilot Opus, GPT-6 Astra'
   'Request each model the way your harness does'
@@ -1258,6 +1259,8 @@ t32_pair_rules=(
   'fewer than two qualifying families → `GATE UNSATISFIED`'
   'an Opus-family author is reviewed by `sonnet`'
   'any other author by `opus`'
+  'with Opus and Sonnet as the pair'
+  'In Claude Code, use family aliases for requests, not version-specific IDs; other harnesses use their own model names'
 )
 t32_pair_contract() { # selector text
   local i errors=""
@@ -1271,6 +1274,9 @@ t32_err="$t32_err$t32_pair_out"
 # Agent aliases are dispatch vocabulary, not the list of selectable models.
 printf '%s\n' "$selector" | grep -qF 'the aliases the Agent tool' && t32_err="$t32_err stale-alias-inventory"
 printf '%s\n' "$selector" | grep -qF 'modelPicker' && t32_err="$t32_err stale-picker-inventory"
+t32_dispatch=$(sed -n '/^## Dispatch rules/,/^## /p' "$b")
+printf '%s\n' "$t32_dispatch" | grep -qF 'the exact explicit `model` override above' \
+  || t32_err="$t32_err dispatch-override-not-general"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
 if [ -z "$t32_pair_out" ]; then
@@ -1285,7 +1291,8 @@ if [ -z "$t32_pair_out" ]; then
   done
   # Rewrites that send an author to its own family must fail.
   for t32_case in 'opus-author-sent-to-opus|an Opus-family author is reviewed by `sonnet`|an Opus-family author is reviewed by `opus`|opus-author-to-sonnet' \
-                  'other-author-sent-to-sonnet|any other author by `opus`|any other author by `sonnet`|other-author-to-opus'; do
+                  'other-author-sent-to-sonnet|any other author by `opus`|any other author by `sonnet`|other-author-to-opus' \
+                  'once-per-session|At each gate, choose|Only once per session, choose|choose-pair'; do
     IFS='|' read -r t32_label t32_from t32_to t32_want <<<"$t32_case"
     t32_mut_out=$(t32_pair_contract "${selector/"$t32_from"/$t32_to}")
     if [ "$t32_mut_out" = " $t32_want" ]; then
@@ -1688,6 +1695,10 @@ if [ -f "$provenance" ]; then
   done
   echo "$assumptions" | grep -qiE 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE.*unset' \
     || t55_err="$t55_err force-unset-not-required"
+  [ "$(printf '%s\n' "$assumptions" | grep -c '^- In Claude Code, require')" = 2 ] \
+    || t55_err="$t55_err claude-code-prereqs-not-scoped"
+  echo "$assumptions" | grep -qF 'If these Claude Code prerequisites cannot be verified, stop the gate' \
+    || t55_err="$t55_err claude-code-prereqs-not-fail-closed"
 else
   t55_err="$t55_err gate-provenance-missing"
 fi
