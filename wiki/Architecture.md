@@ -105,7 +105,7 @@ sequenceDiagram
     Dev-->>PM: approve, or waive
     PM->>PM: TDD, full suite, runtime proof when user-visible
     PM->>Rec: read recorded author model
-    Note over PM,Rec: pair = two most capable families in the current model list<br/>reviewer = first pair member outside the author family<br/>unknown provenance stops the gate
+    Note over PM,Rec: pair = random draw from modelPicker (2+ entries), else opus, sonnet<br/>reviewer = first pair member outside the author family<br/>unknown provenance stops the gate
     PM->>QA: spec and commit range, one-clue mode, explicit model
     QA-->>PM: one verdict, every blocking finding listed
     PM->>Rec: read the reviewer record

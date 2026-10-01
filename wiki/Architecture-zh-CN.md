@@ -105,7 +105,7 @@ sequenceDiagram
     Dev-->>PM: 批准或豁免
     PM->>PM: TDD、全量测试、用户可见时附运行时证据
     PM->>Rec: 读取记录的作者模型
-    Note over PM,Rec: 模型对 = 当前模型列表中能力最强的两个家族<br/>审查者 = 模型对中第一个不属于作者家族的成员<br/>来源未知则关卡停止
+    Note over PM,Rec: 模型对 = 从 modelPicker（2 个及以上）中随机抽取，否则用 opus、sonnet<br/>审查者 = 模型对中第一个不属于作者家族的成员<br/>来源未知则关卡停止
     PM->>QA: 规格和提交范围，one-clue 模式，显式模型
     QA-->>PM: 一个结论，列出全部阻断性问题
     PM->>Rec: 读取审查者记录
