@@ -26,8 +26,8 @@ Match `.toolUseId` in child `agent-<agentId>.meta.json` to the spawning `Agent` 
 
 ## Environment assumptions
 
-- Require Claude Code **≥2.1.251**. Resolution is per-invocation `model` → agent frontmatter `model` → `CLAUDE_CODE_SUBAGENT_MODEL` → main model. Earlier versions let the environment variable override an explicit dispatch. Keep role and skill frontmatter unpinned; pin authoring and review calls instead.
-- Require `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` **unset**. When enabled (v2.1.257+), it ignores agent model fields and prevents a per-invocation model override. If these prerequisites cannot be verified, stop the gate; do not change the user's settings to force compliance.
+- In Claude Code, require version **≥2.1.251**. Resolution is per-invocation `model` → agent frontmatter `model` → `CLAUDE_CODE_SUBAGENT_MODEL` → main model. Earlier versions let the environment variable override an explicit dispatch. Keep role and skill frontmatter unpinned; pin authoring and review calls instead.
+- In Claude Code, require `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` **unset**. When enabled (v2.1.257+), it ignores agent model fields and prevents a per-invocation model override. If these Claude Code prerequisites cannot be verified, stop the gate; do not change the user's settings to force compliance.
 - `availableModels` can substitute an allowed version in the requested family, or an inherited model when that family is unavailable. A successful call does not establish the requested family ran.
 - Configured fallback chains may switch models during a run without failing the call. Inspect the full set of recorded assistant models after completion.
 - With alias-remapping gateways, `sonnet` or `opus` may resolve to another family or provider. Treat aliases only as requests and apply the selector to the recorded ids; a verified third-family substitution stands and is logged.

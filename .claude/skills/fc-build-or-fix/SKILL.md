@@ -88,7 +88,7 @@ Before every such review, derive the author family from the model the harness re
 - Reviewer: dispatch with an explicit `model` override for the first pair member outside the known author family set. Skip a member this session's record shows running in the author's family; no member left is a same-family collision.
 - Example: with Opus and Sonnet as the pair, an Opus-family author is reviewed by `sonnet` and any other author by `opus`.
 
-Use family aliases for requests, not version-specific IDs; aliases are not family evidence. Whoever authored tests-as-spec determines their author family. The reviewer must not infer or self-identify its runtime family from prompt or context; provenance and selection belong to the dispatcher.
+In Claude Code, use family aliases for requests, not version-specific IDs; other harnesses use their own model names. A requested name is never family evidence. Whoever authored tests-as-spec determines their author family. The reviewer must not infer or self-identify its runtime family from prompt or context; provenance and selection belong to the dispatcher.
 
 Unknown author family/provenance, or a computed same-family collision: do not dispatch; record `GATE UNSATISFIED`. If selected-model dispatch fails or is unavailable, record `GATE UNSATISFIED`; no fallback or retry to the author family. After each review, the dispatcher reads the recorded reviewer model and the reviewer record's tool calls: a missing or unmappable model, a model in the author's family, or any `Agent`, `Skill`, or `Workflow` call → `GATE UNSATISFIED`. A third family is recorded as a substitution and stands; never reject it merely for differing from the requested alias. Run fewer reviewers rather than a same-family substitute.
 
@@ -99,7 +99,7 @@ Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 ## Dispatch rules
 
 - Paste task text inline; never tell a subagent to read the plan file.
-- For a hard-gate review, pass the audit envelope and exact explicit Agent model override above. Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
+- For a hard-gate review, pass the audit envelope and the exact explicit `model` override above (the Agent override in Claude Code). Every authoring dispatch and every hard-gate review prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
 - Parallel only at ≥3 independent implementation tasks; otherwise run sequentially. Exception: the blind second design runs alongside the first ([reference/design-check.md](reference/design-check.md)).
 - Use background mode for substantive work and handle results as they arrive.
 - Max 3 fix cycles per issue, then stop and question the approach.
