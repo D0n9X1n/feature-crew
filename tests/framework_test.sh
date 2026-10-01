@@ -1190,7 +1190,7 @@ t32_err=""
 selector=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
 # The pair is picked at each gate from the harness's current model list; no
 # rule assumes which model runs the main agent (issue #54).
-echo "$selector" | grep -qiE 'review pair.*two most capable.*different.*families' \
+echo "$selector" | grep -qiE 'review pair.*at random.*different mapped families' \
   || t32_err="$t32_err review-pair-missing"
 echo "$selector" | grep -qiE 'Claude Code.*`opus`.*`sonnet`' || t32_err="$t32_err claude-code-pair-example-missing"
 echo "$selector" | grep -qiE 'Copilot.*Opus.*GPT-6 Astra' || t32_err="$t32_err copilot-pair-example-missing"
@@ -1241,22 +1241,31 @@ t32_calls=$(git grep -cF "reviewer record's tool calls" -- '*.md' 2>/dev/null | 
 # The delegated-reviewer predicate is stated once, in the canonical rule; other docs link to it.
 t32_pred=$(git grep -cF '`Agent`, `Skill`, or `Workflow`' -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
 [ "$t32_pred" = "1" ] || t32_err="$t32_err reviewer-delegation-predicate-stated-${t32_pred}-times"
-# Each per-gate clause and each Claude Code outcome is pinned literally, so
+# Each per-gate clause and each default-pair outcome is pinned literally, so
 # rewriting one clause (a Sonnet author sent to `sonnet`, a dropped Haiku case,
-# a lost `availableModels` narrowing) fails its own check, not just a regex.
+# a lost picker threshold) fails its own check, not just a regex. The pair comes
+# from the settings `modelPicker` (what `/model` shows), else opus/sonnet (#57).
 t32_pair_labels=(
-  per-gate-model-list available-models-narrowing preference-order pair-recorded
-  fewer-than-two-families sonnet-author-to-opus opus-author-to-sonnet other-author-to-opus
+  per-gate-model-picker picker-setting picker-random-draw default-pair
+  alias-binding no-relay-probe pair-recorded fewer-than-two-families unreadable-settings
+  sonnet-author-to-opus opus-author-to-sonnet other-author-to-opus
+  default-pair-native-only remapped-default-general-rule
 )
 t32_pair_rules=(
-  "At each gate, check the harness's current model list"
-  'narrowed by `availableModels`'
-  'the two most capable models from different mapped families, in preference order'
-  'Record the pair in the gate record'
+  "At each gate, read the harness's model picker"
+  'the `modelPicker` property in settings'
+  'If it lists at least two models, pick the **review pair** at random from them, two entries in different mapped families'
+  'otherwise use the default `opus`, `sonnet` pair'
+  'Request each model through the Agent alias the settings map to it; a model no alias reaches does not qualify'
+  'Never look behind a picker entry into a relay or gateway'
+  "Record the pair in the gate record with each entry's label, model id, and alias"
   'fewer than two qualifying families → `GATE UNSATISFIED`'
+  'and so do unreadable settings'
   'Sonnet-family author → `model: opus`'
   'Opus-family author → `model: sonnet`'
   'Haiku- or GPT-family author → `model: opus`'
+  'when each alias runs its own family'
+  'Remapped aliases use the reviewer rule above'
 )
 t32_pair_contract() { # selector text
   local i errors=""
@@ -1267,6 +1276,8 @@ t32_pair_contract() { # selector text
 }
 t32_pair_out=$(t32_pair_contract "$selector")
 t32_err="$t32_err$t32_pair_out"
+# Agent aliases are dispatch vocabulary, not the list of selectable models.
+printf '%s\n' "$selector" | grep -qF 'the aliases the Agent tool' && t32_err="$t32_err stale-alias-inventory"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
 if [ -z "$t32_pair_out" ]; then
@@ -1674,6 +1685,18 @@ if [ -f "$provenance" ]; then
     || t55_err="$t55_err unmapped-family-qualifies"
   echo "$record" | grep -qiE 'harness without this record.*own per-dispatch record.*unknown' \
     || t55_err="$t55_err other-harness-record-missing"
+  picker=$(sed -n '/^## Read the model picker/,/^## /p' "$provenance")
+  echo "$picker" | grep -qF '`modelPicker`' || t55_err="$t55_err picker-section-missing"
+  echo "$picker" | grep -qiE 'at least two models.*otherwise.*default `opus`, `sonnet` pair' \
+    || t55_err="$t55_err picker-threshold-missing"
+  echo "$picker" | grep -qiE 'unreadable settings.*unsatisfied' || t55_err="$t55_err picker-unreadable-missing"
+  echo "$picker" | grep -qF 'ANTHROPIC_DEFAULT_<ALIAS>_MODEL' || t55_err="$t55_err picker-alias-binding-missing"
+  echo "$picker" | grep -qiE 'pick the review pair at random.*record the draw' || t55_err="$t55_err picker-random-draw-missing"
+  echo "$picker" | grep -qiE 'never look behind an entry into a relay or gateway' \
+    || t55_err="$t55_err picker-relay-probe-not-banned"
+  # The user's own picker (Opus 5.5 + GPT-6 Astra) must resolve to Opus and GPT.
+  echo "$picker" | grep -qiE '`opus\[1m\]`.*`gpt-6-astra\[1m\]`.*Opus and GPT' \
+    || t55_err="$t55_err picker-opus-gpt-example-missing"
   echo "$families" | grep -qiE 'non-Claude id.*requires.*verified.*mapping|without.*(reliable|verified).*mapping.*unknown' \
     && t55_err="$t55_err verified-mapping-still-required"
   for assumption in 2.1.251 CLAUDE_CODE_SUBAGENT_MODEL_FORCE availableModels 'fallback chains' 'alias-remapping gateways'; do
