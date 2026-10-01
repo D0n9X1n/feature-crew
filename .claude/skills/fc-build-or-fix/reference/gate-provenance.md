@@ -16,14 +16,6 @@ Match `.toolUseId` in child `agent-<agentId>.meta.json` to the spawning `Agent` 
 
 `agent-<agentId>.meta.json` carries `.model`, the requested alias, not runtime evidence; `.agentType` names the agent type. Do not use either as a substitute for assistant entries. Save the record path, role, spawning call id and relevant turn boundaries in the audit envelope, alongside requested aliases and all observed ids. An unreadable record means unknown provenance; so does a missing/empty model, no assistant entries, or an incomplete record. This internal, undocumented format may change: fail closed rather than accepting an alias or a reviewer's self-report. `/tasks` and substitution warnings can help locate discrepancies, but do not replace the recorded evidence.
 
-## Read the model picker
-
-The model picker (`/model`) is the only list of selectable models. Read `modelPicker` from the Claude Code settings that apply to the session. If its `options` list at least two models, those are the candidates: pick the review pair at random from them, two entries in different mapped families, and record the draw in order. Otherwise the candidates are the default `opus`, `sonnet` pair. Unreadable settings leave the gate unsatisfied.
-
-An entry's model is its `model` value. An alias value such as `opus[1m]` runs that alias's `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` setting when one is set, otherwise the alias's own family; map the result with the family table below. Request an entry through the alias that reaches it: its own alias, or the alias whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` names its full id, trying `opus`, `sonnet`, then `haiku`. Several aliases reaching one entry are still one model. For example, entries `opus[1m]` and `gpt-6-astra[1m]`, with `sonnet` set to `gpt-6-astra[1m]`, give Opus and GPT: an Opus author is reviewed through `sonnet`, a GPT author through `opus`.
-
-Never look behind an entry into a relay or gateway; the picker, these settings, and the session record are the only evidence.
-
 ## Map model ids to families
 
 - Opus, Sonnet, Haiku, and GPT are four separate families; any two are cross-family. `claude-sonnet-*` → Sonnet; `claude-opus-*` → Opus; `claude-haiku-*` → Haiku. Version or context suffixes do not create a new family.
