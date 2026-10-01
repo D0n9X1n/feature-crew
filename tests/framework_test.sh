@@ -1249,7 +1249,7 @@ t32_pair_labels=(
   per-gate-model-picker picker-setting picker-random-draw default-pair
   alias-binding no-relay-probe pair-recorded fewer-than-two-families unreadable-settings
   sonnet-author-to-opus opus-author-to-sonnet other-author-to-opus
-  default-pair-native-only remapped-default-general-rule
+  default-pair-native-only remapped-default-general-rule default-pair-restriction
 )
 t32_pair_rules=(
   "At each gate, read the harness's model picker"
@@ -1266,6 +1266,7 @@ t32_pair_rules=(
   'Haiku- or GPT-family author → `model: opus`'
   'when each alias runs its own family'
   'Remapped aliases use the reviewer rule above'
+  'With the default `opus`, `sonnet` pair'
 )
 t32_pair_contract() { # selector text
   local i errors=""
@@ -1808,6 +1809,49 @@ if [ -z "$t55_boundary_out" ]; then
 fi
 [ -z "$t55_err" ] && ok "T55 static contract alarm: recorded-model provenance + pinned authors" \
                    || bad "T55 provenance reference and author dispatch contract" "missing:$t55_err"
+
+# ---------------------------------------------------------------- T55b
+# Each rule in "Read the model picker" is pinned as literal text, so deleting
+# one (alias override, full-id lookup order, de-duplication, draw order) fails
+# its own check instead of slipping past a loose grep (QA, #57).
+t55p_labels=(
+  picker-is-truth picker-threshold-draw draw-order picker-default-pair picker-unreadable
+  alias-override-native full-id-alias-priority alias-dedup opus-gpt-example no-relay-probe
+)
+t55p_rules=(
+  'The model picker (`/model`) is the only list of selectable models.'
+  'If its `options` list at least two models, those are the candidates: pick the review pair at random from them, two entries in different mapped families'
+  'and record the draw in order'
+  'Otherwise the candidates are the default `opus`, `sonnet` pair.'
+  'Unreadable settings leave the gate unsatisfied.'
+  "An alias value such as \`opus[1m]\` runs that alias's \`ANTHROPIC_DEFAULT_<ALIAS>_MODEL\` setting when one is set, otherwise the alias's own family"
+  'the alias whose `ANTHROPIC_DEFAULT_<ALIAS>_MODEL` names its full id, trying `opus`, `sonnet`, then `haiku`'
+  'Several aliases reaching one entry are still one model.'
+  'give Opus and GPT: an Opus author is reviewed through `sonnet`, a GPT author through `opus`'
+  'Never look behind an entry into a relay or gateway'
+)
+t55p_contract() { # picker section text
+  local i errors=""
+  for ((i=0; i<${#t55p_rules[@]}; i++)); do
+    printf '%s\n' "$1" | grep -qF -- "${t55p_rules[$i]}" || errors="$errors ${t55p_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t55p_text=$(sed -n '/^## Read the model picker/,/^## /p' .claude/skills/fc-build-or-fix/reference/gate-provenance.md)
+t55p_out=$(t55p_contract "$t55p_text")
+[ -z "$t55p_out" ] && ok "T55b model picker rules pinned literally" \
+                   || bad "T55b model picker rules" "missing:$t55p_out"
+if [ -z "$t55p_out" ]; then
+  for ((t55p_i=0; t55p_i<${#t55p_rules[@]}; t55p_i++)); do
+    t55p_mut_out=$(t55p_contract "${t55p_text/"${t55p_rules[$t55p_i]}"/}")
+    if [ "$t55p_mut_out" = " ${t55p_labels[$t55p_i]}" ]; then
+      ok "T55b removal mutation: ${t55p_labels[$t55p_i]} rejected by its own check"
+    else
+      bad "T55b removal mutation: ${t55p_labels[$t55p_i]}" \
+        "got '${t55p_mut_out:-<empty>}', want ' ${t55p_labels[$t55p_i]}'"
+    fi
+  done
+fi
 
 # ---------------------------------------------------------------- T56
 # One mandatory suffix shared by all three phases closes recursive delegation;
