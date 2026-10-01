@@ -1188,9 +1188,9 @@ grep -q 'feature-crew ' .github/workflows/release.yml     || t31_err="$t31_err w
 b=.claude/skills/fc-build-or-fix/SKILL.md
 t32_err=""
 selector=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
-# The pair is picked at each gate from the harness's current model list; no
-# rule assumes which model runs the main agent (issue #54).
-echo "$selector" | grep -qiE 'review pair.*two most capable.*different.*families' \
+# The agent chooses the pair itself, in any harness: the two most capable
+# models it can dispatch, from different families (#54, #57).
+echo "$selector" | grep -qiE 'review pair.*two most capable.*different mapped families' \
   || t32_err="$t32_err review-pair-missing"
 echo "$selector" | grep -qiE 'Claude Code.*`opus`.*`sonnet`' || t32_err="$t32_err claude-code-pair-example-missing"
 echo "$selector" | grep -qiE 'Copilot.*Opus.*GPT-6 Astra' || t32_err="$t32_err copilot-pair-example-missing"
@@ -1241,22 +1241,26 @@ t32_calls=$(git grep -cF "reviewer record's tool calls" -- '*.md' 2>/dev/null | 
 # The delegated-reviewer predicate is stated once, in the canonical rule; other docs link to it.
 t32_pred=$(git grep -cF '`Agent`, `Skill`, or `Workflow`' -- '*.md' 2>/dev/null | awk -F: '{ n += $NF } END { print n + 0 }')
 [ "$t32_pred" = "1" ] || t32_err="$t32_err reviewer-delegation-predicate-stated-${t32_pred}-times"
-# Each per-gate clause and each Claude Code outcome is pinned literally, so
-# rewriting one clause (a Sonnet author sent to `sonnet`, a dropped Haiku case,
-# a lost `availableModels` narrowing) fails its own check, not just a regex.
+# Each selector clause and each worked outcome is pinned literally, so rewriting
+# one (an Opus author sent to `opus`, a lost family requirement) fails its own
+# check, not just a regex. The agent chooses the pair; no harness config (#57).
 t32_pair_labels=(
-  per-gate-model-list available-models-narrowing preference-order pair-recorded
-  fewer-than-two-families sonnet-author-to-opus opus-author-to-sonnet other-author-to-opus
+  choose-pair most-capable-cross-family harness-examples request-own-way no-relay-probe
+  pair-recorded fewer-than-two-families opus-author-to-sonnet other-author-to-opus
+  example-pair-condition alias-scope
 )
 t32_pair_rules=(
-  "At each gate, check the harness's current model list"
-  'narrowed by `availableModels`'
-  'the two most capable models from different mapped families, in preference order'
+  'At each gate, choose the **review pair** yourself'
+  'the two most capable models you can dispatch, from different mapped families, most capable first'
+  'such as Claude Code `opus`, `sonnet` or GitHub Copilot Opus, GPT-6 Astra'
+  'Request each model the way your harness does'
+  'never look behind a model into a relay or gateway'
   'Record the pair in the gate record'
   'fewer than two qualifying families → `GATE UNSATISFIED`'
-  'Sonnet-family author → `model: opus`'
-  'Opus-family author → `model: sonnet`'
-  'Haiku- or GPT-family author → `model: opus`'
+  'an Opus-family author is reviewed by `sonnet`'
+  'any other author by `opus`'
+  'with Opus and Sonnet as the pair'
+  'In Claude Code, use family aliases for requests, not version-specific IDs; other harnesses use their own model names'
 )
 t32_pair_contract() { # selector text
   local i errors=""
@@ -1267,6 +1271,12 @@ t32_pair_contract() { # selector text
 }
 t32_pair_out=$(t32_pair_contract "$selector")
 t32_err="$t32_err$t32_pair_out"
+# Agent aliases are dispatch vocabulary, not the list of selectable models.
+printf '%s\n' "$selector" | grep -qF 'the aliases the Agent tool' && t32_err="$t32_err stale-alias-inventory"
+printf '%s\n' "$selector" | grep -qF 'modelPicker' && t32_err="$t32_err stale-picker-inventory"
+t32_dispatch=$(sed -n '/^## Dispatch rules/,/^## /p' "$b")
+printf '%s\n' "$t32_dispatch" | grep -qF 'the exact explicit `model` override above' \
+  || t32_err="$t32_err dispatch-override-not-general"
 [ -z "$t32_err" ] && ok "T32 static contract alarm: dynamic hard-gate selector retained" \
                    || bad "T32 dynamic selector prose contract" "missing:$t32_err"
 if [ -z "$t32_pair_out" ]; then
@@ -1279,9 +1289,10 @@ if [ -z "$t32_pair_out" ]; then
         "got '${t32_mut_out:-<empty>}', want ' ${t32_pair_labels[$t32_i]}'"
     fi
   done
-  # The two rewrites QA showed passing the old regex checks.
-  for t32_case in 'sonnet-author-sent-to-sonnet|Sonnet-family author → `model: opus`|Sonnet-family author → `model: sonnet`|sonnet-author-to-opus' \
-                  'haiku-case-dropped|Haiku- or GPT-family author|GPT-family author|other-author-to-opus'; do
+  # Rewrites that send an author to its own family must fail.
+  for t32_case in 'opus-author-sent-to-opus|an Opus-family author is reviewed by `sonnet`|an Opus-family author is reviewed by `opus`|opus-author-to-sonnet' \
+                  'other-author-sent-to-sonnet|any other author by `opus`|any other author by `sonnet`|other-author-to-opus' \
+                  'once-per-session|At each gate, choose|Only once per session, choose|choose-pair'; do
     IFS='|' read -r t32_label t32_from t32_to t32_want <<<"$t32_case"
     t32_mut_out=$(t32_pair_contract "${selector/"$t32_from"/$t32_to}")
     if [ "$t32_mut_out" = " $t32_want" ]; then
@@ -1674,6 +1685,8 @@ if [ -f "$provenance" ]; then
     || t55_err="$t55_err unmapped-family-qualifies"
   echo "$record" | grep -qiE 'harness without this record.*own per-dispatch record.*unknown' \
     || t55_err="$t55_err other-harness-record-missing"
+  # The pair is the agent's choice; no harness picker section remains (#57).
+  grep -qF 'modelPicker' "$provenance" && t55_err="$t55_err stale-picker-section"
   echo "$families" | grep -qiE 'non-Claude id.*requires.*verified.*mapping|without.*(reliable|verified).*mapping.*unknown' \
     && t55_err="$t55_err verified-mapping-still-required"
   for assumption in 2.1.251 CLAUDE_CODE_SUBAGENT_MODEL_FORCE availableModels 'fallback chains' 'alias-remapping gateways'; do
@@ -1682,6 +1695,10 @@ if [ -f "$provenance" ]; then
   done
   echo "$assumptions" | grep -qiE 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE.*unset' \
     || t55_err="$t55_err force-unset-not-required"
+  [ "$(printf '%s\n' "$assumptions" | grep -c '^- In Claude Code, require')" = 2 ] \
+    || t55_err="$t55_err claude-code-prereqs-not-scoped"
+  echo "$assumptions" | grep -qF 'If these Claude Code prerequisites cannot be verified, stop the gate' \
+    || t55_err="$t55_err claude-code-prereqs-not-fail-closed"
 else
   t55_err="$t55_err gate-provenance-missing"
 fi
