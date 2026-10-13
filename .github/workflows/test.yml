@@ -198,7 +198,7 @@ jobs:
           # Counts derive from the source, so adding a skill does not require
           # editing CI. A literal 6 here went stale the moment fc-update landed.
           WANT_AGENTS=$(ls agents/*.md | wc -l | tr -d ' ')
-          WANT_SKILLS=$(find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
+          WANT_SKILLS=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
           test "$(ls "$PREFIX/agents" | wc -l | tr -d ' ')" -eq "$WANT_AGENTS"
           test "$(ls "$PREFIX/skills" | wc -l | tr -d ' ')" -eq "$WANT_SKILLS"
           bash install.sh --prefix "$PREFIX" --uninstall

@@ -215,27 +215,27 @@ Principles that hold on every track:
 5. [fc-ship SKILL.md][ship]: the merge path.
 6. [install.sh][sh], then the top of [framework_test.sh][suite]: how the prompts ship, and what a passing suite does and does not prove.
 
-[bof]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/SKILL.md
-[ref]: https://github.com/D0n9X1n/feature-crew/tree/main/.claude/skills/fc-build-or-fix/reference
-[run]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/run-discipline.md
-[design]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/design-check.md
-[prov]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/gate-provenance.md
-[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/industry-survey.md
-[complex]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/complex-track.md
-[meta]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
+[bof]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/SKILL.md
+[ref]: https://github.com/D0n9X1n/feature-crew/tree/main/skills/fc-build-or-fix/reference
+[run]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/run-discipline.md
+[design]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/design-check.md
+[prov]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/gate-provenance.md
+[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/industry-survey.md
+[complex]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/complex-track.md
+[meta]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/meta-work-cap.md
 [pm]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-pm.md
 [agents]: https://github.com/D0n9X1n/feature-crew/tree/main/agents
 [dev]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-developer.md
 [qacode]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-qa-code.md
-[research]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-research/SKILL.md
-[grill]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-grill-me/SKILL.md
-[brain]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-brainstorm/SKILL.md
-[second]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-second-opinion/SKILL.md
-[debug]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-debug/SKILL.md
-[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
-[review]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-review/SKILL.md
-[explain]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-explain/SKILL.md
-[update]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-update/SKILL.md
+[research]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-research/SKILL.md
+[grill]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-grill-me/SKILL.md
+[brain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-brainstorm/SKILL.md
+[second]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-second-opinion/SKILL.md
+[debug]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-debug/SKILL.md
+[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md
+[review]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-review/SKILL.md
+[explain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-explain/SKILL.md
+[update]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-update/SKILL.md
 [sh]: https://github.com/D0n9X1n/feature-crew/blob/main/install.sh
 [ps1]: https://github.com/D0n9X1n/feature-crew/blob/main/install.ps1
 [pub]: https://github.com/D0n9X1n/feature-crew/blob/main/published.sha256

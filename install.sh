@@ -54,7 +54,7 @@ fi
 # Resolve the directory this script lives in (portable; no realpath dependency).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_AGENTS="${SCRIPT_DIR}/agents"
-SRC_SKILLS_DIR="${SCRIPT_DIR}/.claude/skills"
+SRC_SKILLS_DIR="${SCRIPT_DIR}/skills"
 PUBLISHED_HASHES="${SCRIPT_DIR}/published.sha256"
 
 DEST_AGENTS="${PREFIX}/agents"
@@ -660,7 +660,7 @@ main_install() {
     count=$((count + 1))
   done
 
-  # Install every skill directory under .claude/skills/.
+  # Install every skill directory under skills/.
   local skill_count=0
   if [ -d "$SRC_SKILLS_DIR" ]; then
     for src in "$SRC_SKILLS_DIR"/*/; do

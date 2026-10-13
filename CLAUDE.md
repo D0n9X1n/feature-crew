@@ -2,18 +2,18 @@
 
 > Single source of truth for **Claude Code** in this repository. There is no `AGENTS.md`.
 
-Users describe needs naturally; slash-command knowledge is not required. The canonical missing-ingredient classifier and bounded return-to-origin composition rule live in `.claude/skills/fc-build-or-fix/SKILL.md`. Use compact pointers elsewhere; do not duplicate that classifier.
+Users describe needs naturally; slash-command knowledge is not required. The canonical missing-ingredient classifier and bounded return-to-origin composition rule live in `skills/fc-build-or-fix/SKILL.md`. Use compact pointers elsewhere; do not duplicate that classifier.
 
 ## On every build/fix/change request
 
-1. Read `.claude/skills/fc-build-or-fix/SKILL.md` and classify the need.
+1. Read `skills/fc-build-or-fix/SKILL.md` and classify the need.
 2. Select **Just Do It / Standard / Complex** by complexity and risk.
 3. Auto-run eligible Just Do It work; Standard/Complex retain approval flow unless waived.
 4. Honor every hard gate. Dispatch role agents from `agents/fc-*.md` only where the flow calls for them.
 
 ## Models
 
-All six installed role agents and every skill carry no `model` key; the main agent runs whatever model the user chose. For every model-authored hard-gate review, apply the artifact-author-provenance selector, exact Agent override, audit envelope, and fail-closed behavior canonical in `.claude/skills/fc-build-or-fix/SKILL.md`. Do not restate it here.
+All six installed role agents and every skill carry no `model` key; the main agent runs whatever model the user chose. For every model-authored hard-gate review, apply the artifact-author-provenance selector, exact Agent override, audit envelope, and fail-closed behavior canonical in `skills/fc-build-or-fix/SKILL.md`. Do not restate it here.
 
 Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 
@@ -53,8 +53,8 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 
 | What | Where |
 |---|---|
-| Skills | `.claude/skills/fc-*/SKILL.md` |
-| Complex track, meta-work cap | `.claude/skills/fc-build-or-fix/reference/` |
+| Skills | `skills/fc-*/SKILL.md` |
+| Complex track, meta-work cap | `skills/fc-build-or-fix/reference/` |
 | Role prompts | `agents/fc-*.md` |
 | Self-test | `tests/framework_test.sh` |
 | CI | `.github/workflows/` |

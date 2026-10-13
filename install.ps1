@@ -108,7 +108,7 @@ if ($gitBash) {
 # --- Pure-PowerShell fallback (full feature parity with install.sh) ---
 
 $SrcAgents     = Join-Path $ScriptDir "agents"
-$SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
+$SrcSkillsDir  = Join-Path $ScriptDir "skills"
 $DestAgents    = Join-Path $Prefix "agents"
 $DestSkillsDir = Join-Path $Prefix "skills"
 $Manifest = Join-Path $Prefix "feature-crew.sha256"

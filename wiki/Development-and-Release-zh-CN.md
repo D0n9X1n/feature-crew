@@ -67,7 +67,7 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── .claude/skills/fc-*/       # ten skills
+├── skills/fc-*/       # ten skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test
@@ -100,4 +100,4 @@ feature-crew/
 [pubtest]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/test-wiki-publish.sh
 [checkwiki]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/check-wiki.py
 [rel]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/release.yml
-[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
+[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md

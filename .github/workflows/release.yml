@@ -92,7 +92,7 @@ jobs:
 
           COMMIT_LIST="$(git log --no-merges --format='- %s' "$RANGE")"
           AGENTS="$(ls agents/*.md | wc -l | tr -d ' ')"
-          SKILLS="$(find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')"
+          SKILLS="$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')"
 
           # The release body IS the changelog. There is no CHANGELOG.md to keep
           # in sync -- one record, generated from the commits that actually

@@ -49,11 +49,11 @@ skip() {
 SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-explain fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship)
 ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
 
-skill_files() { find .claude/skills -name 'SKILL.md' | sort; }
+skill_files() { find skills -name 'SKILL.md' | sort; }
 
 framework_files() {
   find agents -name '*.md'
-  find .claude/skills -name '*.md'
+  find skills -name '*.md'
   printf '%s\n' README.md CLAUDE.md
 }
 
@@ -81,15 +81,15 @@ fi
 # ---------------------------------------------------------------- T3
 # The hot path must remain tightly ratcheted -- this file is paid for on every
 # build/fix request, including Just Do It work.
-if [ -f .claude/skills/fc-build-or-fix/SKILL.md ]; then
-  bof=$(wc -l < .claude/skills/fc-build-or-fix/SKILL.md)
+if [ -f skills/fc-build-or-fix/SKILL.md ]; then
+  bof=$(wc -l < skills/fc-build-or-fix/SKILL.md)
   if [ "$bof" -le 128 ]; then
     ok "T3 fc-build-or-fix/SKILL.md = ${bof} lines (<= 128 ratchet)"
   else
     bad "T3 hot path exceeded ratchet" "fc-build-or-fix/SKILL.md = ${bof}, cap 128"
   fi
 else
-  bad "T3 hot path" ".claude/skills/fc-build-or-fix/SKILL.md missing"
+  bad "T3 hot path" "skills/fc-build-or-fix/SKILL.md missing"
 fi
 
 # ---------------------------------------------------------------- T4
@@ -159,7 +159,7 @@ tmp_prefix="$(mktemp -d)"
 # The T15 probe lives inside the repo, so it must be cleaned up even if an
 # assertion between here and there exits early -- otherwise a failed run leaves
 # the working tree dirty. Other tests add their temp paths to this shared list.
-T15_PROBE=".claude/skills/t15-probe-$$"
+T15_PROBE="skills/t15-probe-$$"
 T21_SCRIPT="./t21-noguard-$$.sh"
 CLEANUP_PATHS=("$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT")
 # T63 locks source fixtures with chmod 000; unlock first so an abort cannot strand them.
@@ -215,7 +215,7 @@ fi
 
 # ---------------------------------------------------------------- T7
 # The grilling mechanic lives in fc-grill-me; fc-brainstorm owns the panel.
-g=.claude/skills/fc-grill-me/SKILL.md
+g=skills/fc-grill-me/SKILL.md
 if [ -f "$g" ]; then
   miss=""
   grep -qi 'recommended answer'   "$g" || miss="$miss recommended-answer"
@@ -228,7 +228,7 @@ else
   bad "T7a fc-grill-me rules" "$g missing"
 fi
 
-b=.claude/skills/fc-brainstorm/SKILL.md
+b=skills/fc-brainstorm/SKILL.md
 if [ -f "$b" ]; then
   miss=""
   grep -qi 'stance'              "$b" || miss="$miss distinct-stances"
@@ -241,7 +241,7 @@ else
 fi
 
 # ---------------------------------------------------------------- T8
-s=.claude/skills/fc-second-opinion/SKILL.md
+s=skills/fc-second-opinion/SKILL.md
 if [ -f "$s" ]; then
   miss=""
   grep -qi 'refuted' "$s"                            || miss="$miss refute-default"
@@ -274,7 +274,7 @@ t9_contract() { # skills root; prints one diagnostic per missing clause
   done
   printf '%s\n' "$errors"
 }
-t9_err=$(t9_contract .claude/skills)
+t9_err=$(t9_contract skills)
 [ -z "$t9_err" ] && ok "T9 all skills carry [what] + [use when] + [do NOT use for]" \
                  || bad "T9 skill description contract" "issues:$t9_err"
 # Negative checks on scratch copies: removing either clause from fc-debug's or
@@ -288,7 +288,7 @@ for t9_skill in fc-debug fc-explain; do
     esac
     t9_mut=$(mktemp -d)
     CLEANUP_PATHS+=("$t9_mut")
-    cp -R .claude/skills "$t9_mut/skills"
+    cp -R skills "$t9_mut/skills"
     t9_target="$t9_mut/skills/$t9_skill/SKILL.md"
     if [ ! -f "$t9_target" ]; then
       bad "T9 removal mutation: $t9_skill $t9_clause" "mutation target $t9_skill/SKILL.md missing"
@@ -378,7 +378,7 @@ t12_err=""
 while IFS= read -r d; do
   [ -n "$d" ] || continue
   case "$d" in fc-*) ;; *) t12_err="$t12_err $d" ;; esac
-done < <(git ls-files '.claude/skills/*' | cut -d/ -f3 | sort -u)
+done < <(git ls-files 'skills/*' | cut -d/ -f2 | sort -u)
 [ -z "$t12_err" ] && ok "T12 all skills fc-prefixed (no bundled-name collision)" \
                   || bad "T12 unprefixed skill dir" "offenders:$t12_err"
 
@@ -421,7 +421,7 @@ fi
 
 # ---------------------------------------------------------------- T15
 # A directory with no SKILL.md is not a skill. The installer globs, so without
-# this guard any scratch dir under .claude/skills/ gets shipped to users.
+# this guard any scratch dir under skills/ gets shipped to users.
 #
 # The probe must NOT be dot-prefixed: `for src in "$SRC_SKILLS_DIR"/*/` never
 # enumerates dot dirs, so a hidden probe means the guard under test is never
@@ -810,7 +810,7 @@ rm -rf "$t23_prefix"
 #     model-authored hard-gate artifact is audited. Whichever way that is
 #     resolved, the exemption has to be stated in the rule -- otherwise a
 #     reader who trusts the rule is misled by the flow, and vice versa.
-b=.claude/skills/fc-build-or-fix/SKILL.md
+b=skills/fc-build-or-fix/SKILL.md
 t24_err=""
 rule=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
 echo "$rule" | grep -qi 'collision\|same family'   || t24_err="$t24_err no-collision-check"
@@ -858,7 +858,7 @@ fi
 # architect -> user approval -> implementation with no audit between; five
 # independent reviewers caught it and the tests did not. T6 only counts where
 # the rule is *stated*, never whether the flow obeys it.
-c=.claude/skills/fc-build-or-fix/reference/complex-track.md
+c=skills/fc-build-or-fix/reference/complex-track.md
 t26_err=""
 if [ -f "$c" ]; then
   grep -qi 'cross-audit the spec' "$c" || t26_err="$t26_err spec-unaudited"
@@ -898,9 +898,9 @@ echo
 # rule, so link brackets match literally, never as a glob.
 t61_err=""
 t61_docs=(
-  .claude/skills/fc-build-or-fix/reference/design-check.md
-  .claude/skills/fc-build-or-fix/SKILL.md
-  .claude/skills/fc-build-or-fix/reference/complex-track.md
+  skills/fc-build-or-fix/reference/design-check.md
+  skills/fc-build-or-fix/SKILL.md
+  skills/fc-build-or-fix/reference/complex-track.md
   agents/fc-architect.md agents/fc-qa-code.md agents/fc-tech-lead.md agents/fc-developer.md
 )
 t61_labels=(
@@ -1050,12 +1050,12 @@ fi
 # documents pass, removing one clause must produce exactly its own diagnostic.
 t72_err=""
 t72_docs=(
-  .claude/skills/fc-build-or-fix/reference/industry-survey.md
-  .claude/skills/fc-build-or-fix/SKILL.md
-  .claude/skills/fc-build-or-fix/reference/complex-track.md
-  .claude/skills/fc-build-or-fix/reference/design-check.md
-  .claude/skills/fc-brainstorm/SKILL.md
-  .claude/skills/fc-research/SKILL.md
+  skills/fc-build-or-fix/reference/industry-survey.md
+  skills/fc-build-or-fix/SKILL.md
+  skills/fc-build-or-fix/reference/complex-track.md
+  skills/fc-build-or-fix/reference/design-check.md
+  skills/fc-brainstorm/SKILL.md
+  skills/fc-research/SKILL.md
 )
 t72_labels=(
   research-informs survey-before-design jdi-never reuse
@@ -1329,7 +1329,7 @@ grep -q 'feature-crew ' .github/workflows/release.yml     || t31_err="$t31_err w
 # Static contract alarm only: shell cannot execute Claude Code Agent dispatches.
 # Guard the canonical selector's branches, provenance envelope, explicit model
 # override, reviewer non-self-identification, and fail-closed/no-fallback cases.
-b=.claude/skills/fc-build-or-fix/SKILL.md
+b=skills/fc-build-or-fix/SKILL.md
 t32_err=""
 selector=$(sed -n '/^## Cross-family audit/,/^## Dispatch/p' "$b")
 # The agent chooses the pair itself, in any harness: the two most capable
@@ -1531,7 +1531,7 @@ echo "$classifier" | grep -qiE 'do not repeat|never repeat|no repeat' \
 echo "$classifier" | grep -qiE 'recurs|cycle' || t33_err="$t33_err no-cycles"
 echo "$classifier" | grep -qiE 'fc-grill-me.*leaf.*any flow may call' \
   || t33_err="$t33_err grill-leaf-exception-missing"
-brainstorm=.claude/skills/fc-brainstorm/SKILL.md
+brainstorm=skills/fc-brainstorm/SKILL.md
 bs_panel=$(sed -n '/^## 2 — Panel/,/^## /p' "$brainstorm")
 bs_spec=$(sed -n '/^## 5 — Spec/,/^## /p' "$brainstorm")
 bs_caps=$(sed -n '/^## Caps/,/^## /p' "$brainstorm")
@@ -1549,12 +1549,12 @@ echo "$bs_caps" | grep -qiE 'descendants.*any depth' \
   || t33_err="$t33_err brainstorm-descendants-not-counted"
 echo "$bs_caps" | grep -qiE 'pause.*user.*approval|user.*OK.*first' \
   || t33_err="$t33_err brainstorm-cap-expansion-not-approved"
-if grep -q '^disable-model-invocation: true$' .claude/skills/fc-grill-me/SKILL.md; then
+if grep -q '^disable-model-invocation: true$' skills/fc-grill-me/SKILL.md; then
   t33_err="$t33_err grill-not-model-invocable"
 fi
 # Pointer docs must not grow a second copy of the canonical route table.
 dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md CLAUDE.md 'wiki/*.md' agents/fc-pm.md \
-  '.claude/skills/fc-brainstorm/SKILL.md' 2>/dev/null || true)
+  'skills/fc-brainstorm/SKILL.md' 2>/dev/null || true)
 [ -z "$dup_classifier" ] || t33_err="$t33_err duplicated-classifier:$(echo "$dup_classifier" | tr '\n' ',')"
 [ -z "$t33_err" ] && ok "T33 static contract alarm: six need routes + bounded return-to-origin" \
                    || bad "T33 need-composition prose contract" "missing:$t33_err"
@@ -1622,7 +1622,7 @@ t62_debug_contract() { # fc-debug SKILL.md text
   done
   printf '%s\n' "$errors"
 }
-t62_text=$(cat .claude/skills/fc-debug/SKILL.md 2>/dev/null)
+t62_text=$(cat skills/fc-debug/SKILL.md 2>/dev/null)
 t62_err=$(t62_debug_contract "$t62_text")
 if [ -z "$t62_err" ]; then
   for ((t62_i=0; t62_i<${#t62_rules[@]}; t62_i++)); do
@@ -1715,9 +1715,9 @@ t66_explain_contract() { # fc-explain, fc-research, README, install.sh, install.
   done
   printf '%s\n' "$errors"
 }
-t66_load .claude/skills/fc-explain/SKILL.md
+t66_load skills/fc-explain/SKILL.md
 t66_explain_text=$t66_loaded
-t66_research_text=$(cat .claude/skills/fc-research/SKILL.md 2>/dev/null)
+t66_research_text=$(cat skills/fc-research/SKILL.md 2>/dev/null)
 t66_readme_text=$(cat README.md 2>/dev/null)
 t66_usage_text=$(cat wiki/Usage.md 2>/dev/null)
 t66_sh_text=$(cat install.sh 2>/dev/null)
@@ -1785,10 +1785,10 @@ sed -n 3p README.md | grep -qF '](LICENSE)' || t66_lic="$t66_lic readme-license-
 # pins in frontmatter are rejected separately by T71.
 t34_err=""
 stale_track=$(printf 'Tri%s' 'vial')
-stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' '.claude/skills/**' 2>/dev/null || true)
+stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' 'skills/**' 2>/dev/null || true)
 [ -z "$stale_track_files" ] || t34_err="$t34_err stale-track:$(echo "$stale_track_files" | tr '\n' ',')"
 stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned to `?model: sonnet|review-family model|review family|different model family|session default model' -- \
-  README.md CLAUDE.md 'wiki/*.md' agents install.sh install.ps1 '.github/workflows/*' '.claude/skills/fc-build-or-fix/**' '.claude/skills/fc-brainstorm/**' '.claude/skills/fc-research/**' '.claude/skills/fc-update/**' 2>/dev/null || true)
+  README.md CLAUDE.md 'wiki/*.md' agents install.sh install.ps1 '.github/workflows/*' 'skills/fc-build-or-fix/**' 'skills/fc-brainstorm/**' 'skills/fc-research/**' 'skills/fc-update/**' 2>/dev/null || true)
 [ -z "$stale_pins" ] || t34_err="$t34_err stale-role-pin:$(echo "$stale_pins" | tr '\n' ',')"
 [ -z "$t34_err" ] && ok "T34 no stale legacy-track or role-pin wording in active shipped content" \
                    || bad "T34 stale framework wording" "issues:$t34_err"
@@ -1797,7 +1797,7 @@ stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned 
 # Runtime evidence and environment assumptions belong in the linked reference;
 # unrelated mentions outside these sections must not satisfy the contract.
 t55_err=""
-provenance=.claude/skills/fc-build-or-fix/reference/gate-provenance.md
+provenance=skills/fc-build-or-fix/reference/gate-provenance.md
 echo "$selector" | grep -qF '(reference/gate-provenance.md)' \
   || t55_err="$t55_err provenance-reference-not-linked"
 if [ -f "$provenance" ]; then
@@ -1850,10 +1850,10 @@ fi
 # the canonical default so a Sonnet session is not silently moved to Opus.
 echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*pair member in the session.s own family.*otherwise the first pair member.*unless the user chose another' \
   || t55_err="$t55_err session-authoring-alias-default-missing"
-complex_flow=$(sed -n '/^## Flow/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
+complex_flow=$(sed -n '/^## Flow/,/^## /p' skills/fc-build-or-fix/reference/complex-track.md)
 architect_dispatch=$(echo "$complex_flow" | grep -E '^5\. ')
 developer_dispatch=$(echo "$complex_flow" | grep -E '^8\. ')
-synthesis_dispatch=$(sed -n '/^## Phase 2/,/^## /p' .claude/skills/fc-research/SKILL.md)
+synthesis_dispatch=$(sed -n '/^## Phase 2/,/^## /p' skills/fc-research/SKILL.md)
 echo "$architect_dispatch" | grep -qE 'fc-architect.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
   || t55_err="$t55_err architect-authoring-rule-not-linked"
 echo "$developer_dispatch" | grep -qE 'fc-developer.*explicit.*`model` override.*authoring rule.*`/fc-build-or-fix`' \
@@ -1869,7 +1869,7 @@ for authoring_site in architect developer synthesis; do
   echo "$authoring_text" | grep -qE 'model: *(opus|sonnet|haiku|fable)' \
     && t55_err="$t55_err $authoring_site:hardcoded-authoring-alias"
 done
-complex_example=$(sed -n '/^## Worked example/,/^## /p' .claude/skills/fc-build-or-fix/reference/complex-track.md)
+complex_example=$(sed -n '/^## Worked example/,/^## /p' skills/fc-build-or-fix/reference/complex-track.md)
 echo "$complex_example" | grep -qE '^> .*fc-architect.*requested with `model: sonnet`' \
   || t55_err="$t55_err example-architect-changes-session-family"
 echo "$complex_example" | grep -qE '^> .*Developers requested with `model: sonnet`' \
@@ -1919,8 +1919,8 @@ t55_delegation_contract() { # build-or-fix, second-opinion, provenance text
   done
   printf '%s\n' "$errors"
 }
-t55_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
-t55_refuter_text=$(cat .claude/skills/fc-second-opinion/SKILL.md)
+t55_build_text=$(cat skills/fc-build-or-fix/SKILL.md)
+t55_refuter_text=$(cat skills/fc-second-opinion/SKILL.md)
 t55_provenance_text=$(cat "$provenance" 2>/dev/null)
 t55_boundary_out=$(t55_delegation_contract "$t55_build_text" "$t55_refuter_text" "$t55_provenance_text")
 t55_err="$t55_err$t55_boundary_out"
@@ -1951,7 +1951,7 @@ fi
 # One mandatory suffix shared by all three phases closes recursive delegation;
 # the Phase 1 profile and the invocation-wide budget are separate safeguards.
 t56_err=""
-research=.claude/skills/fc-research/SKILL.md
+research=skills/fc-research/SKILL.md
 workers=$(sed -n '/^## Worker boundary/,/^## /p' "$research")
 search_phase=$(sed -n '/^## Phase 1/,/^## /p' "$research")
 research_caps=$(sed -n '/^## Caps/,/^## /p' "$research")
@@ -2016,7 +2016,7 @@ fi
 # read-only policy, not shell-write isolation, and pin no model (issue #54).
 t57_err=""
 for skill in fc-review fc-second-opinion; do
-  f=".claude/skills/$skill/SKILL.md"
+  f="skills/$skill/SKILL.md"
   intro=$(sed -n "/^# $skill\$/,/^## /p" "$f")
   grep -qi 'by construction' "$f" && t57_err="$t57_err $skill:construction-claim"
   echo "$intro" | grep -qi 'read-only by policy' || t57_err="$t57_err $skill:policy-missing"
@@ -2027,7 +2027,7 @@ for skill in fc-review fc-second-opinion; do
   echo "$intro" | grep -qiE 'Bash and PowerShell.*write-capable' \
     || t57_err="$t57_err $skill:shell-write-limit-unacknowledged"
 done
-refute=$(sed -n '/^## 3 — Refute/,/^## /p' .claude/skills/fc-second-opinion/SKILL.md)
+refute=$(sed -n '/^## 3 — Refute/,/^## /p' skills/fc-second-opinion/SKILL.md)
 echo "$refute" | grep -qiE 'each refuter.*explicit.*`model` override.*selector.*`/fc-build-or-fix`' \
   || t57_err="$t57_err refuter-selector-override-missing"
 # Review lenses carry their own model: an unpinned lens runs whatever the
@@ -2061,7 +2061,7 @@ t57_lens_contract() { # review text
     && errors="$errors lens-size-gated-dispatch"
   printf '%s\n' "$errors"
 }
-t57_review_text=$(cat .claude/skills/fc-review/SKILL.md)
+t57_review_text=$(cat skills/fc-review/SKILL.md)
 t57_lens_out=$(t57_lens_contract "$t57_review_text")
 t57_err="$t57_err$t57_lens_out"
 if [ -z "$t57_lens_out" ]; then
@@ -2086,7 +2086,7 @@ fi
 # removal mutation must produce exactly its own diagnostic, and runs only after
 # the unmodified documents pass the control.
 t65_err=""
-discipline=.claude/skills/fc-build-or-fix/reference/run-discipline.md
+discipline=skills/fc-build-or-fix/reference/run-discipline.md
 [ -f "$discipline" ] || t65_err="$t65_err run-discipline-missing"
 t65_labels=(
   run-discipline-pointer
@@ -2127,7 +2127,7 @@ t65_discipline_contract() { # build-or-fix text, run-discipline text
   done
   printf '%s\n' "$errors"
 }
-t65_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
+t65_build_text=$(cat skills/fc-build-or-fix/SKILL.md)
 t65_discipline_text=$(cat "$discipline" 2>/dev/null)
 t65_out=$(t65_discipline_contract "$t65_build_text" "$t65_discipline_text")
 t65_err="$t65_err$t65_out"
@@ -2160,15 +2160,15 @@ fi
 # wording it replaced must stay gone, and after the unmodified documents pass,
 # removing one clause must produce exactly its own diagnostic.
 t70_err=""
-t70_doc_bof=.claude/skills/fc-build-or-fix/SKILL.md
+t70_doc_bof=skills/fc-build-or-fix/SKILL.md
 t70_doc_qacode=agents/fc-qa-code.md
 t70_doc_qaspec=agents/fc-qa-spec.md
-t70_doc_review=.claude/skills/fc-review/SKILL.md
-t70_doc_research=.claude/skills/fc-research/SKILL.md
-t70_doc_brainstorm=.claude/skills/fc-brainstorm/SKILL.md
-t70_doc_complex=.claude/skills/fc-build-or-fix/reference/complex-track.md
-t70_doc_meta=.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
-t70_doc_grill=.claude/skills/fc-grill-me/SKILL.md
+t70_doc_review=skills/fc-review/SKILL.md
+t70_doc_research=skills/fc-research/SKILL.md
+t70_doc_brainstorm=skills/fc-brainstorm/SKILL.md
+t70_doc_complex=skills/fc-build-or-fix/reference/complex-track.md
+t70_doc_meta=skills/fc-build-or-fix/reference/meta-work-cap.md
+t70_doc_grill=skills/fc-grill-me/SKILL.md
 t70_doc_lead=agents/fc-tech-lead.md
 t70_doc_architect=agents/fc-architect.md
 t70_doc_install=install.sh
@@ -2303,7 +2303,7 @@ t35_installed() {
   local got src name
   got=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
   [ "$got" -eq "$t35_want_agents" ] || t35_err="$t35_err agents=$got(want-$t35_want_agents)"
-  for src in "$t35_repo"/.claude/skills/*/SKILL.md; do
+  for src in "$t35_repo"/skills/*/SKILL.md; do
     [ -f "$src" ] || continue
     name=$(basename "$(dirname "$src")")
     [ -f "$t35_prefix/skills/$name/SKILL.md" ] || t35_err="$t35_err missing-skill:$name"
@@ -2997,7 +2997,7 @@ printf '%s\n' "$installer_out" | grep -qF '//' && case_err="$case_err dry-empty:
 # so repeating mkdir once per copied file cannot pass as a set comparison.
 {
   printf '%s\n' "$p/agents"
-  for src in "$installer_repo"/.claude/skills/*/; do
+  for src in "$installer_repo"/skills/*/; do
     [ -f "${src}SKILL.md" ] || continue
     skill=$(basename "$src")
     printf '%s\n' "$p/skills/$skill"
@@ -3164,7 +3164,7 @@ copy_installer_inputs() {
   mkdir -p "$1/.claude" || return 1
   cp "$installer_repo/install.sh" "$installer_repo/install.ps1" "$installer_repo/published.sha256" "$1/" || return 1
   cp -R "$installer_repo/agents" "$1/agents" || return 1
-  cp -R "$installer_repo/.claude/skills" "$1/.claude/skills"
+  cp -R "$installer_repo/skills" "$1/skills"
 }
 run_copied_installer() {
   local installer_repo="$1"; shift
@@ -3427,7 +3427,7 @@ if ! copy_installer_inputs "$t49_source"; then
   bad "T49 untagged manifest-bearing fixture" "cannot copy this working tree's installer inputs"
 else
   printf '\nUntagged agent change.\n' >> "$t49_source/agents/fc-pm.md"
-  printf '\r\nUntagged skill change.\r\n' >> "$t49_source/.claude/skills/fc-review/SKILL.md"
+  printf '\r\nUntagged skill change.\r\n' >> "$t49_source/skills/fc-review/SKILL.md"
   for engine in "${INSTALLERS[@]}"; do
     p="$installer_root/t49-$engine"
     case_err=""
@@ -3800,7 +3800,7 @@ t53_contract() { # SKILL.md text
   printf '%s\n' "$errors"
 }
 case_err=""
-s=.claude/skills/fc-update/SKILL.md
+s=skills/fc-update/SKILL.md
 t53_text=$(cat "$s")
 t53_out=$(t53_contract "$t53_text")
 case_err="$case_err$t53_out"
@@ -3832,7 +3832,7 @@ t63_cwd="$t63_root/cwd"
 mkdir -p "$t63_cwd" "$t63_root/parity"
 t63_usage='--check and --verify cannot be combined with each other, --force, --uninstall, or --dry-run'
 t63_shipped=$( { for t63_f in agents/*.md; do printf '%s\n' "$t63_f"; done
-  for t63_d in .claude/skills/*/; do
+  for t63_d in skills/*/; do
     [ -f "${t63_d}SKILL.md" ] || continue
     ( cd "$t63_d" && find . -type f -print | sed "s|^\./|skills/$(basename "$t63_d")/|" )
   done; } | LC_ALL=C sort)
@@ -3937,7 +3937,7 @@ t63_published_oracle() { # prefix without a manifest; independent expected --che
   for rel in "$1"/skills/fc-*/; do
     [ -d "$rel" ] || continue
     name=$(basename "$rel")
-    [ -f ".claude/skills/$name/SKILL.md" ] || stale="${stale}skills/$name"$'\n'
+    [ -f "skills/$name/SKILL.md" ] || stale="${stale}skills/$name"$'\n'
   done
   printf '%s\n' 'feature-crew: checking <P>'
   printf '%sfeature-crew.sha256\n' "$missing" | LC_ALL=C sort | sed 's/^/missing: /'
@@ -4025,7 +4025,7 @@ for engine in "${INSTALLERS[@]}"; do
   if [ ! -d "$t63_fixture" ]; then
     copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-copy-failed"
     printf '\nUntagged agent change.\n' >> "$t63_fixture/agents/fc-pm.md"
-    printf '\r\nUntagged skill change.\r\n' >> "$t63_fixture/.claude/skills/fc-review/SKILL.md"
+    printf '\r\nUntagged skill change.\r\n' >> "$t63_fixture/skills/fc-review/SKILL.md"
   fi
   run_copied_installer "$t63_fixture" "$engine" "$p" --force
   expect_installer_success untagged-install
@@ -4175,8 +4175,8 @@ for engine in "${INSTALLERS[@]}"; do
     if [ ! -d "$t63_fixture" ]; then
       copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-failed"
     fi
-    for t63_locked in agents agents/fc-pm.md .claude/skills .claude/skills/fc-review \
-        .claude/skills/fc-build-or-fix/reference .claude/skills/fc-review/SKILL.md; do
+    for t63_locked in agents agents/fc-pm.md skills skills/fc-review \
+        skills/fc-build-or-fix/reference skills/fc-review/SKILL.md; do
       t63_lock_pair "$engine" "$p" "$t63_locked" "${t63_locked%/reference}" \
         "source-$(printf '%s' "${t63_locked#.claude/}" | tr '/.' '--')"
     done
@@ -4192,7 +4192,7 @@ for engine in "${INSTALLERS[@]}"; do
     case_err=""
     [ -L "$t63_root/locked-link" ] || ln -s "$t63_fixture" "$t63_root/locked-link" || case_err="$case_err link-failed"
     t63_via="$t63_root/locked-link"
-    t63_lock_pair "$engine" "$p" .claude/skills/fc-build-or-fix/reference .claude/skills/fc-build-or-fix linked-reference
+    t63_lock_pair "$engine" "$p" skills/fc-build-or-fix/reference skills/fc-build-or-fix linked-reference
     t63_via=""
     t63_result "T63 $engine run by relative path through a symlinked directory names the same source-relative path"
   fi
@@ -4692,13 +4692,13 @@ fi
 t64_root=$(mktemp -d)
 CLEANUP_PATHS+=("$t64_root")
 mkdir -p "$t64_root/bin" "$t64_root/home"
-t64_ship=.claude/skills/fc-ship/SKILL.md
+t64_ship=skills/fc-ship/SKILL.md
 
 # T9 replay: an untouched scratch copy passes; removing either clause from the
 # fc-ship description is reported for fc-ship alone. A no-op mutation is a
 # setup failure, not a rejection.
 case_err=""
-mkdir -p "$t64_root/skills" && cp -R .claude/skills/. "$t64_root/skills/"
+mkdir -p "$t64_root/skills" && cp -R skills/. "$t64_root/skills/"
 t64_got=$(t9_contract "$t64_root/skills")
 [ -z "$t64_got" ] || case_err="$case_err control:$t64_got"
 t64_edits=('/^description:/s/ Use when [^.]*\.//' '/^description:/s/ Do NOT use for.*$//')
@@ -4821,7 +4821,7 @@ t64_contract() { # fc-ship, build-or-fix, wiki Usage and Development-and-Release
   printf '%s\n' "$errors"
 }
 t64_ship_text=$(cat "$t64_ship" 2>/dev/null)
-t64_build_text=$(cat .claude/skills/fc-build-or-fix/SKILL.md)
+t64_build_text=$(cat skills/fc-build-or-fix/SKILL.md)
 t64_readme_text=$(cat wiki/Usage.md wiki/Development-and-Release.md 2>/dev/null)
 t64_sh_text=$(cat install.sh)
 t64_ps1_text=$(cat install.ps1)
