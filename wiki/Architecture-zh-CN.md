@@ -51,7 +51,7 @@ flowchart TB
 2. **枢纽一次路由一个缺失要素。** 单个事实直接查找。多处证据交给 `fc-research`，用户拥有的决定交给 `fc-grill-me`，未定的方案交给 `fc-brainstorm`，已选定的重大决定交给 `fc-second-opinion`，无法解释的故障交给 `fc-debug`。每个技能都把结果返回调用方。只有 `fc-grill-me` 可以在另一个技能内部被调用，同一个缺口从不被路由两次。
 3. **枢纽派发角色提示词**：任务文本内联粘贴，带显式模型覆盖，并以一行禁止进一步委派的话收尾。
 4. **已授权的工作交给 `fc-ship`。**
-5. **安装器安装插件。** 它们为代理添加 `name` 和 `description` frontmatter，并为五个被派发的角色添加 `disallowedTools: Agent, Skill`，同时记录 `feature-crew.sha256`。`install.ps1` 能交给 Git Bash 时就交给它，否则运行它自己的、逻辑相同的 PowerShell 版本。
+5. **安装器安装插件。** 对 PATH 上的 `claude` 和 `copilot`，它们添加或更新市场（若市场来自其他来源则替换），安装、启用或更新 `feature-crew`，并检查 CLI 列出它为已启用。之后才删除旧的脚本安装：每个旧的 `fc-*` 路径，以及哈希在 [published.sha256][pub] 中的更早文件。`install.ps1` 能交给 Git Bash 时就交给它，否则运行它自己的、逻辑相同的 PowerShell 版本。
 6. **每个 CLI 从自己的插件缓存加载已安装的插件：** 技能用 `fc-*` 名称，代理为 `feature-crew:fc-*`。它如何加载属于 CLI 的行为，不是本仓库的代码。
 7. **测试套件和 CI 检查两半：** 行数上限、带删除变异的规则文本、安装器一致性以及 PowerShell 引擎，全部在 `FC_STRICT=1` 下运行。
 
@@ -62,8 +62,8 @@ flowchart TB
 | 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作。五个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
 | fc-ship | 分别请求每项批准，运行一个后台 CI 监视，只 squash 合并已验证的 head，可选发布，并总是清理 | [SKILL.md][ship] | fc-ship：第 1–7 节 |
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |
-| 安装器 | 复制代理（添加 frontmatter）和每个技能目录，记录哈希，只删除能证明属于自己的文件；`--check` 和 `--verify` 是只读的 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
-| 安装状态 | 代理、技能和安装清单 | `~/.claude/agents/fc-*.md`、`~/.claude/skills/fc-*/`、`~/.claude/feature-crew.sha256` | [使用说明](Usage-zh-CN)：*安装*；[install.sh][sh] 写明了清单文件名 |
+| 安装器 | 在 PATH 上的每个 CLI 中安装或更新插件，然后删除旧的脚本安装；`--dry-run` 预览，`--check` 只读 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
+| 已安装的插件 | 各 CLI 插件缓存中的 `feature-crew@feature-crew` | `.claude-plugin/`、`skills/`、`agents/` | [使用说明](Usage-zh-CN)：*安装* |
 | Claude Code | 加载技能（推断），运行会话和子代理，保存会话记录 | 不在本仓库中 | [gate-provenance.md][prov]：*Read the record* |
 | 自测套件 | 仅供开发的 bash 检查，任何失败都以非零状态退出；`FC_STRICT=1` 把跳过的检查变成失败 | [framework_test.sh][suite] | 套件的文件头 |
 | CI 工作流 | 运行测试套件，验证插件，在 Windows 上测试迁移，发布本 wiki，并发布版本 | [.github/workflows/][wf] | [开发与发布](Development-and-Release-zh-CN) |
@@ -196,7 +196,7 @@ sequenceDiagram
 
 - 在本仓库之外，只有当 Claude Code 把某个平实语言请求匹配到主流程的描述时，请求才会到达主流程。仓库只能表明这一意图，无法强制。
 - 在 Standard 中，PM 会话自己编写代码：构建步骤没有指定 developer，2–3 次派发的预算正好对应第二设计者、可选的规格审计和 `fc-qa-code`。
-- Claude Code 会在 `~/.claude/agents` 和 `~/.claude/skills` 下发现文件。
+- Claude Code 和 Copilot CLI 从各自的插件缓存加载插件的 `skills/` 和 `agents/`。
 
 **未知**
 

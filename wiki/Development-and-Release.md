@@ -74,7 +74,7 @@ feature-crew/
 ├── scripts/                   # wiki publisher, checker, and their test
 ├── wiki/                      # this wiki: English pages and -zh-CN twins
 ├── tests/framework_test.sh
-├── CLAUDE.md                  # repository instructions
+├── .claude/CLAUDE.md          # repository instructions
 └── install.sh / install.ps1
 ```
 
@@ -94,7 +94,7 @@ Every page has an English file and a Chinese twin, `Page.md` and `Page-zh-CN.md`
 2. [publish-wiki.yml][pubwf], [publish-wiki.sh][pubsh], [test-wiki-publish.sh][pubtest], and [check-wiki.py][checkwiki]: the wiki pipeline.
 3. [release.yml][rel] and the *Release process* in [CLAUDE.md][claude].
 
-[claude]: https://github.com/D0n9X1n/feature-crew/blob/main/CLAUDE.md
+[claude]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/CLAUDE.md
 [test]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/test.yml
 [pubwf]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/publish-wiki.yml
 [pubsh]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/publish-wiki.sh

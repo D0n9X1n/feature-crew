@@ -38,12 +38,16 @@ env:
       'plugin list --json' {
         # Like real Copilot, a registered marketplace lists its plugin disabled.
         if ($cli -eq 'claude') { if (Test-Path $pl) { '[{"id": "feature-crew@feature-crew", "enabled": true}]' } else { '[]' } }
-        elseif (Test-Path $pl) { '[{"name": "feature-crew", "enabled": true}]' }
-        elseif (Test-Path $mp) { '[{"name": "feature-crew", "enabled": false}]' }
+        elseif (Test-Path $pl) { '[{"name": "feature-crew", "marketplace": "feature-crew", "enabled": true}]' }
+        elseif (Test-Path $mp) { '[{"name": "feature-crew", "marketplace": "feature-crew", "enabled": false}]' }
         else { '[]' }
       }
-      'plugin marketplace list --json' { if (Test-Path $mp) { '[{"name": "feature-crew"}]' } else { '[]' } }
-      'plugin marketplace add *' { New-Item -ItemType File -Force -Path $mp | Out-Null; 'stub: marketplace added' }
+      'plugin marketplace list --json' {
+        if (-not (Test-Path $mp)) { '[]' }
+        elseif ($cli -eq 'claude') { '[{"name": "feature-crew", "repo": "' + (Get-Content -Raw $mp) + '"}]' }
+        else { '[{"name": "feature-crew", "source": "GitHub: ' + (Get-Content -Raw $mp) + '"}]' }
+      }
+      'plugin marketplace add *' { Set-Content -NoNewline -LiteralPath $mp -Value $args[3]; 'stub: marketplace added' }
       'plugin marketplace update *' { 'stub: marketplace updated' }
       'plugin marketplace remove *' { Remove-Item -Force $mp, $pl -ErrorAction SilentlyContinue; 'stub: marketplace removed' }
       'plugin install *' { New-Item -ItemType File -Force -Path $pl | Out-Null; 'stub: plugin installed' }

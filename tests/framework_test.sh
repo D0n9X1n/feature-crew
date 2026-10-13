@@ -54,7 +54,7 @@ skill_files() { find skills -name 'SKILL.md' | sort; }
 framework_files() {
   find agents -name '*.md'
   find skills -name '*.md'
-  printf '%s\n' README.md CLAUDE.md
+  printf '%s\n' README.md .claude/CLAUDE.md
 }
 
 echo "== Feature-Crew framework tests =="
@@ -983,7 +983,7 @@ if grep -q '^disable-model-invocation: true$' skills/fc-grill-me/SKILL.md; then
   t33_err="$t33_err grill-not-model-invocable"
 fi
 # Pointer docs must not grow a second copy of the canonical route table.
-dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md CLAUDE.md 'wiki/*.md' agents/fc-pm.md \
+dup_classifier=$(git grep -lF '| One discoverable fact |' -- README.md .claude/CLAUDE.md 'wiki/*.md' agents/fc-pm.md \
   'skills/fc-brainstorm/SKILL.md' 2>/dev/null || true)
 [ -z "$dup_classifier" ] || t33_err="$t33_err duplicated-classifier:$(echo "$dup_classifier" | tr '\n' ',')"
 [ -z "$t33_err" ] && ok "T33 static contract alarm: six need routes + bounded return-to-origin" \
@@ -1215,10 +1215,10 @@ sed -n 3p README.md | grep -qF '](LICENSE)' || t66_lic="$t66_lic readme-license-
 # pins in frontmatter are rejected separately by T71.
 t34_err=""
 stale_track=$(printf 'Tri%s' 'vial')
-stale_track_files=$(git grep -l -w "$stale_track" -- README.md CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' 'skills/**' 2>/dev/null || true)
+stale_track_files=$(git grep -l -w "$stale_track" -- README.md .claude/CLAUDE.md 'wiki/*.md' agents '*.sh' '*.ps1' '.github/workflows/*' 'skills/**' 2>/dev/null || true)
 [ -z "$stale_track_files" ] || t34_err="$t34_err stale-track:$(echo "$stale_track_files" | tr '\n' ',')"
 stale_pins=$(git grep -lE 'review (agents|roles).*(pinned|model: sonnet)|pinned to `?model: sonnet|review-family model|review family|different model family|session default model' -- \
-  README.md CLAUDE.md 'wiki/*.md' agents install.sh install.ps1 '.github/workflows/*' 'skills/fc-build-or-fix/**' 'skills/fc-brainstorm/**' 'skills/fc-research/**' 'skills/fc-update/**' 2>/dev/null || true)
+  README.md .claude/CLAUDE.md 'wiki/*.md' agents install.sh install.ps1 '.github/workflows/*' 'skills/fc-build-or-fix/**' 'skills/fc-brainstorm/**' 'skills/fc-research/**' 'skills/fc-update/**' 2>/dev/null || true)
 [ -z "$stale_pins" ] || t34_err="$t34_err stale-role-pin:$(echo "$stale_pins" | tr '\n' ',')"
 [ -z "$t34_err" ] && ok "T34 no stale legacy-track or role-pin wording in active shipped content" \
                    || bad "T34 stale framework wording" "issues:$t34_err"
@@ -1796,8 +1796,8 @@ t53_rules=(
   'Claude Code: run `claude plugin marketplace update feature-crew`, then `claude plugin update feature-crew@feature-crew`.'
   'Copilot CLI: run `copilot plugin marketplace update feature-crew`, then `copilot plugin update feature-crew@feature-crew`.'
   'List the plugins again and report the installed version for each CLI.'
-  'If `~/.claude/agents/fc-*.md` or `~/.claude/skills/fc-*/` exist, report them: they are an old script install and shadow the plugin.'
-  'Tell the user to run `./install.sh --dry-run`, then `./install.sh`, from a Feature-Crew clone to remove them.'
+  'Run `./install.sh --check` from a Feature-Crew clone; it reports any old script install, which shadows the plugin.'
+  'If it reports old files, run `./install.sh --dry-run`, then `./install.sh`, to remove them.'
   'Remind the user to start a new session, or run `/reload-plugins` in Claude Code.'
   'Any error stops the flow; report the command and its output.'
 )
@@ -1847,6 +1847,8 @@ t54_heads=$(grep -E '^#{1,6} ' README.md | tr '\n' '|')
 count=$(wc -l < README.md | tr -d ' ')
 [ "$count" -le 40 ] || case_err="$case_err README-lines=$count(want<=40)"
 grep -qF 'https://github.com/D0n9X1n/feature-crew/wiki' README.md || case_err="$case_err README-no-wiki-link"
+t54_stale=$(grep -nE '`--force`|`--verify`|feature-crew\.sha256|install manifest|Copy agents|adding frontmatter|复制代理' wiki/*.md | head -3 | tr '\n' ' ')
+[ -z "$t54_stale" ] || case_err="$case_err wiki-describes-copy-installer:$t54_stale"
 installer_result "T54 README and wiki Usage install through each CLI's plugin commands; README keeps only an introduction, quick start, and features"
 
 # ---------------------------------------------------------------- T58
@@ -2594,10 +2596,10 @@ t76_run() { # engine, clis(both|claude|none), prefix, flags...
       claude) cp "$t76_root/stub/cli" "$bin/claude" ;; esac
   fi
   if [ "$engine" = sh ]; then
-    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" \
+    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" \
       "$installer_bash" "$installer_repo/install.sh" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
   else
-    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" \
+    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" \
       POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
       "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
   fi
@@ -2622,6 +2624,7 @@ t76_seed() { # prefix: v5.3.1 then v3.1 installed by their own installers, plus 
       && mv "$t76_root/crlf" "$t76_root/seed/skills/build-or-fix/SKILL.md"
     printf 'my own agent\n' > "$t76_root/seed/agents/pm.md"
     mkdir -p "$t76_root/seed/skills/fc-mine" && printf 'mine\n' > "$t76_root/seed/skills/fc-mine/SKILL.md"
+    mkdir -p "$t76_root/seed/skills/research/empty-notes"
   fi
   rm -rf "$1" && cp -R "$t76_root/seed" "$1"
 }
@@ -2637,6 +2640,8 @@ t76_removals() { # verb: removed | would remove | old file
   printf '%s: <P>/feature-crew.sha256\n' "$v"
   for n in architect developer qa-code-reviewer qa-spec-reviewer tech-lead; do printf '%s: <P>/agents/feature-crew/%s.md\n' "$v" "$n"; done
   printf '%s: <P>/skills/build-or-fix/SKILL.md\n%s: <P>/skills/research/SKILL.md\n' "$v" "$v"
+  # A folder goes only when this run empties it; check mode reports files only.
+  [ "$v" = 'old file' ] || printf '%s: <P>/skills/build-or-fix\n' "$v"
 }
 t76_kept() { printf 'kept (not ours): <P>/agents/feature-crew/pm.md\nkept (not ours): <P>/skills/research/sources.md\n'; }
 t76_steps() { # mode: fresh|rerun|dry, clis...
@@ -2666,9 +2671,18 @@ for engine in "${INSTALLERS[@]}"; do
   t76_state="$t76_root/$engine/state-fresh"; rm -rf "$t76_state" "$p"
   t76_run "$engine" both "$p"
   t76_expect fresh 0 "$(t76_head; t76_steps fresh claude copilot; printf '%s' "$t76_banner")"
-  [ "$t76_calls" = "$(printf '%s\n' 'claude plugin marketplace list --json' 'claude plugin marketplace add D0n9X1n/feature-crew' \
-    'claude plugin list --json' 'claude plugin install feature-crew@feature-crew' 'copilot plugin marketplace list --json' \
-    'copilot plugin marketplace add D0n9X1n/feature-crew' 'copilot plugin list --json' 'copilot plugin install feature-crew@feature-crew')" ] \
+  [ "$t76_calls" = "$(printf '%s\n' 'claude plugin marketplace list --json' \
+    'claude plugin list --json' \
+    'claude plugin marketplace add D0n9X1n/feature-crew' \
+    'claude plugin list --json' \
+    'claude plugin install feature-crew@feature-crew' \
+    'claude plugin list --json' \
+    'copilot plugin marketplace list --json' \
+    'copilot plugin list --json' \
+    'copilot plugin marketplace add D0n9X1n/feature-crew' \
+    'copilot plugin list --json' \
+    'copilot plugin install feature-crew@feature-crew' \
+    'copilot plugin list --json')" ] \
     || case_err="$case_err fresh:calls:$(printf '%s' "$t76_calls" | tr '\n' '|')"
   [ ! -e "$p" ] || case_err="$case_err fresh:created-prefix"
   t76_run "$engine" both "$p"
@@ -2680,6 +2694,7 @@ for engine in "${INSTALLERS[@]}"; do
   t76_run "$engine" both "$p" --dry-run
   t76_expect dry-run 0 "$(t76_head; t76_steps dry claude copilot; t76_removals 'would remove'; t76_kept; printf 'Dry run: nothing changed.')"
   printf '%s\n' "$t76_calls" | grep -qvE ' list --json$' && case_err="$case_err dry-run:mutating-call"
+  t76_dry=$(printf '%s\n' "$t76_out" | sed -n 's/^would remove: //p' | LC_ALL=C sort)
   t76_before=$(t76_tree "$p")
   t76_run "$engine" both "$p" --check
   t76_expect check-before 1 "$(t76_head; printf 'claude: feature-crew missing\ncopilot: feature-crew missing\n'; t76_removals 'old file'; t76_kept; printf 'check: action-needed')"
@@ -2697,6 +2712,8 @@ for engine in "${INSTALLERS[@]}"; do
     t76_removals removed; t76_kept; printf '%s' "$t76_banner")"
   [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err migrate:left=$(cd "$p" && find . -type f | LC_ALL=C sort | tr '\n' ' ')"
   [ ! -e "$p/skills/build-or-fix" ] || case_err="$case_err migrate:empty-dir-kept"
+  [ -d "$p/skills/research/empty-notes" ] || case_err="$case_err migrate:removed-a-folder-it-did-not-empty"
+  [ "$(printf '%s\n' "$t76_out" | sed -n 's/^removed: //p' | LC_ALL=C sort)" = "$t76_dry" ] || case_err="$case_err dry-run-and-run-remove-different-paths"
   t76_run "$engine" both "$p" --check
   t76_expect check-after 0 "$(t76_head; printf 'claude: feature-crew installed\ncopilot: feature-crew installed\n'; t76_kept; printf 'check: current')"
 
@@ -2707,6 +2724,52 @@ for engine in "${INSTALLERS[@]}"; do
     t76_kept; printf 'Done. Feature-Crew is uninstalled.')"
   [ ! -e "$t76_state/claude.marketplace" ] && [ ! -e "$t76_state/copilot.plugin" ] || case_err="$case_err uninstall:state-left"
   [ "$(cd "$p" && find . -type f | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err uninstall:touched-user-files"
+
+  # A marketplace from another source is replaced, never silently updated.
+  t76_state="$t76_root/$engine/state-stale"; rm -rf "$t76_state" "$p"; mkdir -p "$t76_state"
+  for c in claude copilot; do printf 'someone/fork' > "$t76_state/$c.marketplace"; : > "$t76_state/$c.plugin"; done
+  t76_run "$engine" both "$p"
+  t76_expect stale-source 0 "$(t76_head; for c in claude copilot; do
+    printf 'run: %s plugin uninstall feature-crew@feature-crew\nstub: plugin uninstalled\nrun: %s plugin marketplace remove feature-crew\nstub: marketplace removed\n' "$c" "$c"
+    printf 'run: %s plugin marketplace add D0n9X1n/feature-crew\nstub: marketplace added\nrun: %s plugin install feature-crew@feature-crew\nstub: plugin installed\n' "$c" "$c"; done
+    printf '%s' "$t76_banner")"
+  [ "$(cat "$t76_state/claude.marketplace" 2>/dev/null)" = D0n9X1n/feature-crew ] || case_err="$case_err stale-source:not-replaced"
+
+  # A disabled plugin is enabled, and checked, before anything old goes.
+  t76_state="$t76_root/$engine/state-disabled"; rm -rf "$t76_state"; mkdir -p "$t76_state"
+  printf 'D0n9X1n/feature-crew' > "$t76_state/claude.marketplace"; : > "$t76_state/claude.plugin"; : > "$t76_state/claude.disabled"
+  t76_seed "$p"; t76_before=$(t76_tree "$p")
+  t76_fail='claude plugin enable'
+  t76_run "$engine" claude "$p"
+  t76_fail=''
+  [ "$t76_rc" = 1 ] && [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err disabled:enable-failure-removed-old-files(rc=$t76_rc)"
+  t76_run "$engine" claude "$p"
+  t76_expect disabled 0 "$(t76_head; printf 'run: claude plugin marketplace update feature-crew\nstub: marketplace updated\nrun: claude plugin enable feature-crew@feature-crew\nstub: plugin enabled\nrun: claude plugin update feature-crew@feature-crew\nstub: plugin updated\n'
+    t76_removals removed; t76_kept; printf '%s' "$t76_banner")"
+
+  # Only the feature-crew marketplace's plugin counts, not a same-named one elsewhere.
+  t76_state="$t76_root/$engine/state-other"; rm -rf "$t76_state" "$p"; mkdir -p "$t76_state"
+  printf '  {\n    "name": "feature-crew",\n    "marketplace": "another-market",\n    "enabled": true\n  },\n' > "$t76_state/copilot.extra"
+  printf 'D0n9X1n/feature-crew' > "$t76_state/copilot.marketplace"
+  t76_run "$engine" both "$p" --check
+  t76_expect other-check 1 "$(t76_head; printf 'claude: feature-crew missing\ncopilot: feature-crew disabled\ncheck: action-needed')"
+  t76_run "$engine" both "$p"
+  case "$t76_out" in *'run: copilot plugin install feature-crew@feature-crew'*) ;; *) case_err="$case_err other-market:skipped-install" ;; esac
+
+  # An install that reports success but leaves the plugin unlisted removes nothing.
+  t76_state="$t76_root/$engine/state-ghost"; rm -rf "$t76_state"
+  t76_seed "$p"; t76_before=$(t76_tree "$p")
+  t76_ghost=copilot
+  t76_run "$engine" both "$p"
+  t76_ghost=''
+  [ "$t76_rc" = 1 ] || case_err="$case_err ghost:rc=$t76_rc"
+  [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err ghost:removed-old-files"
+
+  # Help wins over any other token, in both engines alike.
+  t76_run "$engine" both "$p" --help --bogus
+  [ "$t76_rc" = 0 ] || case_err="$case_err help:rc=$t76_rc"
+  case "$t76_out" in *'removed even when edited'*) ;; *) case_err="$case_err help:no-edited-warning" ;; esac
+  printf '%s' "$t76_out" > "$t76_root/help-$engine"
 
   # Only the CLIs on PATH are used; neither on PATH changes nothing.
   t76_state="$t76_root/$engine/state-claude"; rm -rf "$t76_state" "$p"
@@ -2729,6 +2792,10 @@ for engine in "${INSTALLERS[@]}"; do
   installer_result "T76 $engine installs the plugin per CLI, then removes the old install; dry-run, check, failure, uninstall, usage"
 done
 [ "${#INSTALLERS[@]}" -eq 2 ] || skip "T76 ps1 installer (pwsh unavailable; set PWSH)"
+if [ -f "$t76_root/help-sh" ] && [ -f "$t76_root/help-ps1" ]; then
+  cmp -s "$t76_root/help-sh" "$t76_root/help-ps1" && ok "T76 both engines print the same help" \
+    || bad "T76 help parity" "install.sh and install.ps1 print different help"
+fi
 
 # ---------------------------------------------------------------- T77
 # The installers' fixed old-install lists must equal what tagged installers
@@ -2795,7 +2862,9 @@ PY
     [ -n "$t67_name" ] || continue
     rm -rf -- "$t67_dir/copy"
     mkdir -p "$t67_dir/copy/.github/workflows"
-    cp -R scripts wiki CLAUDE.md "$t67_dir/copy/"
+    mkdir -p "$t67_dir/copy/.claude"
+    cp -R scripts wiki "$t67_dir/copy/"
+    cp .claude/CLAUDE.md "$t67_dir/copy/.claude/"
     cp .github/workflows/publish-wiki.yml "$t67_dir/copy/.github/workflows/"
     if ! ( cd "$t67_dir/copy" && eval "$t67_cmd" ) < /dev/null > /dev/null 2>&1; then
       t67_missed="$t67_missed $t67_name(apply)"
@@ -2822,15 +2891,15 @@ stale-deletion|retained a deleted page|t67_sub scripts/publish-wiki.sh ' -delete
 nested-deletion|touched a nested destination page|t67_sub scripts/publish-wiki.sh ' -maxdepth 1' ''
 nested-copy|copied a nested source page|t67_sub scripts/publish-wiki.sh 'pages=("$source_dir"/*.md)' 'pages=("$source_dir"/*.md "$source_dir"/*/*.md)'
 branch-guard|not on master|t67_sub scripts/publish-wiki.sh '== "master" ]] ||' '== "master" ]] || true ||'
-canonical-rule|makes wiki/ canonical|t67_sub CLAUDE.md 'only source of truth' 'primary source'
-verify-rule|post-merge publish check|t67_sub CLAUDE.md 'confirm the `Publish wiki` run' 'watch the wiki'
+canonical-rule|makes wiki/ canonical|t67_sub .claude/CLAUDE.md 'only source of truth' 'primary source'
+verify-rule|post-merge publish check|t67_sub .claude/CLAUDE.md 'confirm the `Publish wiki` run' 'watch the wiki'
 broken-link|target does not exist: Missing-Page|printf '\n[Gone](Missing-Page)\n' >> wiki/Home.md
 md-link|must omit .md|printf '\n[Home](Home.md)\n' >> wiki/Home.md
 home-coverage|missing link to Architecture|t67_sub wiki/Home.md '](Architecture)' '](Development-and-Release)'
-doc-center-rule|documentation center|t67_sub CLAUDE.md 'documentation center' 'documentation home'
-english-only-rule|English-only agent context|t67_sub CLAUDE.md 'Load only the English wiki pages for routine agent context' 'Load the wiki pages'
-zh-naming-rule|name the separate Chinese files|t67_sub CLAUDE.md '<Page>-zh-CN.md' '<Page>-cn.md'
-zh-mention|outside the naming rule|printf '\nSee Home-zh-CN.\n' >> CLAUDE.md
+doc-center-rule|documentation center|t67_sub .claude/CLAUDE.md 'documentation center' 'documentation home'
+english-only-rule|English-only agent context|t67_sub .claude/CLAUDE.md 'Load only the English wiki pages for routine agent context' 'Load the wiki pages'
+zh-naming-rule|name the separate Chinese files|t67_sub .claude/CLAUDE.md '<Page>-zh-CN.md' '<Page>-cn.md'
+zh-mention|outside the naming rule|printf '\nSee Home-zh-CN.\n' >> .claude/CLAUDE.md
 home-zh-coverage|missing link to Usage-zh-CN|t67_sub wiki/Home-zh-CN.md '](Usage-zh-CN)' '](Architecture-zh-CN)'
 missing-counterpart|missing language counterpart: Usage-zh-CN|rm wiki/Usage-zh-CN.md
 missing-switch|missing language-switch link to Usage-zh-CN|t67_sub wiki/Usage.md '[简体中文](Usage-zh-CN)' ''

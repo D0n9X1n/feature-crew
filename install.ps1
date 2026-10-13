@@ -18,13 +18,25 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DryRun = $false
 $Uninstall = $false
 $Check = $false
-$Help = $false
 $Prefix = Join-Path $HOME ".claude"
 $Source = "D0n9X1n/feature-crew"
 
 # No param block: PowerShell would bind --prefix/--source itself and fail a
 # missing value with exit 1 before this script runs. Parse every token here.
 # GNU-style flags are case-sensitive; PowerShell-style ones are not.
+$HelpText = @'
+Usage: install.sh / install.ps1 [--dry-run] [--check] [--uninstall] [--prefix DIR] [--source SRC]
+Installs or updates the Feature-Crew plugin in each of Claude Code and GitHub Copilot CLI found on
+PATH, then removes an old script install from the --prefix folder (default ~/.claude).
+  --dry-run     print every command and removal, change nothing
+  --check       read-only: report plugin state and old files; exit 0 current, 1 action needed, 2 error
+  --uninstall   remove the plugin from each CLI and the old install
+  --prefix DIR  old install location
+  --source SRC  plugin marketplace source (default D0n9X1n/feature-crew)
+install.ps1 also accepts -DryRun, -Check, -Uninstall, -Prefix DIR, -Source SRC, -Help.
+Old fc-* agents and skills are removed even when edited: they would run instead of the plugin.
+Older files are removed only when published.sha256 proves Feature-Crew wrote them.
+'@
 $argv = @($args)
 for ($i = 0; $i -lt $argv.Count; $i++) {
   $t = [string]$argv[$i]
@@ -33,7 +45,7 @@ for ($i = 0; $i -lt $argv.Count; $i++) {
     { $_ -in @("--dry-run", "-dryrun") }     { $DryRun = $true; break }
     { $_ -in @("--uninstall", "-uninstall") } { $Uninstall = $true; break }
     { $_ -in @("--check", "-check") }         { $Check = $true; break }
-    { $_ -in @("--help", "-help", "-h") }     { $Help = $true; break }
+    { $_ -in @("--help", "-help", "-h") }     { Write-Host $HelpText; exit 0 }
     { $_ -in @("--prefix", "-prefix", "--source", "-source") } {
       if ($i + 1 -ge $argv.Count) { [Console]::Error.WriteLine("Missing value for $t"); exit 2 }
       $i++
@@ -45,13 +57,6 @@ for ($i = 0; $i -lt $argv.Count; $i++) {
       exit 2
     }
   }
-}
-if ($Help) {
-  Write-Host "Usage: .\install.ps1 [--dry-run|-DryRun] [--check|-Check] [--uninstall|-Uninstall]"
-  Write-Host "                     [--prefix DIR|-Prefix DIR] [--source SRC|-Source SRC] [--help|-Help|-h]"
-  Write-Host "Installs the Feature-Crew plugin in each CLI on PATH, then removes the old script install."
-  Write-Host "--check is read-only; exit 0 when current, 1 when action is needed, 2 on an error."
-  exit 0
 }
 if ($Check -and ($DryRun -or $Uninstall)) {
   [Console]::Error.WriteLine("--check cannot be combined with --dry-run or --uninstall")
@@ -135,8 +140,8 @@ function Resolve-AbsPath($p) {
 }
 
 # The CLIs' own JSON listings are the only plugin state this script reads.
-# 0 listed, 1 not listed, 2 the listing failed.
-function Get-Listed($cli, $kind) {
+# One object per entry, so a match never spans two entries; $null if the listing failed.
+function Get-Listing($cli, $kind) {
   $ErrorActionPreference = "Continue"
   try {
     if ($kind -eq "marketplace") {
@@ -145,16 +150,33 @@ function Get-Listed($cli, $kind) {
       $out = & $CliPath[$cli] plugin list --json 2>$null
     }
     $rc = $LASTEXITCODE
-  } catch { return 2 }
-  if ($rc -ne 0) { return 2 }
-  $text = ($out | Out-String)
-  if ($kind -eq "plugin" -and $cli -eq "claude") {
-    if ($text -match '"id":\s*"feature-crew@feature-crew"') { return 0 }
-  } elseif ($kind -eq "plugin") {
-    # Copilot lists a registered marketplace's plugin disabled until it is installed.
-    if ($text -match '"name":\s*"feature-crew"[^}]*"enabled":\s*true') { return 0 }
-  } elseif ($text -match '"name":\s*"feature-crew"') { return 0 }
-  return 1
+  } catch { return $null }
+  if ($rc -ne 0) { return $null }
+  return ,@((($out | Out-String) -replace "[`r`n]", "") -split '}')
+}
+
+# absent, same (registered from -Source), or other; $null if the listing failed.
+function Get-MarketplaceState($cli) {
+  $rows = Get-Listing $cli "marketplace"
+  if ($null -eq $rows) { return $null }
+  $row = @($rows | Where-Object { $_ -match '"name":\s*"feature-crew"' } | Select-Object -First 1)
+  if ($row.Count -eq 0) { return "absent" }
+  if ($row[0].Contains($Source.Replace('\', '\\'))) { return "same" }
+  return "other"
+}
+
+# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace.
+function Get-PluginState($cli) {
+  $rows = Get-Listing $cli "plugin"
+  if ($null -eq $rows) { return $null }
+  if ($cli -eq "claude") {
+    $row = @($rows | Where-Object { $_ -match '"id":\s*"feature-crew@feature-crew"' } | Select-Object -First 1)
+  } else {
+    $row = @($rows | Where-Object { ($_ -match '"name":\s*"feature-crew"') -and ($_ -match '"marketplace":\s*"feature-crew"') } | Select-Object -First 1)
+  }
+  if ($row.Count -eq 0) { return "absent" }
+  if ($row[0] -match '"enabled":\s*false') { return "disabled" }
+  return "enabled"
 }
 
 function Stop-Cli($cli) {
@@ -175,35 +197,36 @@ function Invoke-Step($cli, [string[]]$stepArgs) {
   return ($rc -eq 0)
 }
 
+# A marketplace from another source is replaced, never updated. The old
+# install is removed only after the CLI lists the plugin enabled.
 function Install-Cli($cli) {
-  switch (Get-Listed $cli "marketplace") {
-    0 { $ok = Invoke-Step $cli @("plugin", "marketplace", "update", $Marketplace) }
-    1 { $ok = Invoke-Step $cli @("plugin", "marketplace", "add", $Source) }
-    default { $ok = $false }
+  $mp = Get-MarketplaceState $cli
+  $pl = Get-PluginState $cli
+  if ($null -eq $mp -or $null -eq $pl) { Stop-Cli $cli }
+  if ($mp -eq "same") {
+    if (-not (Invoke-Step $cli @("plugin", "marketplace", "update", $Marketplace))) { Stop-Cli $cli }
+  } else {
+    if ($mp -eq "other") {
+      if ($pl -ne "absent" -and -not (Invoke-Step $cli @("plugin", "uninstall", $PluginId))) { Stop-Cli $cli }
+      if (-not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
+    }
+    if (-not (Invoke-Step $cli @("plugin", "marketplace", "add", $Source))) { Stop-Cli $cli }
+    if ($DryRun) { $pl = "absent" } else { $pl = Get-PluginState $cli; if ($null -eq $pl) { Stop-Cli $cli } }
   }
-  if (-not $ok) { Stop-Cli $cli }
-  switch (Get-Listed $cli "plugin") {
-    0 { $ok = Invoke-Step $cli @("plugin", "update", $PluginId) }
-    1 { $ok = Invoke-Step $cli @("plugin", "install", $PluginId) }
-    default { $ok = $false }
-  }
-  if (-not $ok) { Stop-Cli $cli }
+  if ($pl -eq "enabled") { $steps = @(,@("plugin", "update", $PluginId)) }
+  elseif ($pl -eq "disabled" -and $cli -eq "claude") { $steps = @(@("plugin", "enable", $PluginId), @("plugin", "update", $PluginId)) }
+  else { $steps = @(,@("plugin", "install", $PluginId)) }
+  foreach ($st in $steps) { if (-not (Invoke-Step $cli $st)) { Stop-Cli $cli } }
+  if (-not $DryRun -and (Get-PluginState $cli) -ne "enabled") { Stop-Cli $cli }
 }
 
 function Uninstall-Cli($cli) {
-  $ok = $true
-  switch (Get-Listed $cli "plugin") {
-    0 { $ok = Invoke-Step $cli @("plugin", "uninstall", $PluginId) }
-    1 { }
-    default { $ok = $false }
-  }
-  if (-not $ok) { Stop-Cli $cli }
-  switch (Get-Listed $cli "marketplace") {
-    0 { $ok = Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace) }
-    1 { }
-    default { $ok = $false }
-  }
-  if (-not $ok) { Stop-Cli $cli }
+  $pl = Get-PluginState $cli
+  if ($null -eq $pl) { Stop-Cli $cli }
+  if ($pl -ne "absent" -and -not (Invoke-Step $cli @("plugin", "uninstall", $PluginId))) { Stop-Cli $cli }
+  $mp = Get-MarketplaceState $cli
+  if ($null -eq $mp) { Stop-Cli $cli }
+  if ($mp -ne "absent" -and -not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
 }
 
 # Hash with CR stripped, so a Windows checkout of a genuine legacy file still matches.
@@ -228,9 +251,12 @@ function Test-Link($path) {
 
 $script:LegacyFound = $false
 $script:Kept = New-Object 'System.Collections.Generic.List[string]'
+$script:Planned = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$script:Emptied = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 # Removes a link itself, never its target.
 function Remove-Legacy($path) {
   $script:LegacyFound = $true
+  [void]$script:Planned.Add($path)
   if ($Check) { Write-Host "old file: $path"; return }
   if ($DryRun) { Write-Host "would remove: $path"; return }
   $abs = Resolve-AbsPath $path
@@ -256,18 +282,39 @@ function Get-OldSkillFiles($dir) {
   return ,$paths
 }
 
-# Remove only directories the old install made and this run emptied.
-function Remove-EmptyDirs($dir) {
-  if (-not (Test-Path -LiteralPath $dir -PathType Container) -or (Test-Link $dir)) { return }
-  $dirs = @(Get-ChildItem -LiteralPath $dir -Recurse -Force -Directory | Sort-Object { $_.FullName.Length } -Descending)
-  $dirs += @(Get-Item -LiteralPath $dir -Force)
+# Every folder from the path's parent up to root.
+function Add-Emptied($root, $path) {
+  $d = $path.Substring(0, $path.LastIndexOf('/'))
+  while ($true) {
+    [void]$script:Emptied.Add($d)
+    if ($d -eq $root) { break }
+    $d = $d.Substring(0, $d.LastIndexOf('/'))
+  }
+}
+
+# Remove only folders this run empties, deepest first; never one that was already empty.
+function Remove-Emptied {
+  $dirs = New-Object 'System.Collections.Generic.List[string]'
+  foreach ($d in $script:Emptied) { $dirs.Add($d) }
+  $dirs.Sort([Comparison[string]]{ param($a, $b)
+    $da = $a.Split('/').Count; $db = $b.Split('/').Count
+    if ($da -ne $db) { return $db - $da }
+    return [string]::CompareOrdinal($a, $b) })
   foreach ($d in $dirs) {
-    if (@(Get-ChildItem -LiteralPath $d.FullName -Force).Count -eq 0) { Remove-Item -LiteralPath $d.FullName -Force }
+    if (-not (Test-Path -LiteralPath $d -PathType Container) -or (Test-Link $d)) { continue }
+    $left = $false
+    foreach ($e in @(Get-ChildItem -LiteralPath $d -Force)) {
+      if (-not $script:Planned.Contains("$d/$($e.Name)")) { $left = $true; break }
+    }
+    if ($left) { continue }
+    [void]$script:Planned.Add($d)
+    if ($DryRun) { Write-Host "would remove: $d" }
+    else { Remove-Item -LiteralPath $d -Force; Write-Host "removed: $d" }
   }
 }
 
 function Clear-Legacy {
-  $script:Kept.Clear()
+  $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
   foreach ($n in $LEGACY_FC_AGENTS) {
     $p = "$Prefix/agents/$n.md"
     if (Test-Path -LiteralPath $p) { Remove-Legacy $p }
@@ -281,23 +328,18 @@ function Clear-Legacy {
   foreach ($n in $LEGACY_OLD_AGENTS) {
     $p = "$Prefix/agents/feature-crew/$n.md"
     if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p)) {
-      if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p } else { $script:Kept.Add($p) }
+      if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p; Add-Emptied "$Prefix/agents/feature-crew" $p } else { $script:Kept.Add($p) }
     }
   }
   foreach ($n in $LEGACY_OLD_SKILLS) {
     $p = "$Prefix/skills/$n"
     if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-Link $p)) {
       foreach ($rel in (Get-OldSkillFiles $p)) {
-        if (Test-PublishedFile "$p/$rel" "skills/$n/$rel") { Remove-Legacy "$p/$rel" } else { $script:Kept.Add("$p/$rel") }
+        if (Test-PublishedFile "$p/$rel" "skills/$n/$rel") { Remove-Legacy "$p/$rel"; Add-Emptied $p "$p/$rel" } else { $script:Kept.Add("$p/$rel") }
       }
     }
   }
-  if (-not $Check -and -not $DryRun) {
-    foreach ($n in $LEGACY_OLD_SKILLS) { Remove-EmptyDirs "$Prefix/skills/$n" }
-    $p = "$Prefix/agents/feature-crew"
-    if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-Link $p) -and
-        @(Get-ChildItem -LiteralPath $p -Force).Count -eq 0) { Remove-Item -LiteralPath $p -Force }
-  }
+  if (-not $Check) { Remove-Emptied }
   foreach ($p in $script:Kept) { Write-Host "kept (not ours): $p" }
 }
 
@@ -309,11 +351,11 @@ if ($Uninstall) {
 
 if ($Check) {
   foreach ($c in $Clis) {
-    switch (Get-Listed $c "plugin") {
-      0 { Write-Host "${c}: feature-crew installed" }
-      1 { Write-Host "${c}: feature-crew missing"; $script:LegacyFound = $true }
-      default { [Console]::Error.WriteLine("feature-crew: $c plugin list failed"); exit 2 }
-    }
+    $st = Get-PluginState $c
+    if ($null -eq $st) { [Console]::Error.WriteLine("feature-crew: $c plugin list failed"); exit 2 }
+    if ($st -eq "enabled") { Write-Host "${c}: feature-crew installed" }
+    elseif ($st -eq "disabled") { Write-Host "${c}: feature-crew disabled"; $script:LegacyFound = $true }
+    else { Write-Host "${c}: feature-crew missing"; $script:LegacyFound = $true }
   }
   Clear-Legacy
   if ($script:LegacyFound) { Write-Host "check: action-needed"; exit 1 }

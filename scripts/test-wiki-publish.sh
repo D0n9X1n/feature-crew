@@ -8,7 +8,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 publisher="$root/scripts/publish-wiki.sh"
 workflow="$root/.github/workflows/publish-wiki.yml"
-guidance="$root/CLAUDE.md"
+guidance="$root/.claude/CLAUDE.md"
 checker="$root/scripts/check-wiki.py"
 
 fail() {

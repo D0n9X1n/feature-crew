@@ -51,7 +51,7 @@ flowchart TB
 2. **The hub routes one missing ingredient at a time.** A single fact is looked up directly. Evidence from several places goes to `fc-research`, a user-owned decision to `fc-grill-me`, an open approach to `fc-brainstorm`, a chosen consequential decision to `fc-second-opinion`, and an unexplained failure to `fc-debug`. Each returns its result to the caller. Only `fc-grill-me` may be called from inside another skill, and the same gap is never routed twice.
 3. **The hub dispatches role prompts** with the task text pasted inline, an explicit model override, and a closing line that forbids further delegation.
 4. **Authorized work goes to `fc-ship`.**
-5. **The installers install the plugin.** They add `name` and `description` frontmatter to agents, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and record `feature-crew.sha256`. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
+5. **The installers install the plugin.** For each of `claude` and `copilot` on PATH they add or update the marketplace (replacing one registered from another source), install, enable, or update `feature-crew`, and check that the CLI lists it enabled. Only then do they remove an old script install: every old `fc-*` path, and older files whose hash is in [published.sha256][pub]. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
 6. **Each CLI loads the installed plugin** from its plugin cache: skills by their `fc-*` names, agents as `feature-crew:fc-*`. How it does so is CLI behavior, not code in this repository.
 7. **The suite and CI check both halves:** line caps, rule text with removal mutations, installer parity, and the PowerShell engine, all under `FC_STRICT=1`.
 
@@ -62,8 +62,8 @@ flowchart TB
 | Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five carry a committed least-privilege `tools:` list and `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
 | fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and always cleans up | [SKILL.md][ship] | fc-ship: sections 1–7 |
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
-| Installers | Copy agents (adding frontmatter) and every skill directory, record hashes, and delete only files proven to be theirs; `--check` and `--verify` are read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
-| Installed state | The agents, skills, and install manifest | `~/.claude/agents/fc-*.md`, `~/.claude/skills/fc-*/`, `~/.claude/feature-crew.sha256` | [Usage](Usage): *Install*; [install.sh][sh] names the manifest |
+| Installers | Install or update the plugin in each CLI on PATH, then remove an old script install; `--dry-run` previews and `--check` is read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
+| Installed plugin | `feature-crew@feature-crew` in each CLI's plugin cache | `.claude-plugin/`, `skills/`, `agents/` | [Usage](Usage): *Install* |
 | Claude Code | Loads the skills (inferred), runs the session and subagents, and records transcripts | not in this repository | [gate-provenance.md][prov]: *Read the record* |
 | Self-test suite | Dev-only bash checks that exit nonzero on any failure; `FC_STRICT=1` turns skipped checks into failures | [framework_test.sh][suite] | the suite's header |
 | CI workflows | Run the suite, validate the plugin, test migration on Windows, publish this wiki, and cut releases | [.github/workflows/][wf] | [Development and Release](Development-and-Release) |
@@ -196,7 +196,7 @@ Principles that hold on every track:
 
 - Outside this repository, a request reaches the playbook only if Claude Code matches its description to a plain-language request. The repository states that intent but cannot enforce it.
 - In Standard, the PM session writes the code itself: the build step names no developer, and the 2–3 dispatch budget fits the second designer, the optional spec audit, and `fc-qa-code`.
-- Claude Code discovers files under `~/.claude/agents` and `~/.claude/skills`.
+- Claude Code and Copilot CLI load the plugin's `skills/` and `agents/` from their plugin caches.
 
 **Unknown**
 

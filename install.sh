@@ -23,6 +23,18 @@ CHECK=0
 PREFIX="${HOME}/.claude"
 SOURCE="D0n9X1n/feature-crew"
 
+HELP='Usage: install.sh / install.ps1 [--dry-run] [--check] [--uninstall] [--prefix DIR] [--source SRC]
+Installs or updates the Feature-Crew plugin in each of Claude Code and GitHub Copilot CLI found on
+PATH, then removes an old script install from the --prefix folder (default ~/.claude).
+  --dry-run     print every command and removal, change nothing
+  --check       read-only: report plugin state and old files; exit 0 current, 1 action needed, 2 error
+  --uninstall   remove the plugin from each CLI and the old install
+  --prefix DIR  old install location
+  --source SRC  plugin marketplace source (default D0n9X1n/feature-crew)
+install.ps1 also accepts -DryRun, -Check, -Uninstall, -Prefix DIR, -Source SRC, -Help.
+Old fc-* agents and skills are removed even when edited: they would run instead of the plugin.
+Older files are removed only when published.sha256 proves Feature-Crew wrote them.'
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)   DRY_RUN=1 ;;
@@ -36,10 +48,7 @@ while [ $# -gt 0 ]; do
       if [ "$1" = --prefix ]; then PREFIX="$2"; else SOURCE="$2"; fi
       shift
       ;;
-    -h|--help)
-      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0
-      ;;
+    -h|--help) printf '%s\n' "$HELP"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -73,22 +82,38 @@ if [ "${#CLIS[@]}" -eq 0 ]; then
 fi
 
 # The CLIs' own JSON listings are the only plugin state this script reads.
-# 0 listed, 1 not listed, 2 the listing failed.
-listed() { # cli, marketplace|plugin
+# One object per line, so a match never spans two entries.
+listing() { # cli, marketplace|plugin
   local out
   if [ "$2" = marketplace ]; then
-    out="$("$1" plugin marketplace list --json 2>/dev/null)" || return 2
-    [[ "$out" =~ \"name\":\ *\"feature-crew\" ]] && return 0
+    out="$("$1" plugin marketplace list --json 2>/dev/null)" || return 1
   else
-    out="$("$1" plugin list --json 2>/dev/null)" || return 2
-    if [ "$1" = claude ]; then
-      [[ "$out" =~ \"id\":\ *\"feature-crew@feature-crew\" ]] && return 0
-    else
-      # Copilot lists a registered marketplace's plugin disabled until it is installed.
-      [[ "$out" =~ \"name\":\ *\"feature-crew\"[^}]*\"enabled\":\ *true ]] && return 0
-    fi
+    out="$("$1" plugin list --json 2>/dev/null)" || return 1
   fi
-  return 1
+  printf '%s' "$out" | tr -d '\r\n' | tr '}' '\n'
+}
+
+# absent, same (registered from --source), or other; nonzero if the listing failed.
+marketplace_state() {
+  local rows row
+  rows="$(listing "$1" marketplace)" || return 1
+  row="$(printf '%s\n' "$rows" | grep -E '"name": *"feature-crew"' | head -1 || true)"
+  if [ -z "$row" ]; then echo absent; return 0; fi
+  case "$row" in *"${SOURCE//\\/\\\\}"*) echo same ;; *) echo other ;; esac
+}
+
+# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace.
+plugin_state() {
+  local rows row
+  rows="$(listing "$1" plugin)" || return 1
+  if [ "$1" = claude ]; then
+    row="$(printf '%s\n' "$rows" | grep -E '"id": *"feature-crew@feature-crew"' | head -1 || true)"
+  else
+    row="$(printf '%s\n' "$rows" | grep -E '"name": *"feature-crew"' | grep -E '"marketplace": *"feature-crew"' | head -1 || true)"
+  fi
+  if [ -z "$row" ]; then echo absent
+  elif [[ "$row" =~ \"enabled\":\ *false ]]; then echo disabled
+  else echo enabled; fi
 }
 
 cli_failed() {
@@ -106,36 +131,45 @@ step() {
   fi
 }
 
+# A marketplace from another source is replaced, never updated. The old
+# install is removed only after the CLI lists the plugin enabled.
 install_cli() {
-  local cli="$1" rc
-  rc=0; listed "$cli" marketplace || rc=$?
-  case "$rc" in
-    0) step "$cli" plugin marketplace update "$MARKETPLACE" || cli_failed "$cli" ;;
-    1) step "$cli" plugin marketplace add "$SOURCE" || cli_failed "$cli" ;;
-    *) cli_failed "$cli" ;;
+  local cli="$1" mp pl
+  mp="$(marketplace_state "$cli")" || cli_failed "$cli"
+  pl="$(plugin_state "$cli")" || cli_failed "$cli"
+  if [ "$mp" = same ]; then
+    step "$cli" plugin marketplace update "$MARKETPLACE" || cli_failed "$cli"
+  else
+    if [ "$mp" = other ]; then
+      if [ "$pl" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" || cli_failed "$cli"; fi
+      step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"
+    fi
+    step "$cli" plugin marketplace add "$SOURCE" || cli_failed "$cli"
+    if [ "$DRY_RUN" -eq 1 ]; then pl=absent; else pl="$(plugin_state "$cli")" || cli_failed "$cli"; fi
+  fi
+  case "$pl" in
+    enabled) step "$cli" plugin update "$PLUGIN_ID" || cli_failed "$cli" ;;
+    disabled)
+      if [ "$cli" = claude ]; then
+        step "$cli" plugin enable "$PLUGIN_ID" || cli_failed "$cli"
+        step "$cli" plugin update "$PLUGIN_ID" || cli_failed "$cli"
+      else
+        step "$cli" plugin install "$PLUGIN_ID" || cli_failed "$cli"
+      fi ;;
+    *) step "$cli" plugin install "$PLUGIN_ID" || cli_failed "$cli" ;;
   esac
-  rc=0; listed "$cli" plugin || rc=$?
-  case "$rc" in
-    0) step "$cli" plugin update "$PLUGIN_ID" || cli_failed "$cli" ;;
-    1) step "$cli" plugin install "$PLUGIN_ID" || cli_failed "$cli" ;;
-    *) cli_failed "$cli" ;;
-  esac
+  if [ "$DRY_RUN" -eq 0 ]; then
+    pl="$(plugin_state "$cli")" || cli_failed "$cli"
+    [ "$pl" = enabled ] || cli_failed "$cli"
+  fi
 }
 
 uninstall_cli() {
-  local cli="$1" rc
-  rc=0; listed "$cli" plugin || rc=$?
-  case "$rc" in
-    0) step "$cli" plugin uninstall "$PLUGIN_ID" || cli_failed "$cli" ;;
-    1) ;;
-    *) cli_failed "$cli" ;;
-  esac
-  rc=0; listed "$cli" marketplace || rc=$?
-  case "$rc" in
-    0) step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli" ;;
-    1) ;;
-    *) cli_failed "$cli" ;;
-  esac
+  local cli="$1" st
+  st="$(plugin_state "$cli")" || cli_failed "$cli"
+  if [ "$st" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" || cli_failed "$cli"; fi
+  st="$(marketplace_state "$cli")" || cli_failed "$cli"
+  if [ "$st" != absent ]; then step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"; fi
 }
 
 # Hash a file with CRLF normalized to LF, so a Windows checkout of a genuine
@@ -155,8 +189,11 @@ published_file() { # file, prefix-relative path
 
 LEGACY_FOUND=0
 KEPT=()
+PLANNED=""
+EMPTIED=""
 legacy_remove() { # path; rm -rf removes a link itself, never its target
   LEGACY_FOUND=1
+  PLANNED="$PLANNED$1"$'\n'
   if [ "$CHECK" -eq 1 ]; then
     say "old file: $1"
   elif [ "$DRY_RUN" -eq 1 ]; then
@@ -167,13 +204,22 @@ legacy_remove() { # path; rm -rf removes a link itself, never its target
   fi
 }
 
+may_empty() { # root, path under it: every folder from the path's parent up to root
+  local d="${2%/*}"
+  while :; do
+    EMPTIED="$EMPTIED$d"$'\n'
+    [ "$d" = "$1" ] && break
+    d="${d%/*}"
+  done
+}
+
 old_skill_files() { # skill dir: its regular files, sorted
   (cd "$1" && find . -type f | sed 's#^\./##' | sort)
 }
 
 clean_legacy() {
   local n p rel
-  KEPT=()
+  KEPT=(); PLANNED=""; EMPTIED=""
   for n in "${LEGACY_FC_AGENTS[@]}"; do
     p="$PREFIX/agents/$n.md"
     if [ -e "$p" ] || [ -L "$p" ]; then legacy_remove "$p"; fi
@@ -187,7 +233,7 @@ clean_legacy() {
   for n in "${LEGACY_OLD_AGENTS[@]}"; do
     p="$PREFIX/agents/feature-crew/$n.md"
     if [ -f "$p" ] && [ ! -L "$p" ]; then
-      if published_file "$p" "agents/feature-crew/$n.md"; then legacy_remove "$p"; else KEPT+=("$p"); fi
+      if published_file "$p" "agents/feature-crew/$n.md"; then legacy_remove "$p"; may_empty "$PREFIX/agents/feature-crew" "$p"; else KEPT+=("$p"); fi
     fi
   done
   for n in "${LEGACY_OLD_SKILLS[@]}"; do
@@ -195,25 +241,34 @@ clean_legacy() {
     if [ -d "$p" ] && [ ! -L "$p" ]; then
       while IFS= read -r rel; do
         [ -n "$rel" ] || continue
-        if published_file "$p/$rel" "skills/$n/$rel"; then legacy_remove "$p/$rel"; else KEPT+=("$p/$rel"); fi
+        if published_file "$p/$rel" "skills/$n/$rel"; then legacy_remove "$p/$rel"; may_empty "$p" "$p/$rel"; else KEPT+=("$p/$rel"); fi
       done < <(old_skill_files "$p")
     fi
   done
-  if [ "$CHECK" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then prune_empty; fi
+  if [ "$CHECK" -eq 0 ]; then remove_emptied; fi
   if [ "${#KEPT[@]}" -gt 0 ]; then
     for p in "${KEPT[@]}"; do say "kept (not ours): $p"; done
   fi
 }
 
-# Remove only directories the old install made and this run emptied.
-prune_empty() {
-  local n p
-  for n in "${LEGACY_OLD_SKILLS[@]}"; do
-    p="$PREFIX/skills/$n"
-    if [ -d "$p" ] && [ ! -L "$p" ]; then find "$p" -depth -type d -empty -exec rmdir {} \; ; fi
-  done
-  p="$PREFIX/agents/feature-crew"
-  if [ -d "$p" ] && [ ! -L "$p" ]; then rmdir "$p" 2>/dev/null || true; fi
+# Remove only folders this run empties, deepest first; never one that was already empty.
+remove_emptied() {
+  local d e left
+  while IFS= read -r d; do
+    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
+    left=0
+    while IFS= read -r e; do
+      [ -n "$e" ] || continue
+      case $'\n'"$PLANNED" in *$'\n'"$e"$'\n'*) ;; *) left=1; break ;; esac
+    done < <(find "$d" -mindepth 1 -maxdepth 1 2>/dev/null)
+    [ "$left" -eq 0 ] || continue
+    PLANNED="$PLANNED$d"$'\n'
+    if [ "$DRY_RUN" -eq 1 ]; then
+      say "would remove: $d"
+    else
+      rmdir "$d" && say "removed: $d"
+    fi
+  done < <(printf '%s' "$EMPTIED" | awk 'NF' | sort -u | awk -F/ '{ print NF "\t" $0 }' | sort -t "$(printf '\t')" -k1,1nr -k2,2 | cut -f2-)
 }
 
 if [ "$UNINSTALL" -eq 1 ]; then
@@ -224,11 +279,11 @@ fi
 
 if [ "$CHECK" -eq 1 ]; then
   for c in "${CLIS[@]}"; do
-    rc=0; listed "$c" plugin || rc=$?
-    case "$rc" in
-      0) say "$c: feature-crew installed" ;;
-      1) say "$c: feature-crew missing"; LEGACY_FOUND=1 ;;
-      *) echo "feature-crew: $c plugin list failed" >&2; exit 2 ;;
+    st="$(plugin_state "$c")" || { echo "feature-crew: $c plugin list failed" >&2; exit 2; }
+    case "$st" in
+      enabled) say "$c: feature-crew installed" ;;
+      disabled) say "$c: feature-crew disabled"; LEGACY_FOUND=1 ;;
+      *) say "$c: feature-crew missing"; LEGACY_FOUND=1 ;;
     esac
   done
   clean_legacy

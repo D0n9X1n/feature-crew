@@ -13,8 +13,8 @@ Updates the plugin through each CLI's own plugin commands. It never copies, edit
 2. Claude Code: run `claude plugin marketplace update feature-crew`, then `claude plugin update feature-crew@feature-crew`.
 3. Copilot CLI: run `copilot plugin marketplace update feature-crew`, then `copilot plugin update feature-crew@feature-crew`.
 4. List the plugins again and report the installed version for each CLI.
-5. If `~/.claude/agents/fc-*.md` or `~/.claude/skills/fc-*/` exist, report them: they are an old script install and shadow the plugin.
-6. Tell the user to run `./install.sh --dry-run`, then `./install.sh`, from a Feature-Crew clone to remove them.
+5. Run `./install.sh --check` from a Feature-Crew clone; it reports any old script install, which shadows the plugin.
+6. If it reports old files, run `./install.sh --dry-run`, then `./install.sh`, to remove them.
 7. Remind the user to start a new session, or run `/reload-plugins` in Claude Code.
 
 Any error stops the flow; report the command and its output.
