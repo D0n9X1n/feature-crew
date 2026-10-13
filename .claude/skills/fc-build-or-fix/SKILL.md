@@ -51,7 +51,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 ### Standard
 
 1. User approves track unless waived.
-2. Write a bullet spec in chat: purpose · files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets · must-pass full-suite command · non-goals. Run [reference/design-check.md](reference/design-check.md), including its blind second opinion unless the design is super straightforward. Look up facts; ask only user-owned decisions.
+2. Survey per [reference/industry-survey.md](reference/industry-survey.md), then write a bullet spec in chat: purpose · files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets · must-pass full-suite command · non-goals · prior-art table and any trade-off rows. Run [reference/design-check.md](reference/design-check.md), including its blind second opinion unless the design is super straightforward. Look up facts; ask only user-owned decisions.
 3. **Cross-audit the spec** when it touches the escalation list. Otherwise skip as one of the two exemptions in the audit rule.
 4. User approves spec unless waived.
 5. Implement TDD: failing test → observe failure → minimal code → observe pass → refactor.

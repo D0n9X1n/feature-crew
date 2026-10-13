@@ -22,7 +22,7 @@ Decompose the topic into **distinct angles** first. Three agents on one query is
 Typical angles:
 
 - **Codebase** — `Explore` agent, specific search terms and file globs.
-- **Web/docs** — prefer `Explore` when it exposes WebSearch/WebFetch; otherwise a search-capable profile as above.
+- **Web/docs** — prefer `Explore` when it exposes WebSearch/WebFetch; otherwise a search-capable profile as above. Apply the source rules in [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md).
 - **Adjacent context** — related systems, prior art, history via git log, changelogs, ADRs.
 
 Reserve one dispatch each for synthesis and validation before search; the default budget leaves at most three search workers. Dispatch them in one message, parallel tool calls. Give each this prompt, followed by the mandatory Worker boundary suffix:
