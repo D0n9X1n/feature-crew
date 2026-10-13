@@ -44,7 +44,7 @@ flowchart TB
 3. **规则集。** 仓库规则集 "Require test workflow on main" 要求合并前三项检查都通过。
 4. **合并。** `/fc-ship` 用 `--match-head-commit` 做 squash 合并，不使用管理员绕过，然后确认 PR 显示 MERGED，且合并后的树等于 head 的树。
 5. **Wiki。** `publish-wiki.yml` 在每次推送到 `main` 后运行。它检出运行时的 `main`，因此重新运行旧的运行不会发布过时的页面。它用该作业的短期令牌克隆 wiki 仓库，用 `scripts/publish-wiki.sh` 从 `wiki/` 重建顶层页面，只有页面有变化时才推送到 wiki 的 `master`。运行是串行的，而且只有这个作业可以写入。
-6. **发布。** 维护者给 `main` 打上 `vMAJOR.MINOR.PATCH` 标签，并最后推送标签（`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`）。`release.yml` 重新运行 `test.yml`，拒绝不在 `main` 上的标签，并根据上一个标签以来的提交发布版本说明。这份说明就是唯一的变更日志。
+6. **发布。** 维护者给 `main` 打上 `vMAJOR.MINOR.PATCH` 标签，并最后推送标签（`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`）。先在发布 PR 中更新 `.claude-plugin/plugin.json` 的版本。`release.yml` 重新运行 `test.yml`，拒绝不在 `main` 上、或不等于 `v` 加该版本的标签，并根据上一个标签以来的提交发布版本说明。这份说明就是唯一的变更日志。
 
 | 组件 | 职责 | 关键文件 | 证据 |
 |---|---|---|---|
@@ -67,7 +67,8 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── skills/fc-*/       # ten skills
+├── .claude-plugin/             # plugin manifest and its marketplace
+├── skills/fc-*/               # ten skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test

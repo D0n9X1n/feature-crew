@@ -107,92 +107,80 @@ else
 fi
 
 # ---------------------------------------------------------------- T5
-# All six installed ROLE agents must resolve with no model key. Hard-gate
-# reviewers receive an explicit model override at dispatch time from the
-# artifact-author selector; frontmatter pins would bypass that provenance rule.
-# The five dispatched roles must also deny Agent and Skill: gate provenance is
-# observed only one dispatch deep, and a prose ban cannot stop nesting. fc-pm
-# runs as the main session and carries no deny list.
+# The plugin loads agents/*.md as committed, so their frontmatter is the
+# contract. No role carries a model key: hard-gate dispatchers select an
+# explicit override from artifact-author provenance. The five dispatched roles
+# carry a least-privilege tools allowlist, which both Claude Code and Copilot
+# CLI enforce, plus disallowedTools: Agent, Skill, which Claude Code also
+# enforces. fc-pm runs as the main session and is unrestricted.
 #
 # This parses YAML rather than grepping lines: duplicate keys resolve silently
 # to the last value, so reject duplicate keys outright before checking the
-# resolved mapping. Keys may be camelCase (disallowedTools).
+# resolved mapping.
 validate_role_frontmatter() {
   python3 - "$1" <<'PY'
 import sys, re, glob, os, yaml
-roles = {"fc-pm", "fc-architect", "fc-developer", "fc-qa-spec", "fc-qa-code", "fc-tech-lead"}
-errs = []
-seen = set()
+review = {"Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "TodoWrite"}
+want = {"fc-pm": None, "fc-architect": review, "fc-developer": review | {"Edit", "Write"},
+        "fc-qa-spec": review, "fc-qa-code": review, "fc-tech-lead": review}
+def tools(v):
+    return {str(t).strip() for t in (v if isinstance(v, list) else str(v or "").split(",")) if str(t).strip()}
+errs, seen = [], set()
 for f in sorted(glob.glob(sys.argv[1] + "/agents/*.md")):
     name = os.path.basename(f)[:-3]
     seen.add(name)
-    txt = open(f, encoding="utf-8").read()
-    m = re.match(r"^---\n(.*?)\n---\n", txt, re.S)
+    m = re.match(r"^---\n(.*?)\n---\n", open(f, encoding="utf-8").read(), re.S)
     if not m:
         errs.append(f"{name}:no-frontmatter"); continue
     block = m.group(1)
     keys = [ln.split(":", 1)[0] for ln in block.splitlines() if re.match(r"^[A-Za-z][A-Za-z-]*:", ln)]
     if len(keys) != len(set(keys)):
         errs.append(f"{name}:duplicate-keys"); continue
-    d = yaml.safe_load(block) or {}
+    try:
+        d = yaml.safe_load(block) or {}
+    except yaml.YAMLError:
+        errs.append(f"{name}:invalid-yaml"); continue
+    if d.get("name") != name:
+        errs.append(f"{name}:name-mismatch")
+    if not str(d.get("description") or "").startswith("Feature-Crew "):
+        errs.append(f"{name}:description")
     if "model" in d:
         errs.append(f"{name}:model={d['model']!r}-must-be-absent")
-    raw = d.get("disallowedTools") or ""
-    denied = {str(t).strip() for t in (raw if isinstance(raw, list) else str(raw).split(","))}
-    if name == "fc-pm":
-        if "disallowedTools" in d:
-            errs.append(f"{name}:main-session-role-denies-tools")
-    else:
-        if "Agent" not in denied:
-            errs.append(f"{name}:can-delegate")
-        if "Skill" not in denied:
-            errs.append(f"{name}:can-invoke-skills")
-for name in sorted(roles - seen):
+    if name not in want:
+        continue
+    if want[name] is None:
+        if "tools" in d or "disallowedTools" in d:
+            errs.append(f"{name}:main-session-role-restricted")
+        continue
+    got = tools(d.get("tools"))
+    if got != want[name]:
+        errs.append(f"{name}:tools={','.join(sorted(got))}")
+    denied = tools(d.get("disallowedTools"))
+    if "Agent" not in denied:
+        errs.append(f"{name}:can-delegate")
+    if "Skill" not in denied:
+        errs.append(f"{name}:can-invoke-skills")
+for name in sorted(set(want) - seen):
     errs.append(f"{name}:missing")
-for name in sorted(seen - roles):
+for name in sorted(seen - set(want)):
     errs.append(f"{name}:unexpected-role")
 print(" ".join(errs))
 PY
 }
 
-tmp_prefix="$(mktemp -d)"
-# The T15 probe lives inside the repo, so it must be cleaned up even if an
-# assertion between here and there exits early -- otherwise a failed run leaves
-# the working tree dirty. Other tests add their temp paths to this shared list.
-T15_PROBE="skills/t15-probe-$$"
-T21_SCRIPT="./t21-noguard-$$.sh"
-CLEANUP_PATHS=("$tmp_prefix" "$T15_PROBE" "$T21_SCRIPT")
-# T63 locks source fixtures with chmod 000; unlock first so an abort cannot strand them.
+scratch_root="$(mktemp -d)"
+# Other tests add their temp paths to this shared list.
+CLEANUP_PATHS=("$scratch_root")
 cleanup() { chmod -R u+rwX "${CLEANUP_PATHS[@]}" 2>/dev/null; rm -rf "${CLEANUP_PATHS[@]}"; }
 trap cleanup EXIT
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  t5_err=""
-  if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
-    if t5_out=$(validate_role_frontmatter "$tmp_prefix" 2>&1); then
-      [ -n "$t5_out" ] && t5_err="$t5_err$t5_out"
-    else
-      t5_rc=$?
-      t5_err="$t5_err validator-exited-$t5_rc:${t5_out:-no-diagnostic}"
-    fi
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+  if t5_out=$(validate_role_frontmatter . 2>&1) && [ -z "$t5_out" ]; then
+    ok "T5 committed role agents: valid YAML, own name, no model key, least-privilege tools; fc-pm unrestricted"
   else
-    # No parser available: line checks cannot prove duplicate-key safety.
-    for a in "${ROLE_AGENTS[@]}"; do
-      f="$tmp_prefix/agents/$a.md"
-      if [ ! -f "$f" ]; then t5_err="$t5_err $a:missing"
-      elif head -12 "$f" | grep -q '^model:'; then t5_err="$t5_err $a:model-present"
-      elif [ "$a" != fc-pm ] && ! head -6 "$f" | grep -qx 'disallowedTools: Agent, Skill'; then t5_err="$t5_err $a:can-delegate"
-      elif [ "$a" = fc-pm ] && head -6 "$f" | grep -q '^disallowedTools:'; then t5_err="$t5_err $a:main-session-role-denies-tools"
-      fi
-    done
-    skip "T5 no YAML parser — duplicate-key override unverified"
-  fi
-  if [ -z "$t5_err" ]; then
-    ok "T5 role agents carry no model key; exactly the five dispatched roles deny Agent and Skill"
-  else
-    bad "T5 installed role-agent frontmatter" "issues:$t5_err"
+    bad "T5 committed role-agent frontmatter" "issues:${t5_out:-validator-failed}"
   fi
 else
-  bad "T5 installed role-agent model frontmatter" "install.sh failed against temp prefix"
+  skip "T5 no YAML parser — role frontmatter unverified"
 fi
 
 # ---------------------------------------------------------------- T6
@@ -307,58 +295,6 @@ for t9_skill in fc-debug fc-explain; do
   done
 done
 
-# ---------------------------------------------------------------- T10
-# Cross-platform parity: the two installers stay feature-mirrored.
-#
-# Token presence alone is NOT enough. Two independent audits demonstrated that
-# replacing the top-level `Install-ClaudeGlobal` with `exit 0`, or commenting
-# out the Install-Agent / Copy-Tree calls, leaves every token in place while
-# native Windows installs silently install nothing. So the operative call sites
-# must also be present, uncommented, and reachable. Factored into functions so
-# T20 can replay those exact mutations against them.
-ps1_operative_ok() {
-  local f="$1"
-  grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$'   "$f" || return 1
-  grep -qE '^[[:space:]]*Copy-Tree[[:space:]]+\$'       "$f" || return 1
-  grep -qE '^Install-ClaudeGlobal[[:space:]]*$'         "$f" || return 1
-  # Presence is not reachability. Reject throws outside function bodies even
-  # when nested in a top-level `if`, but keep legitimate conditional exits for
-  # delegation/help/uninstall. Functions and their closing braces are column 0
-  # in this installer. This bounded static check complements Windows execution.
-  awk '
-    /^[[:space:]]*<#/ { block_comment = 1 }
-    block_comment { if (/#>/) block_comment = 0; next }
-    /^[[:space:]]*#/ { next }
-    /^Install-ClaudeGlobal[[:space:]]*$/ { exit }
-    # Retain the original column-0 guard even inside function bodies.
-    /^(throw|exit)([[:space:]]|$)/ { bad = 1; exit }
-    tolower($0) ~ /^function[[:space:]]/ { in_function = 1 }
-    in_function { if (/^}/) in_function = 0; next }
-    tolower($0) ~ /(^|[^[:alnum:]_$.-])throw([^[:alnum:]_-]|$)/ { bad = 1; exit }
-    END { exit bad }
-  ' "$f"
-}
-sh_operative_ok() {
-  local f="$1"
-  grep -qE '^[[:space:]]*install_agent[[:space:]]+"'    "$f" || return 1
-  grep -qE '^[[:space:]]*install_skill[[:space:]]+"'    "$f" || return 1
-  return 0
-}
-
-t10_err=""
-for token in fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead; do
-  grep -q -- "$token" install.sh  || t10_err="$t10_err sh:$token"
-  grep -q -- "$token" install.ps1 || t10_err="$t10_err ps1:$token"
-done
-for flag in force dry-run uninstall prefix; do
-  grep -qi -- "$flag" install.sh  || t10_err="$t10_err sh:--$flag"
-  grep -qi -- "$flag" install.ps1 || t10_err="$t10_err ps1:--$flag"
-done
-ps1_operative_ok install.ps1 || t10_err="$t10_err ps1:operative-calls-unreachable"
-sh_operative_ok  install.sh  || t10_err="$t10_err sh:operative-calls-unreachable"
-[ -z "$t10_err" ] && ok "T10 install.sh / install.ps1 parity + operative calls live" \
-                  || bad "T10 installer parity drift" "missing:$t10_err"
-
 # ---------------------------------------------------------------- T11
 # Skill bodies stay resident in context once loaded, so every line is a
 # recurring cost. Anthropic guidance: keep SKILL.md lean, detail in reference/.
@@ -382,63 +318,6 @@ done < <(git ls-files 'skills/*' | cut -d/ -f2 | sort -u)
 [ -z "$t12_err" ] && ok "T12 all skills fc-prefixed (no bundled-name collision)" \
                   || bad "T12 unprefixed skill dir" "offenders:$t12_err"
 
-# ---------------------------------------------------------------- T13
-# Both installers glob; this guards against someone hardcoding a list later.
-t13_contract() { # install prefix; prints each skill whose SKILL.md is absent
-  local n errors=""
-  for n in "${SKILL_NAMES[@]}"; do
-    [ -f "$1/skills/$n/SKILL.md" ] || errors="$errors $n"
-  done
-  printf '%s\n' "$errors"
-}
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  t13_err=$(t13_contract "$tmp_prefix")
-  [ -z "$t13_err" ] && ok "T13 all skills reach the install prefix" \
-                    || bad "T13 skills not installed" "missing:$t13_err"
-  # Negative checks on scratch copies: omitting fc-debug's or fc-explain's
-  # installed SKILL.md must fail this same check with exactly that skill's
-  # diagnostic.
-  for t13_skill in fc-debug fc-explain; do
-    t13_mut=$(mktemp -d)
-    CLEANUP_PATHS+=("$t13_mut")
-    cp -R "$tmp_prefix" "$t13_mut/prefix"
-    if [ ! -f "$t13_mut/prefix/skills/$t13_skill/SKILL.md" ]; then
-      bad "T13 removal mutation: $t13_skill SKILL.md" "mutation target not installed"
-    else
-      rm "$t13_mut/prefix/skills/$t13_skill/SKILL.md"
-      t13_mut_out=$(t13_contract "$t13_mut/prefix")
-      if [ "$t13_mut_out" = " $t13_skill" ]; then
-        ok "T13 removal mutation: omitted $t13_skill SKILL.md rejected by its own check"
-      else
-        bad "T13 removal mutation: $t13_skill SKILL.md" "got '${t13_mut_out:-<empty>}', want ' $t13_skill'"
-      fi
-    fi
-    rm -rf "$t13_mut"
-  done
-else
-  bad "T13 skills not installed" "install.sh failed"
-fi
-
-# ---------------------------------------------------------------- T15
-# A directory with no SKILL.md is not a skill. The installer globs, so without
-# this guard any scratch dir under skills/ gets shipped to users.
-#
-# The probe must NOT be dot-prefixed: `for src in "$SRC_SKILLS_DIR"/*/` never
-# enumerates dot dirs, so a hidden probe means the guard under test is never
-# executed -- both guards could be deleted and this still reported ok. T21
-# proves the current probe actually exercises them.
-mkdir -p "$T15_PROBE"
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  if [ -d "$tmp_prefix/skills/$(basename "$T15_PROBE")" ]; then
-    bad "T15 scratch dir shipped" "a directory without SKILL.md was installed"
-  else
-    ok "T15 directories without SKILL.md are not installed"
-  fi
-else
-  bad "T15 scratch dir guard" "install.sh failed"
-fi
-rmdir "$T15_PROBE" 2>/dev/null
-
 # ---------------------------------------------------------------- T14
 # Supporting files must be reachable: if SKILL.md points at reference/x.md,
 # that file has to exist. Progressive disclosure breaks silently otherwise.
@@ -451,160 +330,6 @@ while IFS= read -r f; do
 done < <(skill_files)
 [ -z "$t14_err" ] && ok "T14 all referenced supporting files exist" \
                   || bad "T14 dangling reference" "missing:$t14_err"
-
-# ---------------------------------------------------------------- T16
-# Installed agent frontmatter must be valid YAML. Role descriptions contain
-# ": " (e.g. "Feature-Crew Architect: turns an approved spec into..."), which a
-# plain YAML scalar may not -- so the generated description has to be quoted.
-# Claude Code 2.1.220 tolerates the unquoted form, but that tolerance is
-# undocumented and nothing would warn us when it stops.
-if ! command -v python3 >/dev/null 2>&1; then
-  skip "T16 python3 unavailable — YAML validity unverified"
-elif ! python3 -c 'import yaml' >/dev/null 2>&1; then
-  skip "T16 PyYAML unavailable — YAML validity unverified"
-elif bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  if python3 - "$tmp_prefix" <<'PY' >/dev/null 2>&1
-import sys, glob, re, yaml
-for f in glob.glob(sys.argv[1] + '/agents/*.md'):
-    m = re.match(r'^---\n(.*?)\n---\n', open(f, encoding='utf-8').read(), re.S)
-    assert m, f
-    yaml.safe_load(m.group(1))
-PY
-  then
-    ok "T16 installed agent frontmatter is valid YAML"
-  else
-    bad "T16 invalid agent frontmatter" "at least one installed agent fails YAML parse"
-  fi
-else
-  bad "T16 invalid agent frontmatter" "install.sh failed"
-fi
-
-# ---------------------------------------------------------------- T17
-# Agent bodies must stay bytes: even explicit UTF-8 text decoding discards an
-# added BOM and makes an edited agent look untouched (#30). Inspect the agent
-# functions and their helpers, not unrelated ReadAllBytes calls in skill/hash
-# code. Replay #26's Get-Content mutation against this same check.
-t17_root=$(mktemp -d)
-CLEANUP_PATHS+=("$t17_root")
-t17_pwsh="${PWSH:-$(command -v pwsh 2>/dev/null || true)}"
-cat > "$t17_root/check.ps1" <<'PS'
-param([string]$Path, [string]$Mutant)
-$ErrorActionPreference = 'Stop'
-$tokens = $null; $parseErrors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
-if ($parseErrors.Count) { throw ($parseErrors -join "`n") }
-$functions = @{}
-$ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true) |
-  ForEach-Object { $functions[$_.Name] = $_ }
-function Get-AgentPath($entry) {
-  $todo = @($entry); $seen = @{}
-  for ($i = 0; $i -lt $todo.Count; $i++) {
-    $name = $todo[$i]
-    if ($seen.ContainsKey($name)) { continue }
-    if (-not $functions.ContainsKey($name)) { throw "missing agent function: $name" }
-    $f = $functions[$name]; $seen[$name] = $f
-    foreach ($call in $f.Body.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true)) {
-      $called = $call.GetCommandName()
-      if ($called -and $functions.ContainsKey($called)) { $todo += $called }
-    }
-  }
-  return @($seen.Values)
-}
-$install = @(Get-AgentPath 'Install-Agent')
-$ownership = @(Get-AgentPath 'Test-InstalledIsOurs')
-$installNodes = @($install | ForEach-Object { $_.Body.FindAll({ param($n) $true }, $true) })
-$ownNodes = @($ownership | ForEach-Object { $_.Body.FindAll({ param($n) $true }, $true) })
-$reads = @($installNodes | Where-Object {
-  $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
-  $_.Extent.Text -match '^\[(System\.)?IO\.File\]::ReadAllBytes\('
-})
-if ($Mutant) {
-  # Also replay against the old text implementation during RED; once the byte
-  # implementation exists this selects its actual ReadAllBytes expression.
-  $sourceReads = @($installNodes | Where-Object {
-    $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
-    $_.Extent.Text -match '^\[(System\.)?IO\.File\]::ReadAll(Bytes|Text)\('
-  })
-  if ($sourceReads.Count -ne 1) { throw 'agent source read missing or ambiguous; cannot replay mutation' }
-  $read = $sourceReads[0]
-  $text = [IO.File]::ReadAllText($Path)
-  $replacement = '(Get-Content -Raw -LiteralPath ' + $read.Arguments[0].Extent.Text + ')'
-  $text = $text.Remove($read.Extent.StartOffset, $read.Extent.EndOffset - $read.Extent.StartOffset).
-    Insert($read.Extent.StartOffset, $replacement)
-  [IO.File]::WriteAllText($Mutant, $text, (New-Object Text.UTF8Encoding($false)))
-  exit 0
-}
-$issues = @()
-if ($reads.Count -ne 1) { $issues += 'agent-source-not-ReadAllBytes' }
-if (-not @($installNodes | Where-Object {
-  $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
-  $_.Extent.Text -match '^\[(System\.)?IO\.File\]::WriteAllBytes\('
-}).Count) { $issues += 'agent-destination-not-WriteAllBytes' }
-$shared = @($install | Where-Object { $ownership.Name -contains $_.Name })
-if (-not @($shared | Where-Object { $_.Body.Extent.Text -match '::ReadAllBytes\(' }).Count) {
-  $issues += 'agent-bytes-not-shared-with-ownership'
-}
-if (-not @($installNodes | Where-Object {
-  ($_ -is [Management.Automation.Language.CommandAst] -or
-   $_ -is [Management.Automation.Language.InvokeMemberExpressionAst]) -and
-  $_.Extent.Text -match 'UTF8Encoding(\]::new)?\(\s*\$false\s*\)'
-}).Count) { $issues += 'frontmatter-encoder-not-explicit-no-BOM' }
-if (-not @($installNodes | Where-Object {
-  $_ -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $_.Member.Value -eq 'GetBytes'
-}).Count) { $issues += 'frontmatter-not-encoded-to-bytes' }
-foreach ($n in @($installNodes) + @($ownNodes)) {
-  if ($n -is [Management.Automation.Language.CommandAst] -and
-      $n.GetCommandName() -match '^(Get|Set)-Content$') { $issues += 'text-cmdlet-on-agent-path' }
-  if ($n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
-      $n.Member.Value -match '^(Read|Write)AllText$') { $issues += 'text-IO-on-agent-path' }
-}
-if ($issues.Count) { Write-Output (($issues | Select-Object -Unique) -join ' '); exit 1 }
-PS
-if [ -n "$t17_pwsh" ] && [ -x "$t17_pwsh" ]; then
-  t17_err=""
-  t17_out=$("$t17_pwsh" -NoProfile -NonInteractive -File "$t17_root/check.ps1" -Path "$(pwd)/install.ps1" 2>&1)
-  [ "$?" -eq 0 ] || t17_err="$t17_err $t17_out"
-  [ -z "$t17_err" ] && ok "T17 agent bodies use shared bytes with no-BOM frontmatter" \
-                    || bad "T17 PowerShell agent byte path" "issues:$t17_err"
-  t17_err=""
-  if "$t17_pwsh" -NoProfile -NonInteractive -File "$t17_root/check.ps1" \
-      -Path "$(pwd)/install.ps1" -Mutant "$t17_root/mutant.ps1" > "$t17_root/mutation.log" 2>&1; then
-    t17_out=$("$t17_pwsh" -NoProfile -NonInteractive -File "$t17_root/check.ps1" -Path "$t17_root/mutant.ps1" 2>&1)
-    t17_rc=$?
-    if [ "$t17_rc" -ne 1 ] || ! printf '%s\n' "$t17_out" | grep -qF 'text-cmdlet-on-agent-path'; then
-      t17_err="$t17_err Get-Content-mutation-not-rejected:$t17_rc"
-    fi
-  else
-    t17_err="$t17_err cannot-replay-Get-Content-mutation"
-  fi
-  [ -z "$t17_err" ] && ok "T17 #26 Get-Content mutation is applied and rejected" \
-                    || bad "T17 #26 mutation replay" "issues:$t17_err"
-else
-  skip "T17 PowerShell AST byte-path and mutation check (pwsh unavailable; set PWSH)"
-fi
-
-# ---------------------------------------------------------------- T18
-# The bash half of the same property, actually executed: an installed agent's
-# body must be byte-identical to its source. T17 can only check ps1 statically
-# (no pwsh on this machine), so this is the half we can prove.
-#
-# Iterates agents/*.md directly -- since the rename, source basename IS the
-# installed name, so there is no pair table here to fall out of date.
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  t18_err=""
-  for src in agents/*.md; do
-    name=$(basename "$src" .md)
-    dst="$tmp_prefix/agents/${name}.md"
-    if [ ! -f "$dst" ]; then t18_err="$t18_err ${name}:missing"; continue; fi
-    # Strip the generated frontmatter block plus its trailing blank line.
-    awk 'f{print} /^---$/{c++; if(c==2){f=1; getline}}' "$dst" > "$tmp_prefix/.body"
-    cmp -s "$tmp_prefix/.body" "$src" || t18_err="$t18_err ${name}:body-differs"
-  done
-  [ -z "$t18_err" ] && ok "T18 installed agent bodies are byte-identical to source" \
-                    || bad "T18 agent body corrupted on install" "issues:$t18_err"
-else
-  bad "T18 agent body check" "install.sh failed"
-fi
 
 # ---------------------------------------------------------------- T19
 # Gate integrity. The user may waive their OWN approvals (track, spec, plan);
@@ -625,181 +350,6 @@ grep -qiE '(need not|does not have to|no need to) be the full suite' agents/fc-d
   && t19_err="$t19_err dev-full-suite-negated"
 [ -z "$t19_err" ] && ok "T19 non-waivable gates named in override + full-suite required" \
                   || bad "T19 gate language weakened" "issues:$t19_err"
-
-# ---------------------------------------------------------------- T20
-# Mutation test: prove T10 actually catches a gutted installer.
-#
-# Two independent audits gutted install.ps1 and watched the whole suite stay
-# green. Both mutations are replayed here against T10's own check. If T10 is
-# ever weakened back to token-presence, this fails -- a parity test that can't
-# detect an installer which installs nothing is not a parity test.
-mut=$(mktemp -d)
-t20_err=""
-
-# Attack 1 (audit A): top-level dispatch replaced with `exit 0`.
-sed 's/^Install-ClaudeGlobal[[:space:]]*$/exit 0/' install.ps1 > "$mut/a.ps1"
-if ! grep -qE '^Install-ClaudeGlobal[[:space:]]*$' "$mut/a.ps1"; then
-  ps1_operative_ok "$mut/a.ps1" && t20_err="$t20_err attack1-undetected"
-else
-  t20_err="$t20_err attack1-not-applied"
-fi
-
-# Attack 2 (audit B): operative calls commented out, tokens left intact.
-sed -e 's/^\([[:space:]]*\)\(Install-Agent \$\)/\1# \2/' \
-    -e 's/^\([[:space:]]*\)\(Copy-Tree \$\)/\1# \2/' install.ps1 > "$mut/b.ps1"
-if ! grep -qE '^[[:space:]]*Install-Agent[[:space:]]+\$' "$mut/b.ps1"; then
-  ps1_operative_ok "$mut/b.ps1" && t20_err="$t20_err attack2-undetected"
-else
-  t20_err="$t20_err attack2-not-applied"
-fi
-
-# Attack 3: same shape against the bash installer.
-sed 's/^\([[:space:]]*\)\(install_agent "\)/\1# \2/' install.sh > "$mut/c.sh"
-if ! grep -qE '^[[:space:]]*install_agent[[:space:]]+"' "$mut/c.sh"; then
-  sh_operative_ok "$mut/c.sh" && t20_err="$t20_err attack3-undetected"
-else
-  t20_err="$t20_err attack3-not-applied"
-fi
-
-# Attack 4 (reviewer): unconditional `throw` before the top-level dispatch.
-# Every token stays, the call site stays present and uncommented, and the
-# installer still does nothing. This one survived until a reviewer found it.
-sed 's/^Install-ClaudeGlobal[[:space:]]*$/throw "stop"\nInstall-ClaudeGlobal/' install.ps1 > "$mut/d.ps1"
-if grep -qE '^[[:space:]]*throw "stop"' "$mut/d.ps1"; then
-  ps1_operative_ok "$mut/d.ps1" && t20_err="$t20_err attack4-undetected"
-else
-  t20_err="$t20_err attack4-not-applied"
-fi
-
-# Attack 5 (#26): a conditional top-level throw bypasses the column-0 check.
-awk '/^Install-ClaudeGlobal[[:space:]]*$/ { print "if ($true) { throw \"native-only regression\" }" } { print }' \
-  install.ps1 > "$mut/e.ps1"
-if grep -qxF 'if ($true) { throw "native-only regression" }' "$mut/e.ps1"; then
-  ps1_operative_ok "$mut/e.ps1" && t20_err="$t20_err attack5-undetected"
-else
-  t20_err="$t20_err attack5-not-applied"
-fi
-
-# Attack 6 (#26): parentheses after throw must not hide the keyword.
-awk '/^Install-ClaudeGlobal[[:space:]]*$/ { print "if ($true) { throw(\"native-only regression\") }" } { print }' \
-  install.ps1 > "$mut/f.ps1"
-if grep -qxF 'if ($true) { throw("native-only regression") }' "$mut/f.ps1"; then
-  ps1_operative_ok "$mut/f.ps1" && t20_err="$t20_err attack6-undetected"
-else
-  t20_err="$t20_err attack6-not-applied"
-fi
-
-# Attacks 7/8: function skipping must not weaken the original column-0 guard.
-# Insert exactly once at the entry to the install function, before any work.
-for t20_attack in 7 8; do
-  case "$t20_attack" in
-    7) t20_terminator='exit 0' ;;
-    8) t20_terminator='throw "gutted"' ;;
-  esac
-  if [ "$(grep -cxF 'function Install-ClaudeGlobal {' install.ps1)" -ne 1 ]; then
-    t20_err="$t20_err attack$t20_attack-target-not-unique"
-    continue
-  fi
-  awk -v terminator="$t20_terminator" '
-    { print }
-    $0 == "function Install-ClaudeGlobal {" { print terminator }
-  ' install.ps1 > "$mut/attack$t20_attack.ps1"
-  if [ "$(awk '/^function Install-ClaudeGlobal \{$/ { getline; print }' "$mut/attack$t20_attack.ps1")" = "$t20_terminator" ]; then
-    ps1_operative_ok "$mut/attack$t20_attack.ps1" && t20_err="$t20_err attack$t20_attack-undetected"
-  else
-    t20_err="$t20_err attack$t20_attack-not-applied"
-  fi
-done
-
-# Control: the real installers must still pass, or the check is just broken.
-ps1_operative_ok install.ps1 || t20_err="$t20_err control-ps1-false-positive"
-sh_operative_ok  install.sh  || t20_err="$t20_err control-sh-false-positive"
-
-rm -rf "$mut"
-[ -z "$t20_err" ] && ok "T20 T10 detects a gutted installer (8 mutations + 2 controls)" \
-                  || bad "T20 mutation test" "issues:$t20_err"
-
-# ---------------------------------------------------------------- T21
-# Mutation test: prove T15's probe actually exercises the guard.
-#
-# The original probe was dot-prefixed, which the installer's `*/` glob never
-# enumerates -- so both SKILL.md guards could be deleted and T15 still reported
-# ok. Here the guards are stripped from a copy; the probe MUST then be
-# installed. If it isn't, the probe is invisible to the glob and T15 is vacuous.
-mut2=$(mktemp -d)
-t21_err=""
-# The mutated copy must live in the repo root: install.sh resolves SCRIPT_DIR
-# from its own location, and from /tmp it cannot find agents/.
-sed 's#^\([[:space:]]*\)\[ -f "${src}SKILL.md" \] || continue$#\1true#' install.sh > "$T21_SCRIPT"
-if ! grep -qF '[ -f "${src}SKILL.md" ] || continue' "$T21_SCRIPT"; then
-  mkdir -p "$T15_PROBE"
-  if bash "$T21_SCRIPT" --prefix "$mut2/out" --force >/dev/null 2>&1; then
-    if [ -d "$mut2/out/skills/$(basename "$T15_PROBE")" ]; then
-      ok "T21 T15's probe is glob-visible (guard removal is detectable)"
-    else
-      t21_err="probe-invisible-to-glob"
-    fi
-  else
-    t21_err="mutated-installer-failed"
-  fi
-  rmdir "$T15_PROBE" 2>/dev/null
-else
-  t21_err="mutation-not-applied"
-fi
-[ -n "$t21_err" ] && bad "T21 T15 is vacuous" "$t21_err"
-rm -rf "$mut2" "$T21_SCRIPT"
-
-# ---------------------------------------------------------------- T22
-# Data loss. `research` and `build-or-fix` are plausible names for a user's own
-# skill. Three prior versions of the ownership check each destroyed user data a
-# different way -- no check, a whole-file grep, then a description prefix.
-#
-# Probes use REAL published content from git rather than hand-written
-# fixtures. A fixture that only approximates what we shipped tests the fixture,
-# not the classifier -- which is how the prefix-collision bug survived two
-# rounds of this test passing.
-t22_prefix=$(mktemp -d)
-mkdir -p "$t22_prefix/skills/research" "$t22_prefix/skills/build-or-fix"
-# Not ours: shares the opening words of our description, differs after.
-cat > "$t22_prefix/skills/research/SKILL.md" <<'PROBE'
----
-name: research
-description: Multi-agent research pipeline (search my notes, then my bookmarks). Mine, not this framework's.
----
-Years of personal notes.
-PROBE
-# Ours: byte-for-byte what v4.0 published.
-git show v4.0:.claude/skills/build-or-fix/SKILL.md > "$t22_prefix/skills/build-or-fix/SKILL.md" 2>/dev/null
-if bash install.sh --prefix "$t22_prefix" --force >/dev/null 2>&1; then
-  t22_err=""
-  [ -f "$t22_prefix/skills/research/SKILL.md" ] || t22_err="$t22_err DESTROYED-user-skill"
-  [ -d "$t22_prefix/skills/build-or-fix" ]      && t22_err="$t22_err kept-our-own-legacy-skill"
-  [ -z "$t22_err" ] && ok "T22 legacy cleanup removes only skills we published" \
-                    || bad "T22 legacy cleanup" "issues:$t22_err"
-else
-  bad "T22 legacy cleanup" "install.sh failed"
-fi
-rm -rf "$t22_prefix"
-
-# ---------------------------------------------------------------- T23
-# --dry-run must not claim a deletion it did not perform. A user auditing a
-# dry run before upgrading would otherwise read "removed" and believe their v3
-# skills were already gone.
-t23_prefix=$(mktemp -d)
-mkdir -p "$t23_prefix/skills/research"
-cat > "$t23_prefix/skills/research/SKILL.md" <<'PROBE'
----
-name: research
-description: Multi-agent research pipeline. audit-pair: degraded
----
-PROBE
-out=$(bash install.sh --prefix "$t23_prefix" --dry-run 2>&1)
-t23_err=""
-[ -d "$t23_prefix/skills/research" ] || t23_err="$t23_err dry-run-actually-deleted"
-echo "$out" | grep -qE '^removed \(legacy skill\)' && t23_err="$t23_err claims-removed-but-did-not"
-[ -z "$t23_err" ] && ok "T23 --dry-run does not claim deletions it did not make" \
-                  || bad "T23 dry-run lies" "issues:$t23_err"
-rm -rf "$t23_prefix"
 
 # ---------------------------------------------------------------- T24
 # Two logic holes both reviewers found in the audit rule.
@@ -824,34 +374,6 @@ grep -qF 'one of the two exemptions' "$b" || t24_err="$t24_err flow-does-not-cit
 [ -z "$t24_err" ] && ok "T24 audit rule handles family collision + names its exemptions" \
                   || bad "T24 audit rule has a logic hole" "issues:$t24_err"
 
-# ---------------------------------------------------------------- T25
-# Agent source filenames are fc-prefixed, and the installed subagent name is
-# exactly the source basename. Previously the installer carried a
-# filename -> name mapping table (pm.md -> fc-pm), which is a second place for
-# the two to disagree; renaming the sources deleted that class of bug. This
-# asserts the property rather than the table.
-t25_err=""
-while IFS= read -r f; do
-  base=$(basename "$f")
-  case "$base" in fc-*) ;; *) t25_err="$t25_err src:$base" ;; esac
-done < <(find agents -maxdepth 1 -name '*.md')
-
-if bash install.sh --prefix "$tmp_prefix" --force >/dev/null 2>&1; then
-  for f in agents/*.md; do
-    base=$(basename "$f" .md)
-    inst="$tmp_prefix/agents/${base}.md"
-    if [ ! -f "$inst" ]; then
-      t25_err="$t25_err notinstalled:$base"
-    elif ! head -3 "$inst" | grep -q "^name: ${base}$"; then
-      t25_err="$t25_err namemismatch:$base"
-    fi
-  done
-else
-  t25_err="$t25_err install-failed"
-fi
-[ -z "$t25_err" ] && ok "T25 agent source names are fc-prefixed and match installed names" \
-                  || bad "T25 agent name drift" "issues:$t25_err"
-
 # ---------------------------------------------------------------- T26
 # Every artifact the canonical rule names must have a matching audit step in
 # the flow. The rule named `plan` as must-audit while the Complex flow went
@@ -867,7 +389,7 @@ if [ -f "$c" ]; then
   # Require the tech lead to be DISPATCHED, not merely named. A reviewer
   # replaced the step with "Do not dispatch fc-tech-lead; merge directly" and
   # this stayed green on the bare token.
-  grep -qiE 'dispatch `?fc-tech-lead' "$c" || t26_err="$t26_err final-not-dispatched"
+  grep -qiE 'dispatch `?(feature-crew:)?fc-tech-lead' "$c" || t26_err="$t26_err final-not-dispatched"
   grep -qiE '(do not|don.t|no need to) dispatch.*fc-tech-lead|merge directly' "$c" \
     && t26_err="$t26_err final-audit-negated"
   # The plan audit must come BEFORE the user approves it, or it audits nothing.
@@ -1186,47 +708,6 @@ fi
 [ -z "$t72_err" ] && ok "T72 static contract alarm: cited industry survey before design + requirement trade-offs the user decides" \
                    || bad "T72 industry survey and requirement trade-off contract" "missing:$t72_err"
 
-# ---------------------------------------------------------------- T27
-# The provenance classifier's real boundaries, both directions. Each case here
-# is a bug that actually shipped or a false negative a reviewer demonstrated.
-#
-# The classifier must delete a file we published and keep everything else. Two
-# earlier versions passed a version of this test while still destroying user
-# data, because the probes avoided the exact shapes that trigger the bug.
-t27_err=""
-t27_case() { # name, expect(survive|removed), file-producer
-  local label="$1" expect="$2" p; p=$(mktemp -d)
-  mkdir -p "$p/skills/research"
-  eval "$3" > "$p/skills/research/SKILL.md"
-  bash install.sh --prefix "$p" >/dev/null 2>&1
-  if [ "$expect" = "survive" ] && [ ! -f "$p/skills/research/SKILL.md" ]; then
-    t27_err="$t27_err ${label}:DESTROYED"
-  elif [ "$expect" = "removed" ] && [ -d "$p/skills/research" ]; then
-    t27_err="$t27_err ${label}:kept"
-  fi
-  # Uninstall shares the same classifier and is equally destructive.
-  if [ "$expect" = "survive" ] && [ -f "$p/skills/research/SKILL.md" ]; then
-    bash install.sh --prefix "$p" --uninstall >/dev/null 2>&1
-    [ -f "$p/skills/research/SKILL.md" ] || t27_err="$t27_err ${label}:DESTROYED-on-uninstall"
-  fi
-  rm -rf "$p"
-}
-
-# Must survive: personal skills that merely resemble ours.
-t27_case mentions-us survive "printf '%s\n' '---' 'name: research' \
-  'description: My own skill, loosely inspired by Feature-Crew.' '---' 'Notes. audit-pair too.'"
-t27_case shares-prefix survive "printf '%s\n' '---' 'name: research' \
-  'description: Multi-agent research pipeline (search my notes, then my bookmarks). Mine.' '---' 'Notes.'"
-t27_case edited-legacy survive "git show v3.1:.claude/skills/research/SKILL.md | sed '\$a\\
-My own additions.'"
-
-# Must be removed: content we actually published, LF and CRLF alike.
-t27_case published-lf   removed "git show v3.1:.claude/skills/research/SKILL.md"
-t27_case published-crlf removed "git show v3.1:.claude/skills/research/SKILL.md | sed 's/\$/\r/'"
-
-[ -z "$t27_err" ] && ok "T27 provenance classifier correct on 5 boundary cases" \
-                  || bad "T27 provenance boundary" "issues:$t27_err"
-
 # ---------------------------------------------------------------- T28
 # The escalation list is stated ONCE. It sets the track floor and decides
 # whether the Standard spec cross-audit fires, so two copies that drift give
@@ -1240,59 +721,6 @@ grep -qE '^- Auth, security, persistence, or config' agents/fc-pm.md \
   && t28_err="$t28_err pm-restates-its-own-list"
 [ -z "$t28_err" ] && ok "T28 escalation list stated once; fc-pm.md points at it" \
                   || bad "T28 escalation list split" "issues:$t28_err"
-
-# ---------------------------------------------------------------- T29
-# Uninstall must not destroy work install protected. Install SKIPS a
-# pre-existing file ("skip (exists)"), then uninstall deleted it anyway -- so a
-# personal skill or agent sharing one of our fc- names was silently lost. The
-# fc- prefix makes that unlikely, not impossible, and this PR widened the
-# surface from 2 names to 12.
-t29_prefix=$(mktemp -d)
-mkdir -p "$t29_prefix/skills/fc-review" "$t29_prefix/agents"
-printf -- '---\nname: fc-review\n---\nMY OWN review skill.\n' > "$t29_prefix/skills/fc-review/SKILL.md"
-printf -- '---\nname: fc-pm\n---\nMY OWN pm agent.\n'         > "$t29_prefix/agents/fc-pm.md"
-t29_err=""
-bash install.sh --prefix "$t29_prefix" >/dev/null 2>&1
-grep -q "MY OWN" "$t29_prefix/skills/fc-review/SKILL.md" 2>/dev/null || t29_err="$t29_err install-clobbered-skill"
-grep -q "MY OWN" "$t29_prefix/agents/fc-pm.md" 2>/dev/null           || t29_err="$t29_err install-clobbered-agent"
-bash install.sh --prefix "$t29_prefix" --uninstall >/dev/null 2>&1
-grep -q "MY OWN" "$t29_prefix/skills/fc-review/SKILL.md" 2>/dev/null || t29_err="$t29_err DESTROYED-skill-on-uninstall"
-grep -q "MY OWN" "$t29_prefix/agents/fc-pm.md" 2>/dev/null           || t29_err="$t29_err DESTROYED-agent-on-uninstall"
-rm -rf "$t29_prefix"
-
-# The other direction: an untouched install must be fully removed, or the
-# check above could pass by never deleting anything.
-t29b=$(mktemp -d)
-bash install.sh --prefix "$t29b" --force >/dev/null 2>&1
-bash install.sh --prefix "$t29b" --uninstall >/dev/null 2>&1
-[ "$(ls "$t29b/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ] || t29_err="$t29_err ours-not-removed"
-[ "$(ls "$t29b/skills" 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ] || t29_err="$t29_err our-skills-not-removed"
-rm -rf "$t29b"
-
-# And a file of ours the user edited is theirs now.
-t29c=$(mktemp -d)
-bash install.sh --prefix "$t29c" --force >/dev/null 2>&1
-printf '\nmy note\n' >> "$t29c/skills/fc-review/SKILL.md"
-bash install.sh --prefix "$t29c" --uninstall >/dev/null 2>&1
-[ -f "$t29c/skills/fc-review/SKILL.md" ] || t29_err="$t29_err DESTROYED-edited-skill"
-rm -rf "$t29c"
-
-[ -z "$t29_err" ] && ok "T29 uninstall removes only untouched files it installed" \
-                  || bad "T29 uninstall data loss" "issues:$t29_err"
-
-# ---------------------------------------------------------------- T30
-# --uninstall --dry-run must not claim removals it does not perform. The
-# install path was fixed for this; the uninstall path still printed "removed:"
-# for all 12 artifacts while deleting none.
-t30_prefix=$(mktemp -d)
-bash install.sh --prefix "$t30_prefix" --force >/dev/null 2>&1
-t30_out=$(bash install.sh --prefix "$t30_prefix" --uninstall --dry-run 2>&1)
-t30_err=""
-echo "$t30_out" | grep -qE '^removed' && t30_err="$t30_err claims-removed-but-did-not"
-[ "$(ls "$t30_prefix/agents" 2>/dev/null | wc -l | tr -d ' ')" -eq 6 ] || t30_err="$t30_err dry-run-actually-deleted"
-[ -z "$t30_err" ] && ok "T30 --uninstall --dry-run claims nothing it did not do" \
-                  || bad "T30 uninstall dry-run lies" "issues:$t30_err"
-rm -rf "$t30_prefix"
 
 # ---------------------------------------------------------------- T31
 # The GitHub release body is the changelog. A changelog file would be a second
@@ -1447,8 +875,8 @@ if [ -z "$t32_pair_out" ]; then
   done
 fi
 
-# Duplicate YAML keys can hide an override even when installed files look
-# superficially right. Mutate one generated agent and require the shared T5
+# Duplicate YAML keys can hide an override even when committed files look
+# superficially right. Mutate one copied agent and require the shared T5
 # validator to return the exact duplicate-key diagnostic. A crash, import error,
 # empty glob, or unrelated diagnostic is a test failure, not a rejection.
 if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
@@ -1456,8 +884,9 @@ if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null
 else
   t5_mut="$(mktemp -d)"
   CLEANUP_PATHS+=("$t5_mut")
-  if ! bash install.sh --prefix "$t5_mut" --force >/dev/null 2>&1; then
-    bad "T5 duplicate-key mutation" "install.sh failed"
+  rm -rf "$t5_mut/agents"
+  if ! cp -R agents "$t5_mut/agents"; then
+    bad "T5 duplicate-key mutation" "copy failed"
   else
     python3 - "$t5_mut/agents/fc-qa-code.md" <<'PY'
 import sys
@@ -1478,10 +907,11 @@ PY
       bad "T5 duplicate-key mutation" "validator exited $t5_mut_rc: ${t5_mut_out:-<no diagnostic>}"
     fi
   fi
-  # A permissive deny key ahead of the generated one: a first-wins parser would
+  # A permissive deny key ahead of the committed one: a first-wins parser would
   # let the role delegate, PyYAML keeps the last. Reject the ambiguity itself.
-  if ! bash install.sh --prefix "$t5_mut" --force >/dev/null 2>&1; then
-    bad "T5 duplicate deny-key mutation" "install.sh failed"
+  rm -rf "$t5_mut/agents"
+  if ! cp -R agents "$t5_mut/agents"; then
+    bad "T5 duplicate deny-key mutation" "copy failed"
   else
     python3 - "$t5_mut/agents/fc-tech-lead.md" <<'PY'
 import sys
@@ -1769,8 +1199,8 @@ fi
                    || bad "T66 fc-explain explanation contract" "missing:$t66_err"
 # A typed version goes stale on the next release (v5.2.1 sat in the README
 # through v5.3.0); the release badge is the only version the README shows.
-t66_typed=$(grep -noE '(^|[^0-9A-Za-z.])v[0-9]+[.][0-9]+[.][0-9]+' README.md | head -3 | tr '\n' ' ')
-[ -z "$t66_typed" ] && ok "T66 README shows no typed version; the release badge is live" \
+t66_typed=$(grep -noE '(^|[^0-9A-Za-z.])v[0-9]+[.][0-9]+[.][0-9]+' README.md wiki/*.md | head -3 | tr '\n' ' ')
+[ -z "$t66_typed" ] && ok "T66 README and wiki show no typed version; the release badge is live" \
                     || bad "T66 README typed version" "found: $t66_typed"
 # The README says MIT licensed; a LICENSE file and a badge must back the claim.
 t66_lic=""
@@ -2171,8 +1601,9 @@ t70_doc_meta=skills/fc-build-or-fix/reference/meta-work-cap.md
 t70_doc_grill=skills/fc-grill-me/SKILL.md
 t70_doc_lead=agents/fc-tech-lead.md
 t70_doc_architect=agents/fc-architect.md
-t70_doc_install=install.sh
-t70_docs=(bof qacode qaspec review research brainstorm complex meta grill lead architect install)
+t70_doc_pm=agents/fc-pm.md
+t70_doc_developer=agents/fc-developer.md
+t70_docs=(bof qacode qaspec review research brainstorm complex meta grill lead architect pm developer)
 # label|doc|section start|section end|clause
 t70_rules=(
   'bof-description-routes|bof|^name: fc-build-or-fix$|^---$|Do NOT use for an open question whose primary need is facts (look them up, or use /fc-research), an approach (use /fc-brainstorm), or review of an artifact this pipeline did not produce (use /fc-review).'
@@ -2195,12 +1626,12 @@ t70_rules=(
   'grill-user-owned-scope|grill|^# fc-grill-me$|^## |Interview the user about each user-owned decision this work depends on until you reach a shared understanding.'
   'lead-approve-quickly|lead|^## Rules$|^## |- If the work is genuinely good, approve quickly.'
   'architect-project-tests|architect|^## Phase 1|^## |define the test before the implementation, using the kinds of test the project already runs where they fit.'
-  'pm-main-session-only|install|^agent_meta() {$|^}$|role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent'
-  'architect-when-not|install|^agent_meta() {$|^}$|Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions.'
-  'developer-when-not|install|^agent_meta() {$|^}$|Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests.'
-  'qa-spec-when-not|install|^agent_meta() {$|^}$|(one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review.'
-  'qa-code-when-not|install|^agent_meta() {$|^}$|quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review.'
-  'lead-when-not|install|^agent_meta() {$|^}$|before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review.'
+  'pm-main-session-only|pm|^---$|^---$|role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent'
+  'architect-when-not|architect|^---$|^---$|Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions.'
+  'developer-when-not|developer|^---$|^---$|Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests.'
+  'qa-spec-when-not|qaspec|^---$|^---$|(one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review.'
+  'qa-code-when-not|qacode|^---$|^---$|quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review.'
+  'lead-when-not|lead|^---$|^---$|before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review.'
 )
 # label|doc|replaced wording that must stay absent from the whole document
 t70_stale=(
@@ -2223,7 +1654,7 @@ t70_stale=(
   'grill-booster|grill|Interview the user relentlessly'
   'lead-booster|lead|Thorough but pragmatic'
   'architect-test-catalog|architect|UI → component tests'
-  'pm-orchestrates|install|and orchestrates the pipeline.'
+  'pm-orchestrates|pm|and orchestrates the pipeline.'
 )
 t70_contract() { # root holding the t70_doc_* paths
   local entry label doc from to text path section errors=""
@@ -2266,405 +1697,20 @@ fi
 [ -z "$t70_err" ] && ok "T70 static contract alarm: v5.2.1 prompt-audit clauses pinned, replaced wording absent" \
                    || bad "T70 prompt-audit contract" "missing:$t70_err"
 
-# ---------------------------------------------------------------- T35
-# Exercise both PowerShell invocation forms, not just parameter-name tokens.
-# PATH is controlled: an unrelated bash must never win, and a Git-layout stub
-# proves delegation and argv forwarding without requiring Windows on this host.
-t35_root=$(mktemp -d)
-CLEANUP_PATHS+=("$t35_root")
-t35_repo=$(pwd)
-mkdir -p "$t35_root/empty-path"
-PWSH_BIN="${PWSH:-$(command -v pwsh 2>/dev/null || true)}"
-
-# Quote a path as a PowerShell literal; switches remain unquoted in -Command
-# so these are the same calls a user types, not array-splatting approximations.
-t35_ps_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
-t35_run() {
-  local name="$1" path="$2"; shift 2
-  t35_case="$t35_root/$name"
-  mkdir -p "$t35_case/home/.config/powershell" "$t35_case/cwd"
-  printf '%s\n' 'Set-StrictMode -Version Latest' > "$t35_case/home/.config/powershell/Microsoft.PowerShell_profile.ps1"
-  ( cd "$t35_case/cwd" && env -i HOME="$t35_case/home" PATH="$path" \
-      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-      "$PWSH_BIN" -NonInteractive "$@" ) \
-    > "$t35_case/stdout" 2> "$t35_case/stderr"
-  t35_rc=$?
-  t35_err=""
-}
-t35_expect_rc() {
-  [ "$t35_rc" -eq "$1" ] || t35_err="$t35_err exit=$t35_rc(want-$1)"
-}
-t35_unchanged() {
-  [ ! -e "$t35_prefix" ] || t35_err="$t35_err prefix-created"
-  [ ! -e "$t35_case/home/.claude" ] || t35_err="$t35_err HOME-install-created"
-  [ -z "$(ls -A "$t35_case/cwd")" ] || t35_err="$t35_err cwd-not-empty"
-}
-t35_installed() {
-  local got src name
-  got=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
-  [ "$got" -eq "$t35_want_agents" ] || t35_err="$t35_err agents=$got(want-$t35_want_agents)"
-  for src in "$t35_repo"/skills/*/SKILL.md; do
-    [ -f "$src" ] || continue
-    name=$(basename "$(dirname "$src")")
-    [ -f "$t35_prefix/skills/$name/SKILL.md" ] || t35_err="$t35_err missing-skill:$name"
-  done
-}
-t35_result() {
-  if [ -z "$t35_err" ]; then
-    ok "$1"
-  else
-    bad "$1" "issues:$t35_err"
-    # Keep the actual process diagnostic when binding failed before dispatch.
-    sed $'s/\033\\[[0-9;]*m//g; s/^/        /' "$t35_case/stderr"
-  fi
-}
-
-if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
-  PWSH_BIN="$(cd "$(dirname "$PWSH_BIN")" && pwd)/$(basename "$PWSH_BIN")"
-  t35_ps1=$(t35_ps_quote "$t35_repo/install.ps1")
-  t35_want_agents=$(find agents -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
-  t35_decoy="$t35_root/decoy"
-  t35_git="$t35_root/git"
-  t35_marker="$t35_root/decoy-ran"
-  mkdir -p "$t35_decoy" "$t35_git/cmd" "$t35_git/bin"
-  cat > "$t35_decoy/bash" <<STUB
-#!/bin/sh
-printf '%s\n' ran > "$t35_marker"
-exit 127
-STUB
-  chmod +x "$t35_decoy/bash"
-
-  t35_prefix="$t35_root/a-prefix"
-  t35_run a "$t35_decoy" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
-  t35_expect_rc 0
-  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-  t35_installed
-  t35_result "T35a unrelated PATH bash is ignored; fallback installs all agents and skills"
-
-  printf '#!/bin/sh\nexit 0\n' > "$t35_git/cmd/git"
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' "\$@" > "$t35_root/git-args"
-exit 0
-STUB
-  chmod +x "$t35_git/cmd/git" "$t35_git/bin/bash.exe"
-  rm -f "$t35_marker"
-  t35_prefix="$t35_root/b-prefix"
-  t35_run b "$t35_git/cmd:$t35_decoy" -File "$t35_repo/install.ps1" --dry-run --prefix "$t35_prefix"
-  t35_expect_rc 0
-  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-  if [ -f "$t35_root/git-args" ]; then
-    t35_first=$(head -1 "$t35_root/git-args")
-    case "$t35_first" in */install.sh) ;; *) t35_err="$t35_err first-arg-not-install.sh" ;; esac
-    for t35_arg in --dry-run --prefix "$t35_prefix"; do
-      grep -qxF -- "$t35_arg" "$t35_root/git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
-    done
-  else
-    t35_err="$t35_err Git-bash-not-run"
-  fi
-  t35_unchanged
-  t35_result "T35b Git-layout bash receives install.sh and GNU-style flags"
-
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' ran > "$t35_root/git-ran"
-exit 127
-STUB
-  rm -f "$t35_marker"
-  t35_prefix="$t35_root/c-prefix"
-  t35_run c "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  [ -e "$t35_root/git-ran" ] || t35_err="$t35_err Git-bash-not-run"
-  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-  grep -qF 'using the PowerShell installer' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
-  t35_installed
-  t35_result "T35c Git Bash exit 127 falls back, warns, and does not leak its exit code"
-
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' ran > "$t35_root/git-ran"
-exit 126
-STUB
-  rm -f "$t35_marker" "$t35_root/git-ran"
-  t35_prefix="$t35_root/m-prefix"
-  t35_run m "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  [ -e "$t35_root/git-ran" ] || t35_err="$t35_err Git-bash-not-run"
-  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-  grep -qxF 'feature-crew: Git Bash could not run install.sh (exit 126); using the PowerShell installer.' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
-  t35_installed
-  t35_result "T35m Git Bash exit 126 falls back, warns, and does not leak its exit code"
-
-  # A missing interpreter fails to launch; a non-executable file may open in an app.
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!$t35_root/missing-interpreter
-printf '%s\n' ran > "$t35_root/git-ran"
-STUB
-  chmod +x "$t35_git/bin/bash.exe"
-  rm -f "$t35_marker" "$t35_root/git-ran"
-  t35_prefix="$t35_root/n-prefix"
-  t35_run n "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  [ ! -e "$t35_root/git-ran" ] || t35_err="$t35_err unstartable-bash-ran"
-  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-  grep -qxF 'feature-crew: Git Bash could not run install.sh (exit 127); using the PowerShell installer.' "$t35_case/stderr" || t35_err="$t35_err fallback-warning-missing"
-  t35_installed
-  t35_result "T35n Git Bash launch failure falls back, warns, and installs successfully"
-
-  t35_prefix="$t35_root/d-target"
-  t35_run d-prefix "$t35_root/empty-path" -Command "& $t35_ps1 --dry-run --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
-  t35_unchanged
-  t35_result "T35d typed GNU-style dry run with prefix changes nothing"
-
-  t35_prefix="$t35_root/d-default-target"
-  t35_run d-default "$t35_root/empty-path" -Command "& $t35_ps1 --dry-run; exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
-  t35_unchanged
-  t35_result "T35d typed --dry-run alone creates no HOME install or --dry-run folder"
-
-  t35_prefix="$t35_root/e-prefix"
-  t35_run e "$t35_root/empty-path" -File "$t35_repo/install.ps1" --dry-run --prefix "$t35_prefix"
-  t35_expect_rc 0
-  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
-  t35_unchanged
-  t35_result "T35e -File accepts GNU-style dry run without installing"
-
-  for t35_bad_arg in --bogus foo; do
-    t35_prefix="$t35_root/f-prefix"
-    t35_run "f-$t35_bad_arg" "$t35_root/empty-path" -Command "& $t35_ps1 $t35_bad_arg; exit \$LASTEXITCODE"
-    t35_expect_rc 2
-    grep -qxF -- "Unknown option: $t35_bad_arg" "$t35_case/stderr" || t35_err="$t35_err unknown-option-diagnostic-missing"
-    t35_unchanged
-    t35_result "T35f typed $t35_bad_arg is rejected before changing anything"
-  done
-
-  t35_prefix="$t35_root/g-prefix"
-  t35_run g "$t35_root/empty-path" -Command "& $t35_ps1 --prefix; exit \$LASTEXITCODE"
-  t35_expect_rc 2
-  grep -qxF 'Missing value for --prefix' "$t35_case/stderr" || t35_err="$t35_err missing-value-diagnostic-missing"
-  t35_unchanged
-  t35_result "T35g typed --prefix requires a value before changing anything"
-
-  for t35_help in typed file alias; do
-    t35_prefix="$t35_root/h-prefix"
-    case "$t35_help" in
-      typed) t35_run h-typed "$t35_root/empty-path" -Command "& $t35_ps1 --help; exit \$LASTEXITCODE" ;;
-      file)  t35_run h-file "$t35_root/empty-path" -File "$t35_repo/install.ps1" --help ;;
-      alias) t35_run h-alias "$t35_root/empty-path" -Command "& $t35_ps1 -h; exit \$LASTEXITCODE" ;;
-    esac
-    t35_expect_rc 0
-    for t35_flag in --dry-run -DryRun; do
-      grep -qF -- "$t35_flag" "$t35_case/stdout" || t35_err="$t35_err usage-missing:$t35_flag"
-    done
-    t35_unchanged
-    t35_result "T35h $t35_help help names both flag spellings and changes nothing"
-  done
-
-  t35_run j-default "$t35_root/empty-path" -File "$t35_repo/install.ps1"
-  t35_prefix="$t35_case/home/.claude"
-  t35_expect_rc 0
-  t35_installed
-  t35_result "T35j strict profile: no arguments installs all agents and skills under HOME"
-
-  t35_prefix="$t35_root/j-dry-target"
-  t35_run j-dry-run "$t35_root/empty-path" -Command "& $t35_ps1 -DryRun -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  grep -qF 'DRY-RUN:' "$t35_case/stdout" || t35_err="$t35_err dry-run-output-missing"
-  t35_unchanged
-  t35_result "T35j strict profile: typed PowerShell dry run changes nothing"
-
-  t35_prefix="$t35_root/j-install-target"
-  t35_run j-install "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
-  t35_expect_rc 0
-  t35_installed
-  t35_result "T35j strict profile: native -Prefix installs all agents and skills"
-
-  t35_run j-uninstall "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix" -Uninstall
-  t35_expect_rc 0
-  t35_left=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
-  [ "$t35_left" -eq 0 ] || t35_err="$t35_err agents-left:$t35_left"
-  [ -z "$(ls -A "$t35_prefix/skills" 2>/dev/null)" ] || t35_err="$t35_err skills-left"
-  t35_result "T35j strict profile: native -Uninstall removes installed agents and skills"
-
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' "\$@" > "$t35_root/j-git-args"
-exit 0
-STUB
-  rm -f "$t35_marker"
-  t35_prefix="$t35_root/j-git-target"
-  t35_run j-git "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE"
-  t35_expect_rc 0
-  [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-  if [ -f "$t35_root/j-git-args" ]; then
-    t35_first=$(head -1 "$t35_root/j-git-args")
-    case "$t35_first" in */install.sh) ;; *) t35_err="$t35_err first-arg-not-install.sh" ;; esac
-    for t35_arg in --prefix "$t35_prefix"; do
-      grep -qxF -- "$t35_arg" "$t35_root/j-git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
-    done
-  else
-    t35_err="$t35_err Git-bash-not-run"
-  fi
-  t35_unchanged
-  t35_result "T35j strict profile: native -Prefix delegates to Git-layout bash"
-
-  for t35_form in typed file; do
-    for t35_flag in force uninstall; do
-      t35_prefix="$t35_root/k-$t35_flag-$t35_form-prefix"
-      t35_run "k-$t35_flag-$t35_form-install" "$t35_root/empty-path" -File "$t35_repo/install.ps1" -Prefix "$t35_prefix"
-      t35_expect_rc 0
-      t35_installed
-      if [ -n "$t35_err" ]; then
-        t35_result "T35k $t35_form --$t35_flag requires a fresh install"
-        continue
-      fi
-      if [ "$t35_flag" = force ]; then
-        cp "$t35_prefix/agents/fc-pm.md" "$t35_root/k-$t35_form-fresh-pm.md"
-        printf '\nLocally edited agent.\n' >> "$t35_prefix/agents/fc-pm.md"
-      fi
-      case "$t35_form" in
-        typed) t35_run "k-$t35_flag-typed" "$t35_root/empty-path" -Command "& $t35_ps1 --$t35_flag --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
-        file)  t35_run "k-$t35_flag-file" "$t35_root/empty-path" -File "$t35_repo/install.ps1" "--$t35_flag" --prefix "$t35_prefix" ;;
-      esac
-      t35_expect_rc 0
-      if [ "$t35_flag" = force ]; then
-        cmp -s "$t35_prefix/agents/fc-pm.md" "$t35_root/k-$t35_form-fresh-pm.md" || t35_err="$t35_err installed-bytes-not-restored"
-        t35_result "T35k $t35_form --force restores fresh-install bytes"
-      else
-        t35_left=$(find "$t35_prefix/agents" -maxdepth 1 -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
-        [ "$t35_left" -eq 0 ] || t35_err="$t35_err agents-left:$t35_left"
-        t35_left=$(find "$t35_prefix/skills" -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-        [ "$t35_left" -eq 0 ] || t35_err="$t35_err skill-directories-left:$t35_left"
-        t35_result "T35k $t35_form --uninstall removes installed agents and skills"
-      fi
-    done
-  done
-
-  # Earlier cases replace this stub; each run must record its own arguments.
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' "\$@" > "$t35_root/git-args"
-exit 0
-STUB
-  for t35_style in gnu native; do
-    rm -f "$t35_marker" "$t35_root/git-args"
-    t35_prefix="$t35_root/l-$t35_style-prefix"
-    case "$t35_style" in
-      gnu)    t35_run l-gnu "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 --force --uninstall --prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
-      native) t35_run l-native "$t35_git/cmd:$t35_decoy" -Command "& $t35_ps1 -Force -Uninstall -Prefix $(t35_ps_quote "$t35_prefix"); exit \$LASTEXITCODE" ;;
-    esac
-    t35_expect_rc 0
-    [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-    if [ -f "$t35_root/git-args" ]; then
-      for t35_arg in --force --uninstall --prefix "$t35_prefix"; do
-        grep -qxF -- "$t35_arg" "$t35_root/git-args" || t35_err="$t35_err arg-not-forwarded:$t35_arg"
-      done
-    else
-      t35_err="$t35_err Git-bash-not-run"
-    fi
-    t35_unchanged
-    t35_result "T35l typed $t35_style force/uninstall flags reach Git-layout bash"
-  done
-
-  # Exit 3 means Git Bash ran the installer and reported failure, not that bash
-  # was unavailable. Reuse this guard on confirmed scratch mutations as well.
-  cat > "$t35_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' ran > "$t35_root/o-git-ran"
-exit 3
-STUB
-  for t35_variant in control exit-zero fallback; do
-    t35_script="$t35_repo/install.ps1"
-    if [ "$t35_variant" != control ]; then
-      if ! command -v python3 >/dev/null 2>&1; then
-        skip "T35o $t35_variant mutation replay (python3 unavailable)"
-        continue
-      fi
-      # Like T21, keep the copy beside agents/ so an erroneous fallback really
-      # installs files instead of failing for an unrelated missing-source error.
-      t35_script="$t35_repo/t35o-$t35_variant-$$.ps1"
-      CLEANUP_PATHS+=("$t35_script")
-      if ! t35_mutation_out=$(python3 - "$t35_variant" "$t35_script" 2>&1 <<'PY'
-import pathlib, sys
-old, new = {
-    'exit-zero': (b'    exit $bashExitCode\n', b'    exit 0\n'),
-    'fallback': (b'  if ($bashExitCode -ne 126 -and $bashExitCode -ne 127) {',
-                 b'  if ($bashExitCode -eq 0) {'),
-}[sys.argv[1]]
-source = pathlib.Path('install.ps1').read_bytes()
-assert source.count(old) == 1, 'delegation mutation target missing or ambiguous'
-mutant = source.replace(old, new, 1)
-assert mutant != source and old not in mutant, 'delegation mutation not applied'
-pathlib.Path(sys.argv[2]).write_bytes(mutant)
-PY
-      ); then
-        bad "T35o $t35_variant mutation replay" "$t35_mutation_out"
-        continue
-      fi
-    fi
-    rm -f "$t35_marker" "$t35_root/o-git-ran"
-    t35_prefix="$t35_root/o-$t35_variant-prefix"
-    t35_run "o-$t35_variant" "$t35_git/cmd:$t35_decoy" -File "$t35_script" --prefix "$t35_prefix"
-    t35_expect_rc 3
-    [ -e "$t35_root/o-git-ran" ] || t35_err="$t35_err Git-bash-not-run"
-    [ ! -e "$t35_marker" ] || t35_err="$t35_err PATH-decoy-ran"
-    grep -qF 'using the PowerShell installer' "$t35_case/stderr" && t35_err="$t35_err unexpected-fallback-warning"
-    t35_unchanged
-    if [ "$t35_variant" = control ]; then
-      t35_result "T35o delegated exit 3 propagates without a fallback warning or installed files"
-    else
-      t35_expected=' exit=0(want-3)'
-      [ "$t35_variant" = fallback ] && t35_expected="$t35_expected unexpected-fallback-warning prefix-created"
-      if [ "$t35_err" = "$t35_expected" ]; then
-        ok "T35o $t35_variant mutation applied and rejected:$t35_err"
-      else
-        bad "T35o $t35_variant mutation replay" "expected '$t35_expected', got '${t35_err:-<no rejection>}'"
-      fi
-      rm -f "$t35_script"
-    fi
-  done
-else
-  for t35_case_id in a b c m n d-prefix d-default e f-unknown f-stray g h-typed h-file h-alias j-default j-dry-run j-install j-uninstall j-git k-force-typed k-uninstall-typed k-force-file k-uninstall-file l-gnu l-native o o-exit-zero o-fallback; do
-    skip "T35$t35_case_id PowerShell runtime case (pwsh unavailable; set PWSH)"
-  done
-fi
-
-# These acceptance checks run even when pwsh is unavailable.
-t35_case="$t35_root/g-bash"
-t35_prefix="$t35_root/g-bash-prefix"
-mkdir -p "$t35_case/home" "$t35_case/cwd"
-t35_bash=$(command -v bash)
-( cd "$t35_case/cwd" && HOME="$t35_case/home" "$t35_bash" "$t35_repo/install.sh" --prefix ) \
-  > "$t35_case/stdout" 2> "$t35_case/stderr"
-t35_rc=$?
-t35_err=""
-t35_expect_rc 2
-grep -qxF 'Missing value for --prefix' "$t35_case/stderr" || t35_err="$t35_err missing-value-diagnostic-missing"
-t35_unchanged
-t35_result "T35g install.sh --prefix requires a value with exit 2"
-
-if grep '^Flags:' wiki/Usage.md | grep -qF -- '-DryRun'; then
-  ok "T35i wiki Usage Flags line names the PowerShell spelling"
-else
-  bad "T35i wiki Usage Flags line names the PowerShell spelling" "-DryRun absent from Flags line"
-fi
-
-# --------------------------------------------------------- T36-T46 helpers
-# Every runtime case gets a scratch prefix. PowerShell uses T35's empty-PATH
-# technique, so an installed Git Bash cannot silently replace the fallback.
+# ------------------------------------------------------ installer helpers
+# Scratch space for installer runs. PowerShell runs with an emptied PATH, so a
+# Git Bash on the machine cannot silently replace the native engine. A strict
+# profile proves the current installer works under the user's strict mode.
 installer_root=$(mktemp -d)
 CLEANUP_PATHS+=("$installer_root")
 installer_repo=$(pwd)
 installer_bash=$(command -v bash)
+PWSH_BIN="${PWSH:-$(command -v pwsh 2>/dev/null || true)}"
+if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
+  PWSH_BIN="$(cd "$(dirname "$PWSH_BIN")" && pwd)/$(basename "$PWSH_BIN")"
+fi
 mkdir -p "$installer_root/home/.config/powershell" "$installer_root/empty-path"
-# A user's profile may enable strict mode. Current installers must inherit it;
-# historical table regeneration below intentionally runs the tags as published.
 printf 'Set-StrictMode -Version Latest\n' > "$installer_root/home/.config/powershell/Microsoft.PowerShell_profile.ps1"
-printf 'my notes\n' > "$installer_root/personal"
-printf 'my hidden notes\n' > "$installer_root/hidden"
 INSTALLERS=(sh)
 if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
   INSTALLERS+=(ps1)
@@ -2674,258 +1720,9 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   installer_hash=(shasum -a 256)
 fi
-run_installer() { # engine, prefix, flags; preserves nonzero exits for assertions
-  local engine="$1" prefix="$2"; shift 2
-  if [ "$engine" = sh ]; then
-    HOME="$installer_root/home" "$installer_bash" "$installer_repo/install.sh" --prefix "$prefix" "$@" \
-      > "$installer_root/run.out" 2>&1
-  else
-    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
-      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-      "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --prefix "$prefix" "$@" \
-      > "$installer_root/run.out" 2>&1
-  fi
-  installer_rc=$?
-  installer_out=$(cat "$installer_root/run.out")
-}
-run_installer_at() { # cwd, engine, prefix, flags; retain the child exit code
-  local cwd="$1"; shift
-  ( cd "$cwd" && run_installer "$@"; exit "$installer_rc" )
-  installer_rc=$?
-  installer_out=$(cat "$installer_root/run.out")
-}
-expect_installer_success() {
-  if [ "$installer_rc" -ne 0 ]; then
-    case_err="$case_err $1:exit-$installer_rc:$(printf '%s\n' "$installer_out" | sed $'s/\033\\[[0-9;]*m//g' | tail -1)"
-  fi
-}
 installer_result() {
   [ -z "$case_err" ] && ok "$1" || bad "$1" "issues:$case_err"
 }
-seed_legacy_skill() {
-  mkdir -p "$1/skills/research" || return 1
-  git show v3.1:.claude/skills/research/SKILL.md > "$1/skills/research/SKILL.md" || return 1
-  cp "$installer_root/personal" "$1/skills/research/sources.md" || return 1
-  cp "$installer_root/hidden" "$1/skills/research/.hidden"
-}
-seed_v31() {
-  if [ ! -f "$installer_root/v3.1/install.sh" ]; then
-    mkdir -p "$installer_root/v3.1" || return 1
-    git archive v3.1 | tar -x -C "$installer_root/v3.1" || return 1
-  fi
-  HOME="$installer_root/home" "$installer_bash" "$installer_root/v3.1/install.sh" --prefix "$1" \
-    > "$installer_root/seed.log" 2>&1
-}
-snapshot_tree() {
-  ( cd "$1" || exit 1
-    find . -type d -print | LC_ALL=C sort
-    while IFS= read -r f; do
-      printf '%s  %s\n' "$("${installer_hash[@]}" < "$f" | cut -d' ' -f1)" "$f"
-    done < <(find . -type f -print | LC_ALL=C sort)
-  )
-}
-normalize_installer_output() { # prefix, source, captured output
-  python3 - "$@" <<'PY'
-import pathlib, sys
-prefix, source, output = sys.argv[1:]
-text = pathlib.Path(output).read_bytes().decode('utf-8').replace('\r', '').replace('\\', '/')
-text = text.replace(prefix.replace('\\', '/'), '<P>').replace(source.replace('\\', '/'), '<SRC>')
-sys.stdout.write(text)
-PY
-}
-
-# ---------------------------------------------------------------- T36
-# A published SKILL.md proves ownership of that file, not of its neighbours.
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t36-$engine"
-  case_err=""
-  if ! seed_legacy_skill "$p"; then
-    bad "T36 $engine legacy skill preserves personal and hidden files" "cannot seed published v3.1 skill"
-    continue
-  fi
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  [ ! -e "$p/skills/research/SKILL.md" ] || case_err="$case_err published-SKILL-left"
-  cmp -s "$installer_root/personal" "$p/skills/research/sources.md" || case_err="$case_err personal-file-deleted"
-  cmp -s "$installer_root/hidden" "$p/skills/research/.hidden" || case_err="$case_err hidden-file-deleted"
-  printf '%s\n' "$installer_out" | grep -qxF "removed (legacy): $p/skills/research/SKILL.md" \
-    || case_err="$case_err per-file-removal-not-reported"
-  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/skills/research/sources.md" \
-    || case_err="$case_err personal-file-not-reported"
-  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/skills/research/.hidden" \
-    || case_err="$case_err hidden-file-not-reported"
-  for name in sources.md .hidden; do
-    count=$(printf '%s\n' "$installer_out" | grep -cxF "  if this was an older Feature-Crew you edited, remove it by hand: $p/skills/research/$name" || true)
-    [ "$count" -eq 1 ] || case_err="$case_err $name:legacy-hints=$count(want-1)"
-  done
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  cmp -s "$installer_root/personal" "$p/skills/research/sources.md" || case_err="$case_err personal-file-lost-after-uninstall"
-  cmp -s "$installer_root/hidden" "$p/skills/research/.hidden" || case_err="$case_err hidden-file-lost-after-uninstall"
-  installer_result "T36 $engine legacy skill preserves personal and hidden files"
-done
-
-# ---------------------------------------------------------------- T37
-# Use v3.1's OWN installer: copying today's agents would not reproduce the old
-# names, unquoted frontmatter, or duplicate fc-pm. Count the six agent removals
-# specifically; v3.1 also installed two legacy skills eligible for cleanup.
-t37_legacy_case() { # engine, actual prefix, given prefix, cwd, label
-  local engine="$1" p="$2" given="$3" cwd="$4" label="$5" action name count
-  case_err=""
-  if ! seed_v31 "$p"; then
-    bad "$label" "v3.1 installer fixture failed"
-    return
-  fi
-  cp "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md"
-  snapshot_tree "$p" > "$installer_root/before"
-  for action in install uninstall; do
-    if [ "$action" = install ]; then run_installer_at "$cwd" "$engine" "$given" --dry-run
-    else run_installer_at "$cwd" "$engine" "$given" --uninstall --dry-run; fi
-    expect_installer_success "dry-$action"
-    snapshot_tree "$p" > "$installer_root/after"
-    cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-$action:tree-changed"
-    printf '%s\n' "$installer_out" | grep -q '^removed' && case_err="$case_err dry-$action:claims-removed"
-    count=$(printf '%s\n' "$installer_out" | grep -cF "DRY-RUN: would remove (legacy): $given/agents/feature-crew/" || true)
-    [ "$count" -eq 6 ] || case_err="$case_err dry-$action:legacy-agent-lines=$count(want-6)"
-    for name in architect developer pm qa-code-reviewer qa-spec-reviewer tech-lead; do
-      printf '%s\n' "$installer_out" | grep -qxF "DRY-RUN: would remove (legacy): $given/agents/feature-crew/$name.md" \
-        || case_err="$case_err dry-$action:not-listed:$name"
-    done
-  done
-  run_installer_at "$cwd" "$engine" "$given"
-  expect_installer_success install
-  for name in architect developer pm qa-code-reviewer qa-spec-reviewer tech-lead; do
-    [ ! -e "$p/agents/feature-crew/$name.md" ] || case_err="$case_err legacy-agent-left:$name"
-  done
-  for name in build-or-fix research; do
-    [ ! -d "$p/skills/$name" ] || case_err="$case_err legacy-skill-left:$name"
-  done
-  cmp -s "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md" || case_err="$case_err personal-agent-deleted"
-  printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $given/agents/feature-crew/my-own-agent.md" \
-    || case_err="$case_err personal-agent-not-reported"
-  count=$(find "$p/agents" -type f -name '*.md' -exec grep -l '^name: fc-pm$' {} + | wc -l | tr -d ' ')
-  [ "$count" -eq 1 ] || case_err="$case_err fc-pm-definitions=$count(want-1)"
-  run_installer_at "$cwd" "$engine" "$given" --uninstall
-  expect_installer_success uninstall
-  cmp -s "$installer_root/personal" "$p/agents/feature-crew/my-own-agent.md" || case_err="$case_err personal-agent-deleted-on-uninstall"
-  count=$(find "$p" -type f | wc -l | tr -d ' ')
-  [ "$count" -eq 1 ] || case_err="$case_err uninstall-files=$count(want-personal-only)"
-  installer_result "$label"
-}
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t37-$engine"
-  t37_legacy_case "$engine" "$p" "$p" "$installer_repo" "T37 $engine v3.1 cleanup is per-file on install and uninstall"
-  for form in dot parent absolute-dot absolute-parent; do
-    cwd="$installer_root/t37-$engine-$form/feature-crew"
-    mkdir -p "$cwd"
-    case "$form" in
-      dot) given='./p'; p="$cwd/p" ;;
-      parent) given='../p'; p="$(dirname "$cwd")/p" ;;
-      absolute-dot) given="$cwd/./p"; p="$cwd/p" ;;
-      absolute-parent) given="$cwd/../p"; p="$(dirname "$cwd")/p" ;;
-    esac
-    t37_legacy_case "$engine" "$p" "$given" "$cwd" "T37 $engine v3.1 cleanup through $given from feature-crew"
-  done
-
-  # Rooted paths still need normalization before FullName slicing.
-  case_err=""
-  for form in dot parent absolute-dot absolute-parent; do
-    cwd="$installer_root/t37-fresh-$engine-$form/feature-crew"
-    mkdir -p "$cwd"
-    case "$form" in
-      dot) given='./u'; p="$cwd/u" ;;
-      parent) given='../u'; p="$(dirname "$cwd")/u" ;;
-      absolute-dot) given="$cwd/./u"; p="$cwd/u" ;;
-      absolute-parent) given="$cwd/../u"; p="$(dirname "$cwd")/u" ;;
-    esac
-    run_installer_at "$cwd" "$engine" "$given"
-    expect_installer_success "$given/install"
-    [ -f "$p/agents/fc-pm.md" ] && [ -f "$p/skills/fc-review/SKILL.md" ] \
-      || case_err="$case_err $given:not-installed"
-    run_installer_at "$cwd" "$engine" "$given" --uninstall
-    expect_installer_success "$given/uninstall"
-    count=$(find "$p" -type f 2>/dev/null | wc -l | tr -d ' ')
-    [ "$count" -eq 0 ] || case_err="$case_err $given:files-left=$count"
-  done
-  installer_result "T37 $engine fresh relative and absolute dot-segment prefixes uninstall completely"
-done
-
-# ---------------------------------------------------------------- T38
-# Brackets are literal path characters, not permission to act on a neighbour.
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t38-$engine/br[1]"
-  neighbour="$installer_root/t38-$engine/br1/agents/fc-pm.md"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  mkdir -p "$(dirname "$neighbour")"
-  printf 'MY OWN\n' > "$neighbour"
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  [ "$(cat "$neighbour" 2>/dev/null)" = 'MY OWN' ] || case_err="$case_err neighbour-deleted-or-changed"
-  count=$(find "$p/agents" -type f -name 'fc-*.md' 2>/dev/null | wc -l | tr -d ' ')
-  [ "$count" -eq 0 ] || case_err="$case_err literal-prefix-agents-left=$count"
-  run_installer "$engine" "$p"
-  expect_installer_success restore
-  printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
-  cp "$p/agents/fc-pm.md" "$installer_root/edited-agent"
-  run_installer "$engine" "$p"
-  expect_installer_success reinstall
-  cmp -s "$installer_root/edited-agent" "$p/agents/fc-pm.md" || case_err="$case_err reinstall-overwrote-edit"
-  installer_result "T38 $engine bracket prefix protects neighbour and edited agent"
-done
-
-# ---------------------------------------------------------------- T39
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t39-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  cp "$installer_root/hidden" "$p/skills/fc-review/.notes.md"
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  [ -d "$p/skills/fc-review" ] || case_err="$case_err skill-dir-deleted"
-  cmp -s "$installer_root/hidden" "$p/skills/fc-review/.notes.md" || case_err="$case_err hidden-file-deleted"
-  printf '%s\n' "$installer_out" | grep -qxF "kept (yours — differs from what we install): $p/skills/fc-review" \
-    || case_err="$case_err kept-line-missing"
-  installer_result "T39 $engine uninstall counts hidden personal files"
-done
-
-# ---------------------------------------------------------------- T40
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t40-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  { printf '\357\273\277'; cat "$p/agents/fc-pm.md"; } > "$installer_root/bom-agent"
-  cp "$installer_root/bom-agent" "$p/agents/fc-pm.md"
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  cmp -s "$installer_root/bom-agent" "$p/agents/fc-pm.md" || case_err="$case_err BOM-edited-agent-deleted"
-  printf '%s\n' "$installer_out" | grep -qxF "kept (yours — differs from what we install): $p/agents/fc-pm.md" \
-    || case_err="$case_err kept-line-missing"
-  installer_result "T40 $engine BOM-only agent edit is kept byte-for-byte"
-done
-
-# ---------------------------------------------------------------- T41
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t41-$engine"
-  case_err=""
-  mkdir -p "$p/skills/research"
-  : > "$p/skills/research/SKILL.md"
-  for attempt in 1 2; do
-    run_installer "$engine" "$p"
-    expect_installer_success "install-$attempt"
-    [ -f "$p/skills/research/SKILL.md" ] && [ ! -s "$p/skills/research/SKILL.md" ] \
-      || case_err="$case_err install-$attempt:empty-skill-changed"
-    printf '%s\n' "$installer_out" | grep -qxF "kept (not ours — content does not match any published version): $p/skills/research" \
-      || case_err="$case_err install-$attempt:kept-line-missing"
-  done
-  installer_result "T41 $engine empty legacy SKILL.md is kept without aborting either install"
-done
-if [ "${#INSTALLERS[@]}" -eq 1 ]; then
-  for n in 36 37 38 39 40 41; do skip "T$n ps1 fallback regression (pwsh unavailable; set PWSH)"; done
-fi
 
 # ---------------------------------------------------------------- T42
 # Query the real index, not a hand-picked file or a grep of .gitattributes.
@@ -2986,816 +1783,32 @@ fi
 installer_result "T43 published.sha256 exactly matches v3.1-v5.1.0 installer output"
 [ "${#INSTALLERS[@]}" -eq 2 ] || skip "T43 historical PowerShell fallback hashes (pwsh unavailable; set PWSH)"
 
-# ---------------------------------------------------------------- T44
-case_err=""
-p="$installer_root/t44/empty"
-run_installer sh "$p" --dry-run
-expect_installer_success dry-empty
-cp "$installer_root/run.out" "$installer_root/t44-empty.out"
-printf '%s\n' "$installer_out" | grep -qF '//' && case_err="$case_err dry-empty:double-slash"
-# Build the set from source parents, retaining duplicates in the actual output
-# so repeating mkdir once per copied file cannot pass as a set comparison.
-{
-  printf '%s\n' "$p/agents"
-  for src in "$installer_repo"/skills/*/; do
-    [ -f "${src}SKILL.md" ] || continue
-    skill=$(basename "$src")
-    printf '%s\n' "$p/skills/$skill"
-    while IFS= read -r rel; do
-      printf '%s\n' "$(dirname "$p/skills/$skill/$rel")"
-    done < <(cd "$src" && find . -type f -print | sed 's|^\./||')
-  done
-} | LC_ALL=C sort -u > "$installer_root/expected-dirs"
-sed -n 's/^DRY-RUN: mkdir -p //p' "$installer_root/t44-empty.out" | LC_ALL=C sort > "$installer_root/actual-dirs"
-cmp -s "$installer_root/expected-dirs" "$installer_root/actual-dirs" || case_err="$case_err missing-or-repeated-mkdir"
-[ ! -e "$p" ] || case_err="$case_err dry-run-created-prefix"
-run_installer sh "$p"
-expect_installer_success install
-run_installer sh "$p" --dry-run --force
-expect_installer_success dry-force
-printf '%s\n' "$installer_out" | grep -q '^DRY-RUN: mkdir' && case_err="$case_err existing-dirs-print-mkdir"
-printf '%s\n' "$installer_out" | grep -qF '//' && case_err="$case_err dry-force:double-slash"
-run_installer sh "$p"
-expect_installer_success reinstall
-printf '%s\n' "$installer_out" | grep -q '^skip (exists):' || case_err="$case_err no-skip-lines"
-if printf '%s\n' "$installer_out" | grep '^skip (exists):' | grep -qv '  \[use --force to overwrite\]$'; then
-  case_err="$case_err noncanonical-skip-hint"
-fi
-installer_result "T44 canonical bash mkdir, copy paths, and skip hints"
-
-# ---------------------------------------------------------------- T45
-# Compare ordered output, not sorted output or substring tokens. Only paths,
-# path separators, and CR are normalized; whitespace and wording are contracts.
-if [ "${#INSTALLERS[@]}" -ne 2 ]; then
-  skip "T45 installer output parity matrix (pwsh unavailable; set PWSH)"
-elif ! command -v python3 >/dev/null 2>&1; then
-  skip "T45 installer output parity matrix (python3 unavailable)"
-else
-  for scenario in fresh reinstall dry-force dry-empty uninstall-dry uninstall install-v31 uninstall-dry-v31 edited-agent legacy-skill dot-install-v31 parent-round-trip invalid-manifest; do
-    case_err=""
-    scenario_root="$installer_root/t45-$scenario"
-    mkdir -p "$scenario_root"
-    for engine in "${INSTALLERS[@]}"; do
-      p="$scenario_root/$engine"
-      given="$p"
-      cwd="$installer_repo"
-      raw="$scenario_root/$engine.raw"
-      : > "$raw"
-      flags=()
-      case "$scenario" in
-        reinstall|dry-force|uninstall-dry|uninstall|edited-agent|invalid-manifest)
-          run_installer "$engine" "$p"
-          expect_installer_success "$engine/setup"
-          cat "$installer_root/run.out" >> "$raw"
-          ;;
-        install-v31|uninstall-dry-v31)
-          seed_v31 "$p" || case_err="$case_err $engine/v3.1-fixture-failed"
-          ;;
-        legacy-skill)
-          seed_legacy_skill "$p" || case_err="$case_err $engine/legacy-skill-fixture-failed"
-          ;;
-        dot-install-v31|parent-round-trip)
-          cwd="$scenario_root/$engine/feature-crew"
-          mkdir -p "$cwd"
-          if [ "$scenario" = dot-install-v31 ]; then
-            given='./p'; p="$cwd/p"
-            seed_v31 "$p" || case_err="$case_err $engine/v3.1-fixture-failed"
-          else
-            given='../u'; p="$scenario_root/$engine/u"
-            run_installer_at "$cwd" "$engine" "$given"
-            expect_installer_success "$engine/parent-install"
-            cat "$installer_root/run.out" >> "$raw"
-          fi
-          ;;
-      esac
-      case "$scenario" in
-        dry-force) flags=(--dry-run --force) ;;
-        dry-empty) flags=(--dry-run) ;;
-        uninstall-dry|uninstall-dry-v31) flags=(--uninstall --dry-run) ;;
-        uninstall|parent-round-trip) flags=(--uninstall) ;;
-        edited-agent)
-          printf '\nmy edit\n' >> "$p/agents/fc-pm.md"
-          flags=(--uninstall)
-          ;;
-        invalid-manifest)
-          printf 'not a manifest\n' > "$p/feature-crew.sha256"
-          run_installer "$engine" "$p"
-          expect_installer_success "$engine/invalid-manifest-reinstall"
-          cat "$installer_root/run.out" >> "$raw"
-          flags=(--uninstall)
-          ;;
-      esac
-      # Bash 3.2 treats an empty array as unset under nounset.
-      if [ "${#flags[@]}" -gt 0 ]; then run_installer_at "$cwd" "$engine" "$given" "${flags[@]}"
-      else run_installer_at "$cwd" "$engine" "$given"; fi
-      expect_installer_success "$engine/$scenario"
-      cat "$installer_root/run.out" >> "$raw"
-      # For dot-segment scenarios only normalize the actual absolute prefix;
-      # ./p and ../u must remain printed exactly as the caller supplied them.
-      normalize_installer_output "$p" "$installer_repo" "$raw" > "$scenario_root/$engine.out" \
-        || case_err="$case_err $engine/normalization-failed"
-    done
-    if ! cmp -s "$scenario_root/sh.out" "$scenario_root/ps1.out"; then
-      case_err="$case_err ordered-output-differs"
-      # Show the first unequal line; do not flood every test run with two whole
-      # installs. The test still compares ALL output, including trailing LF.
-      mismatch=$(python3 - "$scenario_root/sh.out" "$scenario_root/ps1.out" <<'PY'
-import itertools, pathlib, sys
-left, right = [pathlib.Path(p).read_text().splitlines(keepends=True) for p in sys.argv[1:]]
-for n, (a, b) in enumerate(itertools.zip_longest(left, right), 1):
-    if a != b:
-        print(f'line {n}: sh={a!r}; ps1={b!r}')
-        break
-PY
-)
-      case_err="$case_err ($mismatch)"
-    fi
-    installer_result "T45 output parity: $scenario"
-  done
-fi
-
-# ---------------------------------------------------------------- T46
-# Parse commands, not text lines: comments and quoted examples do not count,
-# and splitting a command over lines must not evade the -LiteralPath check.
-if [ "${#INSTALLERS[@]}" -ne 2 ]; then
-  skip "T46 PowerShell literal-path AST check (pwsh unavailable; set PWSH)"
-else
-  cat > "$installer_root/literal-paths.ps1" <<'PS'
-param([string]$Path)
-$tokens = $null; $parseErrors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
-if ($parseErrors.Count) { throw ($parseErrors -join "`n") }
-$issues = @()
-foreach ($command in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] }, $true)) {
-  $name = $command.GetCommandName()
-  $parameters = @($command.CommandElements | Where-Object {
-    $_ -is [Management.Automation.Language.CommandParameterAst]
-  } | ForEach-Object { $_.ParameterName })
-  $where = $name + '@' + $command.Extent.StartLineNumber
-  if ($name -in @('Test-Path', 'Remove-Item', 'Get-ChildItem') -and $parameters -notcontains 'LiteralPath') {
-    $issues += ($where + ':no-LiteralPath')
-  }
-  if ($name -eq 'Copy-Item') { $issues += ($where + ':use-byte-copy') }
-  if ($name -eq 'Get-ChildItem' -and $parameters -contains 'Recurse' -and $parameters -notcontains 'Force') {
-    $issues += ($where + ':recursive-list-hides-files')
-  }
-}
-if ($issues.Count) { Write-Output ($issues -join ' '); exit 1 }
-PS
-  case_err=""
-  t46_out=$("$PWSH_BIN" -NoProfile -NonInteractive -File "$installer_root/literal-paths.ps1" \
-    -Path "$installer_repo/install.ps1" 2>&1)
-  [ "$?" -eq 0 ] || case_err=" $t46_out"
-  installer_result "T46 PowerShell uses literal paths, byte copies, and hidden-aware recursion"
-fi
-
-# --------------------------------------------------------- T47-T54 helpers
-# Reuse the real fallback runner and its strict-mode profile. Only historical
-# fixtures use git archive; copies of this clone must include uncommitted fixes.
-seed_v501() {
-  if [ ! -f "$installer_root/v5.0.1/install.sh" ]; then
-    mkdir -p "$installer_root/v5.0.1" || return 1
-    git -c core.autocrlf=false archive v5.0.1 | tar -x -C "$installer_root/v5.0.1" || return 1
-  fi
-  HOME="$installer_root/home" "$installer_bash" "$installer_root/v5.0.1/install.sh" --prefix "$1" --force \
-    > "$installer_root/seed.log" 2>&1
-}
-copy_installer_inputs() {
-  mkdir -p "$1/.claude" || return 1
-  cp "$installer_repo/install.sh" "$installer_repo/install.ps1" "$installer_repo/published.sha256" "$1/" || return 1
-  cp -R "$installer_repo/agents" "$1/agents" || return 1
-  cp -R "$installer_repo/skills" "$1/skills"
-}
-run_copied_installer() {
-  local installer_repo="$1"; shift
-  run_installer "$@"
-}
-raw_files_manifest() {
-  local hash rel
-  # Independent byte oracle: exact equality also checks lowercase hex, two
-  # spaces, the complete path set, ordinal order, no BOM, LF and trailing LF.
-  ( cd "$1" || exit 1
-    [ -d agents ] && [ -d skills ] || exit 1
-    while IFS= read -r rel; do
-      hash=$("${installer_hash[@]}" < "$rel" | cut -d' ' -f1) || exit 1
-      printf '%s  %s\n' "$hash" "$rel"
-    done < <(find agents skills -type f -print | LC_ALL=C sort)
-  )
-}
-check_manifest() {
-  # Independent checksum oracle run FROM the prefix; fc-update uses --check.
-  ( cd "$1" || exit 1
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c feature-crew.sha256; else shasum -a 256 -c feature-crew.sha256; fi
-  )
-}
-expect_manifest_bytes() { # prefix, expected manifest, label
-  if [ ! -f "$1/feature-crew.sha256" ]; then
-    case_err="$case_err $3:manifest-missing"
-  elif ! cmp -s "$2" "$1/feature-crew.sha256"; then
-    case_err="$case_err $3:manifest-bytes-differ"
-  fi
-}
-expect_output_line() {
-  local count
-  count=$(printf '%s\n' "$installer_out" | grep -cxF -- "$1" || true)
-  [ "$count" -eq 1 ] || case_err="$case_err $2:line-count=$count(want-1)"
-}
-remaining_files() {
-  ( cd "$1" && find . -type f -print | sed 's|^\./||' | LC_ALL=C sort )
-}
-
-# ---------------------------------------------------------------- T47
-# The expected manifest is computed from files actually written, not sources:
-# agents have generated frontmatter and hashes must cover those bytes too.
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t47-$engine/absolute"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  raw_files_manifest "$p" > "$installer_root/t47-$engine.expected" || case_err="$case_err cannot-hash-installed-files"
-  expect_manifest_bytes "$p" "$installer_root/t47-$engine.expected" absolute
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err absolute:checksum-check-failed"
-  expect_output_line "installed: $p/feature-crew.sha256" manifest-installed
-
-  # run_installer captures in a subshell here so its relative --prefix is
-  # interpreted from the parent directory, for both shell and .NET file APIs.
-  ( cd "$installer_root/t47-$engine" || exit 1
-    run_installer "$engine" relative
-    exit "$installer_rc"
-  )
-  installer_rc=$?
-  installer_out=$(cat "$installer_root/run.out")
-  expect_installer_success relative-install
-  expect_manifest_bytes "$installer_root/t47-$engine/relative" "$installer_root/t47-$engine.expected" relative
-  check_manifest "$installer_root/t47-$engine/relative" > "$installer_root/check.out" 2>&1 \
-    || case_err="$case_err relative:checksum-check-failed"
-
-  p="$installer_root/t47-$engine/dry-empty"
-  run_installer "$engine" "$p" --dry-run
-  expect_installer_success dry-install
-  expect_output_line "DRY-RUN: write $p/feature-crew.sha256" manifest-dry-write
-  [ ! -e "$p" ] || case_err="$case_err dry-run-created-prefix"
-  installer_result "T47 $engine writes a canonical raw-byte manifest, including relative prefixes and dry runs"
-done
-if [ "${#INSTALLERS[@]}" -eq 2 ]; then
-  case_err=""
-  cmp -s "$installer_root/t47-sh/absolute/feature-crew.sha256" "$installer_root/t47-ps1/absolute/feature-crew.sha256" \
-    || case_err=" manifests-missing-or-not-byte-identical"
-  installer_result "T47 install.sh and the PowerShell fallback write byte-identical manifests"
-else
-  skip "T47 manifest byte parity (pwsh unavailable; set PWSH)"
-fi
-
-# ---------------------------------------------------------------- T68
-# Gate provenance is observed only one dispatch deep, so the five dispatched
-# roles deny Agent and Skill; fc-pm runs as the main session and denies
-# nothing. Each engine renders frontmatter once, for install, ownership, and
-# --check/--verify, so both engines must write byte-identical agents. After the
-# control passes, removing one role's deny line, adding one to fc-pm, or
-# dropping either engine's deny emission must fail with exactly its own labels.
-if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
-  skip "T68 delegation-guard frontmatter contract (PyYAML unavailable)"
-else
-  t68_root="$installer_root/t68"
-  t68_all=""
-  for t68_role in fc-architect fc-developer fc-qa-code fc-qa-spec fc-tech-lead; do
-    t68_all="$t68_all $t68_role:can-delegate $t68_role:can-invoke-skills"
-  done
-  t68_all=${t68_all# }
-  t68_passed=" "
-  for engine in "${INSTALLERS[@]}"; do
-    case_err=""
-    run_installer "$engine" "$t68_root/$engine"
-    expect_installer_success install
-    t68_out=$(validate_role_frontmatter "$t68_root/$engine" 2>&1) || case_err="$case_err validator-exited-$?"
-    [ -z "$t68_out" ] || case_err="$case_err $t68_out"
-    [ -n "$case_err" ] || t68_passed="$t68_passed$engine "
-    installer_result "T68 $engine denies Agent and Skill on exactly the five dispatched roles, never fc-pm"
-  done
-  if [ "${#INSTALLERS[@]}" -eq 2 ]; then
-    case_err=""
-    for src in agents/*.md; do
-      t68_f=$(basename "$src")
-      cmp -s "$t68_root/sh/agents/$t68_f" "$t68_root/ps1/agents/$t68_f" || case_err="$case_err differs:$t68_f"
-    done
-    installer_result "T68 install.sh and the PowerShell fallback write byte-identical agent files"
-  else
-    skip "T68 agent byte parity (pwsh unavailable; set PWSH)"
-  fi
-  if [[ "$t68_passed" == *" sh "* ]]; then
-    for t68_role in "${ROLE_AGENTS[@]}"; do
-      t68_mut="$t68_root/mut-$t68_role"
-      cp -R "$t68_root/sh" "$t68_mut"
-      t68_f="$t68_mut/agents/$t68_role.md"
-      if [ "$t68_role" = fc-pm ]; then
-        awk 'NR == 3 { print; print "disallowedTools: Agent, Skill"; next } { print }' "$t68_f" > "$t68_root/mutant"
-        t68_want="fc-pm:main-session-role-denies-tools"
-      else
-        grep -vx 'disallowedTools: Agent, Skill' "$t68_f" > "$t68_root/mutant"
-        t68_want="$t68_role:can-delegate $t68_role:can-invoke-skills"
-      fi
-      if cmp -s "$t68_root/mutant" "$t68_f"; then
-        bad "T68 mutation: $t68_role deny line" "mutation not applied"
-        continue
-      fi
-      mv "$t68_root/mutant" "$t68_f"
-      t68_mut_out=$(validate_role_frontmatter "$t68_mut" 2>&1)
-      [ "$t68_mut_out" = "$t68_want" ] && ok "T68 mutation: $t68_role deny-line change rejected by its own check" \
-        || bad "T68 mutation: $t68_role deny line" "got '${t68_mut_out:-<empty>}', want '$t68_want'"
-    done
-  else
-    bad "T68 deny-line mutation replay" "control must pass first"
-  fi
-  for engine in "${INSTALLERS[@]}"; do
-    if [[ "$t68_passed" != *" $engine "* ]]; then
-      bad "T68 $engine renderer mutation" "control must pass first"
-      continue
-    fi
-    t68_fixture="$t68_root/renderer-$engine-src"
-    if ! copy_installer_inputs "$t68_fixture"; then
-      bad "T68 $engine renderer mutation" "fixture-copy-failed"
-      continue
-    fi
-    # The ps1 target spells its backtick as \x60: bash 3.2 cannot parse one inside $(...).
-    if ! t68_py=$(python3 - "$engine" "$t68_fixture/install.$engine" 2>&1 <<'PY'
-import pathlib, sys
-engine, path = sys.argv[1:]
-old, new = {
-    'sh': (b"  [ \"$1\" = fc-pm ] || printf -- 'disallowedTools: Agent, Skill\\n'\n", b''),
-    'ps1': (b"  $deny = if ($name -ceq 'fc-pm') { '' } else { \"disallowedTools: Agent, Skill\x60n\" }\n",
-            b"  $deny = ''\n"),
-}[engine]
-target = pathlib.Path(path)
-source = target.read_bytes()
-assert source.count(old) == 1, 'renderer deny emission missing or ambiguous'
-target.write_bytes(source.replace(old, new, 1))
-PY
-    ); then
-      bad "T68 $engine renderer mutation" "$t68_py"
-      continue
-    fi
-    case_err=""
-    run_copied_installer "$t68_fixture" "$engine" "$t68_root/renderer-$engine" --force
-    expect_installer_success renderer-mutant-install
-    t68_mut_out=$(validate_role_frontmatter "$t68_root/renderer-$engine" 2>&1)
-    if [ -z "$case_err" ] && [ "$t68_mut_out" = "$t68_all" ]; then
-      ok "T68 $engine renderer mutation: a dropped deny emission is rejected for all five roles"
-    else
-      bad "T68 $engine renderer mutation" "got '${t68_mut_out:-<empty>}$case_err', want '$t68_all'"
-    fi
-  done
-fi
-
-# ---------------------------------------------------------------- T48
-# Reproduce #23 with v5.0.1's own installer. Counting the fixture's agents and
-# skill directories keeps the removal expectation tied to what it really wrote.
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t48-$engine/untouched"
-  case_err=""
-  if ! seed_v501 "$p"; then
-    bad "T48a $engine recognizes an untouched v5.0.1 install" "v5.0.1 installer fixture failed"
-    continue
-  fi
-  raw_files_manifest "$p" > "$installer_root/t48.old" || case_err="$case_err cannot-hash-fixture"
-  LC_ALL=C awk 'FILENAME == ARGV[1] { old[substr($0,67)]=$0; next }
-    { path=substr($0,67); print (path in old ? old[path] : $0) }' \
-    "$installer_root/t48.old" "$installer_root/t47-$engine.expected" > "$installer_root/t48.expected" \
-    || case_err="$case_err cannot-build-upgrade-expectation"
-  snapshot_tree "$p" > "$installer_root/before"
-  { find "$p/agents" -maxdepth 1 -type f -print
-    find "$p/skills" -mindepth 1 -maxdepth 1 -type d -print
-  } | LC_ALL=C sort > "$installer_root/t48.paths"
-  want=$(wc -l < "$installer_root/t48.paths" | tr -d ' ')
-  [ "$want" -gt 0 ] || case_err="$case_err empty-fixture"
-  run_installer "$engine" "$p" --uninstall --dry-run
-  expect_installer_success dry-uninstall
-  count=$(printf '%s\n' "$installer_out" | grep -c '^kept (yours' || true)
-  [ "$count" -eq 0 ] || case_err="$case_err kept-lines=$count(want-0)"
-  printf '%s\n' "$installer_out" | sed -n 's/^DRY-RUN: would remove //p' | LC_ALL=C sort > "$installer_root/t48.removals"
-  count=$(wc -l < "$installer_root/t48.removals" | tr -d ' ')
-  [ "$count" -eq "$want" ] || case_err="$case_err removal-lines=$count(want-$want)"
-  cmp -s "$installer_root/t48.paths" "$installer_root/t48.removals" || case_err="$case_err removal-paths-differ"
-  printf '%s\n' "$installer_out" | grep -qF 'feature-crew.sha256' && case_err="$case_err unexpected-manifest-line"
-  snapshot_tree "$p" > "$installer_root/after"
-  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-run-changed-fixture"
-  run_installer "$engine" "$p"
-  expect_installer_success nonforce-install
-  expect_manifest_bytes "$p" "$installer_root/t48.expected" recognized-v501
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err recognized-v501:checksum-check-failed"
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
-  installer_result "T48a $engine recognizes an untouched v5.0.1 install without blaming upstream changes"
-
-  p="$installer_root/t48-$engine/edited"
-  case_err=""
-  if ! seed_v501 "$p"; then
-    bad "T48b $engine keeps only the edited v5.0.1 agent" "v5.0.1 installer fixture failed"
-    continue
-  fi
-  printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
-  cp "$p/agents/fc-pm.md" "$installer_root/t48.edited"
-  raw_files_manifest "$p" > "$installer_root/t48.old" || case_err="$case_err cannot-hash-fixture"
-  LC_ALL=C awk 'FILENAME == ARGV[1] { old[substr($0,67)]=$0; next }
-    { path=substr($0,67); print (path in old ? old[path] : $0) }' \
-    "$installer_root/t48.old" "$installer_root/t47-$engine.expected" \
-    | grep -v '  agents/fc-pm.md$' > "$installer_root/t48.expected" \
-    || case_err="$case_err cannot-build-upgrade-expectation"
-  snapshot_tree "$p" > "$installer_root/before"
-  run_installer "$engine" "$p" --uninstall --dry-run
-  expect_installer_success dry-uninstall
-  count=$(printf '%s\n' "$installer_out" | grep -c '^kept (yours' || true)
-  [ "$count" -eq 1 ] || case_err="$case_err kept-lines=$count(want-1)"
-  expect_output_line "kept (yours — differs from what we install): $p/agents/fc-pm.md" edited-agent
-  snapshot_tree "$p" > "$installer_root/after"
-  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-run-changed-fixture"
-  run_installer "$engine" "$p"
-  expect_installer_success nonforce-install
-  expect_manifest_bytes "$p" "$installer_root/t48.expected" excludes-unrecognized-edit
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  [ "$(remaining_files "$p")" = 'agents/fc-pm.md' ] || case_err="$case_err uninstall-did-not-keep-exactly-edited-agent"
-  cmp -s "$installer_root/t48.edited" "$p/agents/fc-pm.md" || case_err="$case_err edited-agent-changed"
-  installer_result "T48b $engine keeps only the edited v5.0.1 agent, without recording its edit as a baseline"
-done
-
-# ---------------------------------------------------------------- T49
-# An untagged install can be recognized only by its recorded baseline. Include
-# CRLF in the changed skill so normalizing its manifest hash would be detected.
-t49_source="$installer_root/t49-source"
-if ! copy_installer_inputs "$t49_source"; then
-  bad "T49 untagged manifest-bearing fixture" "cannot copy this working tree's installer inputs"
-else
-  printf '\nUntagged agent change.\n' >> "$t49_source/agents/fc-pm.md"
-  printf '\r\nUntagged skill change.\r\n' >> "$t49_source/skills/fc-review/SKILL.md"
-  for engine in "${INSTALLERS[@]}"; do
-    p="$installer_root/t49-$engine"
-    case_err=""
-    run_copied_installer "$t49_source" "$engine" "$p" --force
-    expect_installer_success untagged-install
-    raw_files_manifest "$p" > "$installer_root/t49.expected" || case_err="$case_err cannot-hash-untagged-files"
-    expect_manifest_bytes "$p" "$installer_root/t49.expected" untagged-baseline
-    snapshot_tree "$p" > "$installer_root/before"
-    run_installer "$engine" "$p" --uninstall --dry-run
-    expect_installer_success dry-uninstall
-    count=$(printf '%s\n' "$installer_out" | grep -c '^kept (yours' || true)
-    [ "$count" -eq 0 ] || case_err="$case_err kept-lines=$count(want-0)"
-    expect_output_line "DRY-RUN: would remove $p/feature-crew.sha256" dry-manifest-removal
-    snapshot_tree "$p" > "$installer_root/after"
-    cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-run-changed-untagged-install"
-    installer_result "T49 $engine recognizes an untagged manifest-bearing agent and skill"
-  done
-fi
-
-# ---------------------------------------------------------------- T49b
-# Retiring a managed path drops its record, not the installed file itself.
-t49b_source="$installer_root/t49b-source"
-if ! copy_installer_inputs "$t49b_source"; then
-  bad "T49b retired-agent fixture" "cannot copy this working tree's installer inputs"
-else
-  printf '# Fixture-only retired agent\n' > "$t49b_source/agents/fc-retired.md"
-  for engine in "${INSTALLERS[@]}"; do
-    case_err=""
-    for variant in nonforce force; do
-      p="$installer_root/t49b-$engine-$variant"
-      run_copied_installer "$t49b_source" "$engine" "$p" --force
-      expect_installer_success "$variant:fixture-install"
-      if ! cp "$p/agents/fc-retired.md" "$installer_root/t49b.retired"; then
-        case_err="$case_err $variant:retired-agent-snapshot-missing"
-        continue
-      fi
-      hash=$("${installer_hash[@]}" < "$installer_root/t49b.retired" | cut -d' ' -f1)
-      grep -qxF "$hash  agents/fc-retired.md" "$p/feature-crew.sha256" 2>/dev/null \
-        || case_err="$case_err $variant:fixture-manifest-missing-retired-entry"
-      if [ "$variant" = force ]; then run_installer "$engine" "$p" --force
-      else run_installer "$engine" "$p"; fi
-      expect_installer_success "$variant:current-install"
-      raw_files_manifest "$p" | grep -v '  agents/fc-retired\.md$' > "$installer_root/t49b.expected" \
-        || case_err="$case_err $variant:cannot-hash-current-files"
-      expect_manifest_bytes "$p" "$installer_root/t49b.expected" "$variant:current-paths-only"
-      check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err $variant:checksum-check-failed"
-      cmp -s "$installer_root/t49b.retired" "$p/agents/fc-retired.md" || case_err="$case_err $variant:retired-agent-changed"
-    done
-    installer_result "T49b $engine reinstall drops stale manifest entries without changing retired files, with and without force"
-  done
-fi
-
-# ---------------------------------------------------------------- T50
-for engine in "${INSTALLERS[@]}"; do
-  p="$installer_root/t50a-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  raw_files_manifest "$p" | grep '  agents/fc-pm.md$' > "$installer_root/t50.expected"
-  printf '\nMY EDIT\n' >> "$p/agents/fc-pm.md"
-  cp "$p/agents/fc-pm.md" "$installer_root/t50.edited"
-  run_installer "$engine" "$p"
-  expect_installer_success nonforce-install
-  grep '  agents/fc-pm.md$' "$p/feature-crew.sha256" > "$installer_root/t50.entry" 2>/dev/null
-  cmp -s "$installer_root/t50.expected" "$installer_root/t50.entry" || case_err="$case_err nonforce:original-baseline-not-retained"
-  for attempt in 1 2; do
-    run_installer "$engine" "$p" --uninstall
-    expect_installer_success "uninstall-$attempt"
-    cmp -s "$installer_root/t50.edited" "$p/agents/fc-pm.md" || case_err="$case_err uninstall-$attempt:edit-changed"
-    expect_output_line "kept (yours — differs from what we install): $p/agents/fc-pm.md" "uninstall-$attempt:edited-agent"
-    expect_output_line "kept (records the files kept above): $p/feature-crew.sha256" "uninstall-$attempt:kept-manifest"
-    expect_manifest_bytes "$p" "$installer_root/t50.expected" "uninstall-$attempt:original-baseline"
-  done
-  installer_result "T50a $engine never adopts an edited agent as its baseline across reinstall and repeated uninstall"
-
-  p="$installer_root/t50b-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  raw_files_manifest "$p" | grep '  agents/fc-pm.md$' > "$installer_root/t50.expected"
-  if ! seed_v501 "$installer_root/t50b-$engine-old"; then
-    bad "T50b $engine manifest takes precedence over an older published agent" "v5.0.1 installer fixture failed"
-  else
-    old="$installer_root/t50b-$engine-old/agents/fc-pm.md"
-    cmp -s "$old" "$p/agents/fc-pm.md" && case_err="$case_err old-agent-fixture-matches-current-version"
-    cp "$old" "$p/agents/fc-pm.md"
-    run_installer "$engine" "$p"
-    expect_installer_success nonforce-install
-    run_installer "$engine" "$p" --uninstall
-    expect_installer_success uninstall
-    cmp -s "$old" "$p/agents/fc-pm.md" || case_err="$case_err older-published-edit-was-removed"
-    expect_output_line "kept (yours — differs from what we install): $p/agents/fc-pm.md" older-published-edit
-    expect_output_line "kept (records the files kept above): $p/feature-crew.sha256" kept-manifest
-    expect_manifest_bytes "$p" "$installer_root/t50.expected" original-baseline
-    installer_result "T50b $engine manifest takes precedence over an older published agent after non-force reinstall"
-  fi
-
-  p="$installer_root/t50c-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  raw_files_manifest "$p" | grep '  skills/fc-build-or-fix/' > "$installer_root/t50.expected"
-  printf '\nMY SKILL EDIT\n' >> "$p/skills/fc-build-or-fix/SKILL.md"
-  snapshot_tree "$p/skills/fc-build-or-fix" > "$installer_root/t50.skill"
-  for attempt in 1 2; do
-    run_installer "$engine" "$p" --uninstall
-    expect_installer_success "uninstall-$attempt"
-    expect_output_line "kept (yours — differs from what we install): $p/skills/fc-build-or-fix" "uninstall-$attempt:edited-skill"
-    snapshot_tree "$p/skills/fc-build-or-fix" > "$installer_root/after" 2>/dev/null
-    cmp -s "$installer_root/t50.skill" "$installer_root/after" || case_err="$case_err uninstall-$attempt:skill-not-kept-whole"
-    expect_output_line "kept (records the files kept above): $p/feature-crew.sha256" "uninstall-$attempt:kept-manifest"
-    expect_manifest_bytes "$p" "$installer_root/t50.expected" "uninstall-$attempt:skill-baselines"
-  done
-  installer_result "T50c $engine keeps an edited skill whole and retains its original manifest entries"
-
-  # Guard: this already passed before manifests existed; T47 separately proves
-  # that the fresh install really creates the manifest that must disappear.
-  p="$installer_root/t50d-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  [ -z "$(remaining_files "$p")" ] || case_err="$case_err untouched-install-left-files"
-  installer_result "T50d $engine untouched install uninstalls every file, including its manifest (guard)"
-
-  p="$installer_root/t50e-$engine"
-  case_err=""
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  rm "$p/skills/fc-build-or-fix/reference/meta-work-cap.md" || case_err="$case_err missing-file-fixture-failed"
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  [ ! -d "$p/skills/fc-build-or-fix" ] || case_err="$case_err missing-shipped-file-blocks-skill-removal"
-  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
-  installer_result "T50e $engine a missing shipped file does not protect an otherwise untouched skill"
-done
-
-# ---------------------------------------------------------------- T51
-# Execute the installers' own read-only modes, which replaced fc-update's inline
-# predicate: current means an equal manifest AND every installed file hashed.
-# A deleted, edited, or older install needs an update; neither mode writes.
-t51_run() { # engine, prefix, want-exit, label, flags...
-  local engine="$1" prefix="$2" want="$3" label="$4"; shift 4
-  snapshot_tree "$prefix" > "$installer_root/t51.before" 2>/dev/null
-  run_installer "$engine" "$prefix" "$@"
-  [ "$installer_rc" -eq "$want" ] || case_err="$case_err $label:exit=$installer_rc(want-$want)"
-  snapshot_tree "$prefix" > "$installer_root/t51.after" 2>/dev/null
-  cmp -s "$installer_root/t51.before" "$installer_root/t51.after" || case_err="$case_err $label:prefix-changed"
-}
-for engine in "${INSTALLERS[@]}"; do
-  case_err=""
-  p="$installer_root/t51-$engine/current"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  t51_run "$engine" "$p" 0 untouched-check --check
-  expect_output_line 'check: current' untouched-check
-  t51_run "$engine" "$p" 0 untouched-verify --verify
-  expect_output_line 'verify: ok' untouched-verify
-  rm "$p/agents/fc-pm.md" || case_err="$case_err deletion-fixture-failed"
-  t51_run "$engine" "$p" 1 deleted-check --check
-  expect_output_line 'missing: agents/fc-pm.md' deleted-check
-  expect_output_line 'check: update-needed' deleted-check
-  t51_run "$engine" "$p" 1 deleted-verify --verify
-  expect_output_line 'verify: failed' deleted-verify
-
-  p="$installer_root/t51-$engine/edited"
-  run_installer "$engine" "$p"
-  expect_installer_success fresh-install
-  printf '\nMY SKILL EDIT\n' >> "$p/skills/fc-review/SKILL.md"
-  t51_run "$engine" "$p" 1 edited-check --check
-  expect_output_line 'uncertain: skills/fc-review/SKILL.md' edited-check
-  expect_output_line 'check: update-needed' edited-check
-
-  p="$installer_root/t51-$engine/old"
-  if ! seed_v501 "$p"; then
-    case_err="$case_err v501-fixture-failed"
-  else
-    run_installer "$engine" "$p"
-    expect_installer_success nonforce-install
-    t51_run "$engine" "$p" 1 old-check --check
-    expect_output_line 'outdated: feature-crew.sha256' old-check
-    expect_output_line 'check: update-needed' old-check
-    run_installer "$engine" "$p" --force
-    expect_installer_success force-install
-    t51_run "$engine" "$p" 0 forced-check --check
-    expect_output_line 'check: current' forced-check
-    t51_run "$engine" "$p" 0 forced-verify --verify
-    expect_output_line 'verify: ok' forced-verify
-  fi
-  installer_result "T51 $engine --check/--verify: current means an equal manifest AND every installed file hashed"
-done
-
-# ---------------------------------------------------------------- T69
-# Other upgrade fixtures seed v5.0.1, which predates the manifest, or rewrite
-# this clone. v5.2.0 is a real release that records one, and v5.2.1 changes
-# every role agent's frontmatter: every untouched file must read outdated,
-# never uncertain, until --force replaces it; an edited agent must survive a
-# non-force install and uninstall with its recorded baseline, and only it.
-seed_tag() { # tag, prefix: install with that tag's own installer
-  if [ ! -f "$installer_root/$1/install.sh" ]; then
-    mkdir -p "$installer_root/$1" || return 1
-    git -c core.autocrlf=false archive "$1" | tar -x -C "$installer_root/$1" || return 1
-  fi
-  HOME="$installer_root/home" "$installer_bash" "$installer_root/$1/install.sh" --prefix "$2" --force \
-    > "$installer_root/seed.log" 2>&1
-}
-for engine in "${INSTALLERS[@]}"; do
-  case_err=""
-  p="$installer_root/t69-$engine/untouched"
-  if ! seed_tag v5.2.0 "$p"; then
-    bad "T69 $engine upgrades a real v5.2.0 install" "v5.2.0 installer fixture failed"
-    continue
-  fi
-  t51_run "$engine" "$p" 1 untouched-check --check
-  for a in "${ROLE_AGENTS[@]}"; do
-    expect_output_line "outdated: agents/$a.md" "untouched-check:$a"
-  done
-  expect_output_line 'outdated: feature-crew.sha256' untouched-check
-  printf '%s\n' "$installer_out" | grep -qE '^uncertain:' && case_err="$case_err untouched-check:unrecognized-file"
-  # A file added after v5.2.0 is legitimately missing; one that v5.2.0 shipped is not.
-  while IFS= read -r t69_missing; do
-    t69_src="$t69_missing"; case "$t69_src" in skills/*) t69_src=".claude/$t69_src" ;; esac
-    git cat-file -e "v5.2.0:$t69_src" 2>/dev/null && case_err="$case_err untouched-check:missing-$t69_missing"
-  done < <(printf '%s\n' "$installer_out" | sed -n 's/^missing: //p')
-  expect_output_line 'check: update-needed' untouched-check
-  run_installer "$engine" "$p" --force
-  expect_installer_success force-install
-  t51_run "$engine" "$p" 0 forced-check --check
-  expect_output_line 'check: current' forced-check
-  t51_run "$engine" "$p" 0 forced-verify --verify
-  expect_output_line 'verify: ok' forced-verify
-
-  p="$installer_root/t69-$engine/edited"
-  if ! seed_tag v5.2.0 "$p"; then
-    case_err="$case_err edited:v5.2.0-fixture-failed"
-  else
-    grep '  agents/fc-qa-code\.md$' "$p/feature-crew.sha256" > "$installer_root/t69.baseline"
-    printf '\nMY EDIT\n' >> "$p/agents/fc-qa-code.md"
-    cp "$p/agents/fc-qa-code.md" "$installer_root/t69.edited"
-    run_installer "$engine" "$p"
-    expect_installer_success nonforce-install
-    expect_output_line "skip (exists): $p/agents/fc-qa-code.md  [use --force to overwrite]" nonforce-skip
-    run_installer "$engine" "$p" --uninstall
-    expect_installer_success uninstall
-    expect_output_line "kept (yours — differs from what we install): $p/agents/fc-qa-code.md" edited-agent
-    cmp -s "$installer_root/t69.edited" "$p/agents/fc-qa-code.md" || case_err="$case_err edited-agent-changed"
-    [ "$(remaining_files "$p")" = $'agents/fc-qa-code.md\nfeature-crew.sha256' ] \
-      || case_err="$case_err uninstall-did-not-keep-exactly-the-edit"
-    expect_manifest_bytes "$p" "$installer_root/t69.baseline" edited-baseline
-  fi
-  installer_result "T69 $engine upgrades a real v5.2.0 install: untouched reads outdated until --force; an edit and its baseline survive"
-done
-[ "${#INSTALLERS[@]}" -eq 2 ] || skip "T69 ps1 v5.2.0 upgrade (pwsh unavailable; set PWSH)"
-
-# ---------------------------------------------------------------- T52
-# These malformed fixtures use real installed-file hashes, independently of
-# whether the installer can write a manifest yet. That keeps all three RED
-# probes live rather than silently skipping CRLF/traversal when it is absent.
-for engine in "${INSTALLERS[@]}"; do
-  for malformed in text crlf parent-segment; do
-    case_err=""
-    p="$installer_root/t52-$engine-$malformed"
-    run_installer "$engine" "$p"
-    expect_installer_success install
-    raw_files_manifest "$p" > "$installer_root/t52.valid" || case_err="$case_err cannot-hash-installed-files"
-    case "$malformed" in
-      text) printf 'not a manifest\n' > "$p/feature-crew.sha256" ;;
-      crlf) awk '{ printf "%s\r\n", $0 }' "$installer_root/t52.valid" > "$p/feature-crew.sha256" ;;
-      parent-segment) sed 's|  agents/fc-pm.md$|  agents/../fc-pm.md|' "$installer_root/t52.valid" > "$p/feature-crew.sha256" ;;
-    esac
-    cp "$p/feature-crew.sha256" "$installer_root/t52.invalid"
-    for action in install uninstall; do
-      if [ "$action" = install ]; then run_installer "$engine" "$p"
-      else run_installer "$engine" "$p" --uninstall; fi
-      expect_installer_success "$action"
-      expect_output_line "kept (not a Feature-Crew manifest): $p/feature-crew.sha256" "$action:invalid-manifest"
-      cmp -s "$installer_root/t52.invalid" "$p/feature-crew.sha256" || case_err="$case_err $action:invalid-manifest-changed"
-    done
-    [ "$(remaining_files "$p")" = 'feature-crew.sha256' ] || case_err="$case_err uninstall-did-not-leave-only-invalid-manifest"
-    installer_result "T52 $engine preserves a $malformed manifest while treating it as absent"
-  done
-done
-# ------------------------------------------------------------- T52empty
-# Zero lines is valid: install rewrites it; uninstall removes it when empty.
-for engine in "${INSTALLERS[@]}"; do
-  case_err=""
-  p="$installer_root/t52-$engine-empty"
-  mkdir -p "$p"
-  : > "$p/feature-crew.sha256"
-  snapshot_tree "$p" > "$installer_root/before"
-  run_installer "$engine" "$p" --dry-run
-  expect_installer_success dry-install
-  expect_output_line "DRY-RUN: write $p/feature-crew.sha256" dry-empty-manifest-write
-  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err dry-install:empty-manifest-rejected"
-  snapshot_tree "$p" > "$installer_root/after"
-  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-install:tree-changed"
-
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  expect_output_line "installed: $p/feature-crew.sha256" empty-manifest-rewritten
-  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err install:empty-manifest-rejected"
-  raw_files_manifest "$p" > "$installer_root/t52-empty.expected" || case_err="$case_err cannot-hash-installed-files"
-  expect_manifest_bytes "$p" "$installer_root/t52-empty.expected" empty-replaced-with-canonical-manifest
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err checksum-check-failed"
-
-  : > "$p/feature-crew.sha256"
-  snapshot_tree "$p" > "$installer_root/before"
-  run_installer "$engine" "$p" --uninstall --dry-run
-  expect_installer_success dry-uninstall
-  expect_output_line "DRY-RUN: would remove $p/feature-crew.sha256" dry-empty-manifest-removal
-  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err dry-uninstall:empty-manifest-rejected"
-  snapshot_tree "$p" > "$installer_root/after"
-  cmp -s "$installer_root/before" "$installer_root/after" || case_err="$case_err dry-uninstall:tree-changed"
-  run_installer "$engine" "$p" --uninstall
-  expect_installer_success uninstall
-  expect_output_line "removed: $p/feature-crew.sha256" empty-manifest-removed
-  printf '%s\n' "$installer_out" | grep -qF 'kept (not a Feature-Crew manifest):' && case_err="$case_err uninstall:empty-manifest-rejected"
-  [ -z "$(remaining_files "$p")" ] || case_err="$case_err uninstall-left-files"
-  installer_result "T52empty $engine accepts and rewrites an empty manifest, then removes it without dry-run mutation"
-done
-if [ "${#INSTALLERS[@]}" -eq 1 ]; then
-  for n in 47 48a 48b 49 49b 50a 50b 50c 50d 50e 51 52-text 52-crlf 52-parent-segment 52empty; do
-    skip "T$n ps1 manifest regression (pwsh unavailable; set PWSH)"
-  done
-fi
-
 # ---------------------------------------------------------------- T53
-# Prose alarms cannot prove a reader's interpretation. fc-update delegates its
-# predicate to the installers, so pin its commands and consent rules as literal
-# sentences within its Flow; removing any one must fail with its own label.
+# fc-update drives each CLI's own plugin commands; it never copies files and
+# never deletes anything. Pin each command and rule as a literal sentence in
+# its Flow; removing any one must fail with its own label.
 t53_labels=(
-  dirty-clone-refused ff-only-pull check-after-any-pull check-exit-codes current-reports-stale
-  uncertain-listed backup-offered consent-before-force never-decides force-install
-  verify-once errors-stop malformed-manifest-untouched windows-equivalent accepted-limit
+  only-where-installed claude-update copilot-update version-reported
+  legacy-reported installer-migrates reload errors-stop
 )
 t53_rules=(
-  'Run `git status --short`; if the clone is dirty, stop and ask, never stash or discard its work.'
-  'Run `git pull --ff-only` and summarize what arrived.'
-  'Always run `./install.sh --check` next, even when the pull was a no-op.'
-  'It is read-only and exits 0 when current, 1 when an update is needed, and 2 on any error.'
-  'If it reports `check: current`, report its `stale:` lines with the manual `rm` for each, then stop.'
-  'Otherwise list every `uncertain:` file, including files inside skill directories.'
-  'Offer a backup of each (`cp <file> <file>.bak`).'
-  'Get explicit consent before running `--force`.'
-  'Never decide backups or overwrites for the user.'
-  'Run `./install.sh --force` and report its `kept` lines.'
-  'Then run `./install.sh --verify` once and paste its output, with the manual `rm` for each `stale:` line.'
-  'Any error stops the flow.'
-  'Report a malformed manifest and leave it untouched; never rewrite it to pass the check.'
-  'On native Windows without Git Bash, use `.\install.ps1` with `-Check`, `-Force`, and `-Verify`.'
-  'Accepted limit: a file edited between `--check` and `--force` is not asked about again (single-user local window).'
+  'Run `claude plugin list --json` and `copilot plugin list --json` for each CLI on PATH; update only where `feature-crew` is installed.'
+  'Claude Code: run `claude plugin marketplace update feature-crew`, then `claude plugin update feature-crew@feature-crew`.'
+  'Copilot CLI: run `copilot plugin marketplace update feature-crew`, then `copilot plugin update feature-crew@feature-crew`.'
+  'List the plugins again and report the installed version for each CLI.'
+  'If `~/.claude/agents/fc-*.md` or `~/.claude/skills/fc-*/` exist, report them: they are an old script install and shadow the plugin.'
+  'Tell the user to run `./install.sh --dry-run`, then `./install.sh`, from a Feature-Crew clone to remove them.'
+  'Remind the user to start a new session, or run `/reload-plugins` in Claude Code.'
+  'Any error stops the flow; report the command and its output.'
 )
 t53_contract() { # SKILL.md text
-  local flow i at last=-1 errors=""
+  local flow i errors=""
   flow=$(printf '%s\n' "$1" | sed -n '/^## Flow$/,/^## /p')
   for ((i=0; i<${#t53_rules[@]}; i++)); do
     case "$flow" in
       *"${t53_rules[$i]}"*) ;;
       *) errors="$errors ${t53_labels[$i]}" ;;
     esac
-  done
-  # Check, then consent, then --force, then --verify: among the rules present.
-  for i in 2 7 9 10; do
-    case "$flow" in *"${t53_rules[$i]}"*) ;; *) continue ;; esac
-    at="${flow%%"${t53_rules[$i]}"*}"
-    if [ "${#at}" -le "$last" ]; then errors="$errors check-consent-force-verify-order"; break; fi
-    last=${#at}
   done
   printf '%s\n' "$errors"
 }
@@ -3804,9 +1817,8 @@ s=skills/fc-update/SKILL.md
 t53_text=$(cat "$s")
 t53_out=$(t53_contract "$t53_text")
 case_err="$case_err$t53_out"
-# The predicate lives in the installers now; an inline copy here would drift.
-grep -qE 'sha256sum -c|shasum -a 256 -c|cmp -s|mktemp -d' "$s" && case_err="$case_err inline-predicate-returned"
-grep -qiF 'If the pull was a no-op, say so and stop' "$s" && case_err="$case_err no-op-pull-still-stops"
+# The copy installer's flow is gone; a leftover step would run removed flags.
+grep -qE -- '--force|--verify|git pull' "$s" && case_err="$case_err copy-installer-flow-returned"
 count=$(wc -l < "$s" | tr -d ' ')
 [ "$count" -le 40 ] || case_err="$case_err fc-update-lines=$count(want-<=40)"
 if [ -z "$t53_out" ]; then
@@ -3819,599 +1831,23 @@ if [ -z "$t53_out" ]; then
     fi
   done
 fi
-installer_result "T53 fc-update runs --check after any pull, asks consent before --force, then --verify once"
-
-# ---------------------------------------------------------------- T63
-# The installers' read-only --check/--verify modes replaced fc-update's inline
-# predicate. Run both engines over each ownership state, compare the whole
-# ordered output and exit code, and snapshot the prefix, HOME and cwd: these
-# modes never write. Removing hashing, manifest comparison, or the model-key
-# check must fail with that mutation's own diagnostic, not merely some failure.
-t63_root="$installer_root/t63"
-t63_cwd="$t63_root/cwd"
-mkdir -p "$t63_cwd" "$t63_root/parity"
-t63_usage='--check and --verify cannot be combined with each other, --force, --uninstall, or --dry-run'
-t63_shipped=$( { for t63_f in agents/*.md; do printf '%s\n' "$t63_f"; done
-  for t63_d in skills/*/; do
-    [ -f "${t63_d}SKILL.md" ] || continue
-    ( cd "$t63_d" && find . -type f -print | sed "s|^\./|skills/$(basename "$t63_d")/|" )
-  done; } | LC_ALL=C sort)
-t63_agents=$(printf '%s\n' "$t63_shipped" | grep -c '^agents/')
-t63_skills=$(printf '%s\n' "$t63_shipped" | grep -c '^skills/[^/]*/SKILL\.md$')
-t63_record=1
-t63_via=""
-t63_detail=""
-t63_normalize() { # prefix, source, captured output
-  T63_P="$1" T63_S="$2" awk '
-    function swap(s, from, to,   out, i) {
-      out = ""
-      while (from != "" && (i = index(s, from)) > 0) {
-        out = out substr(s, 1, i - 1) to
-        s = substr(s, i + length(from))
-      }
-      return out s
-    }
-    { sub(/\r$/, ""); print swap(swap($0, ENVIRON["T63_P"], "<P>"), ENVIRON["T63_S"], "<SRC>") }
-  ' "$3"
-}
-t63_expect() { printf '%s\n' "$@" > "$t63_root/expected"; }
-# Start an engine the way a user does: by relative path, from $t63_via.
-t63_run_relative() { # engine, prefix, flags...
-  local engine="$1" prefix="$2"; shift 2
-  if [ "$engine" = sh ]; then
-    ( cd "$t63_via" && HOME="$installer_root/home" "$installer_bash" install.sh --prefix "$prefix" "$@" ) \
-      > "$installer_root/run.out" 2>&1
-  else
-    ( cd "$t63_via" && env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
-        POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-        "$PWSH_BIN" -NonInteractive -File install.ps1 --prefix "$prefix" "$@" ) > "$installer_root/run.out" 2>&1
-  fi
-  installer_rc=$?
-  installer_out=$(cat "$installer_root/run.out")
-}
-t63_run() { # engine, prefix, want-exit, label, installer directory, flags...; relative when t63_via is set
-  local engine="$1" prefix="$2" want="$3" label="$4" installer_repo="$5"; shift 5
-  snapshot_tree "$prefix" > "$t63_root/before" 2>/dev/null
-  if [ -n "$t63_via" ]; then
-    t63_run_relative "$engine" "$prefix" "$@"
-  else
-    run_installer_at "$t63_cwd" "$engine" "$prefix" "$@"
-  fi
-  [ "$installer_rc" -eq "$want" ] || case_err="$case_err $label:exit=$installer_rc(want-$want)"
-  t63_normalize "$prefix" "$installer_repo" "$installer_root/run.out" > "$t63_root/actual"
-  if ! cmp -s "$t63_root/expected" "$t63_root/actual"; then
-    case_err="$case_err $label:output-differs"
-    [ -n "$t63_detail" ] || t63_detail="$label: $(diff "$t63_root/expected" "$t63_root/actual" | grep -m 1 '^[<>]')"
-  fi
-  snapshot_tree "$prefix" > "$t63_root/after" 2>/dev/null
-  cmp -s "$t63_root/before" "$t63_root/after" || case_err="$case_err $label:prefix-changed"
-  [ ! -e "$installer_root/home/.claude" ] || case_err="$case_err $label:HOME-install-created"
-  [ -z "$(ls -A "$t63_cwd")" ] || case_err="$case_err $label:cwd-changed"
-  if [ "$t63_record" -eq 1 ]; then
-    { printf 'exit=%s\n' "$installer_rc"; cat "$t63_root/actual"; } > "$t63_root/parity/$engine-$label"
-  fi
-}
-t63_result() {
-  if [ -z "$case_err" ]; then
-    ok "$1"
-  else
-    bad "$1" "issues:$case_err"
-    [ -z "$t63_detail" ] || printf '        first difference: %s\n' "$t63_detail"
-  fi
-  t63_detail=""
-}
-# Lock one source path, run both modes, then restore it. t63_run never aborts,
-# so the restore always runs; cleanup unlocks too if the suite dies mid-case.
-t63_lock_pair() { # engine, prefix, source path to lock, path the error names, label
-  local mode=644
-  [ -d "$t63_fixture/$3" ] && mode=755
-  t63_expect "ERROR: cannot read installer source ($4)"
-  chmod 000 "$t63_fixture/$3"
-  t63_run "$1" "$2" 2 "$5-check" "$t63_fixture" --check
-  t63_run "$1" "$2" 2 "$5-verify" "$t63_fixture" --verify
-  chmod "$mode" "$t63_fixture/$3"
-}
-t63_pin_model() { # copied installer inputs: pin one role agent; add body prose to another
-  { printf -- '---\nname: fc-qa-code\ndescription: "Pinned fixture."\nmodel: opus\n---\n\n'
-    cat "$1/agents/fc-qa-code.md"
-  } > "$t63_root/pin.tmp" && mv "$t63_root/pin.tmp" "$1/agents/fc-qa-code.md" &&
-  printf '\nmodel: in body prose is not a frontmatter key.\n' >> "$1/agents/fc-pm.md"
-}
-t63_published_oracle() { # prefix without a manifest; independent expected --check
-  local rel hash name missing="" outdated="" uncertain="" stale=""
-  while IFS= read -r rel; do
-    if [ ! -e "$1/$rel" ]; then
-      missing="$missing$rel"$'\n'
-    elif ! cmp -s "$1/$rel" "$t63_root/sh/fresh/$rel"; then
-      hash=$(tr -d '\r' < "$1/$rel" | "${installer_hash[@]}" | cut -d' ' -f1)
-      if grep -qxF "$hash  $rel" published.sha256; then outdated="$outdated$rel"$'\n'
-      else uncertain="$uncertain$rel"$'\n'; fi
-    fi
-  done <<< "$t63_shipped"
-  # A v5.0.1 fc-* name this clone no longer ships would be a stale warning.
-  for rel in "$1"/agents/fc-*.md; do
-    [ -f "$rel" ] || continue
-    name=${rel##*/}
-    [ -f "agents/$name" ] || stale="${stale}agents/$name"$'\n'
-  done
-  for rel in "$1"/skills/fc-*/; do
-    [ -d "$rel" ] || continue
-    name=$(basename "$rel")
-    [ -f "skills/$name/SKILL.md" ] || stale="${stale}skills/$name"$'\n'
-  done
-  printf '%s\n' 'feature-crew: checking <P>'
-  printf '%sfeature-crew.sha256\n' "$missing" | LC_ALL=C sort | sed 's/^/missing: /'
-  printf '%s' "$outdated" | LC_ALL=C sort | sed 's/^/outdated: /'
-  printf '%s' "$uncertain" | LC_ALL=C sort | sed 's/^/uncertain: /'
-  printf '%s' "$stale" | LC_ALL=C sort | sed 's/^/stale: /'
-  printf '%s\n' 'check: update-needed'
-}
-t63_can_lock=0
-printf 'probe\n' > "$t63_root/lock-probe"
-chmod 000 "$t63_root/lock-probe"
-cat "$t63_root/lock-probe" > /dev/null 2>&1 || t63_can_lock=1
-chmod 644 "$t63_root/lock-probe"
-[ ! -e "$installer_root/home/.claude" ] || bad "T63 precondition" "$installer_root/home/.claude already exists"
-
-for engine in "${INSTALLERS[@]}"; do
-  base="$t63_root/$engine"
-  mkdir -p "$base"
-
-  case_err=""
-  p="$base/absent"
-  { printf '%s\n' 'feature-crew: checking <P>'
-    printf '%s\n' feature-crew.sha256 "$t63_shipped" | LC_ALL=C sort | sed 's/^/missing: /'
-    printf '%s\n' 'check: update-needed'; } > "$t63_root/expected"
-  t63_run "$engine" "$p" 1 absent-check "$installer_repo" --check
-  { printf '%s\n' 'feature-crew: verifying <P>'
-    printf '%s\n' feature-crew.sha256 "$t63_shipped" | LC_ALL=C sort | sed 's/^/missing: /'
-    printf '%s\n' "agents: 0/$t63_agents verified" "skills: 0/$t63_skills verified" 'verify: failed'
-  } > "$t63_root/expected"
-  t63_run "$engine" "$p" 1 absent-verify "$installer_repo" --verify
-  [ ! -e "$p" ] || case_err="$case_err absent:prefix-created"
-  t63_result "T63 $engine absent prefix: every shipped file and the manifest missing, nothing created"
-
-  case_err=""
-  p="$base/fresh"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  t63_expect 'feature-crew: checking <P>' 'check: current'
-  t63_run "$engine" "$p" 0 fresh-check "$installer_repo" --check
-  t63_expect 'feature-crew: verifying <P>' "agents: $t63_agents/$t63_agents verified" \
-    "skills: $t63_skills/$t63_skills verified" 'verify: ok'
-  t63_run "$engine" "$p" 0 fresh-verify "$installer_repo" --verify
-  t63_result "T63 $engine fresh install: check current and verify ok"
-
-  case_err=""
-  p="$base/missing"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  rm "$p/agents/fc-pm.md" "$p/skills/fc-build-or-fix/reference/meta-work-cap.md" || case_err="$case_err fixture-failed"
-  t63_expect 'feature-crew: checking <P>' 'missing: agents/fc-pm.md' \
-    'missing: skills/fc-build-or-fix/reference/meta-work-cap.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 missing-check "$installer_repo" --check
-  t63_expect 'feature-crew: verifying <P>' 'missing: agents/fc-pm.md' \
-    'missing: skills/fc-build-or-fix/reference/meta-work-cap.md' \
-    "agents: $((t63_agents - 1))/$t63_agents verified" "skills: $((t63_skills - 1))/$t63_skills verified" 'verify: failed'
-  t63_run "$engine" "$p" 1 missing-verify "$installer_repo" --verify
-  t63_result "T63 $engine missing files are listed prefix-relative and sorted"
-
-  case_err=""
-  p="$base/edited"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  printf '\nMY EDIT\n' >> "$p/skills/fc-review/SKILL.md"
-  t63_expect 'feature-crew: checking <P>' 'uncertain: skills/fc-review/SKILL.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 edited-check "$installer_repo" --check
-  t63_expect 'feature-crew: verifying <P>' 'uncertain: skills/fc-review/SKILL.md' \
-    "agents: $t63_agents/$t63_agents verified" "skills: $((t63_skills - 1))/$t63_skills verified" 'verify: failed'
-  t63_run "$engine" "$p" 1 edited-verify "$installer_repo" --verify
-  t63_result "T63 $engine an edited file is uncertain, never current"
-
-  case_err=""
-  p="$base/bom-crlf"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  { printf '\357\273\277'; cat "$p/agents/fc-pm.md"; } > "$t63_root/bom" && mv "$t63_root/bom" "$p/agents/fc-pm.md"
-  awk '{ printf "%s\r\n", $0 }' "$p/skills/fc-review/SKILL.md" > "$t63_root/crlf" && mv "$t63_root/crlf" "$p/skills/fc-review/SKILL.md"
-  t63_expect 'feature-crew: checking <P>' 'uncertain: agents/fc-pm.md' \
-    'uncertain: skills/fc-review/SKILL.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 bom-crlf-check "$installer_repo" --check
-  t63_result "T63 $engine BOM-only and CRLF-only edits are uncertain: hashes cover raw bytes"
-
-  case_err=""
-  p="$base/recorded"
-  t63_fixture="$t63_root/recorded-src"
-  if [ ! -d "$t63_fixture" ]; then
-    copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-copy-failed"
-    printf '\nUntagged agent change.\n' >> "$t63_fixture/agents/fc-pm.md"
-    printf '\r\nUntagged skill change.\r\n' >> "$t63_fixture/skills/fc-review/SKILL.md"
-  fi
-  run_copied_installer "$t63_fixture" "$engine" "$p" --force
-  expect_installer_success untagged-install
-  t63_expect 'feature-crew: checking <P>' 'outdated: agents/fc-pm.md' 'outdated: feature-crew.sha256' \
-    'outdated: skills/fc-review/SKILL.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 recorded-check "$installer_repo" --check
-  t63_result "T63 $engine the recorded baseline marks older bytes outdated, CRLF included"
-
-  case_err=""
-  p="$base/published"
-  if ! seed_v501 "$p"; then
-    case_err="$case_err v501-fixture-failed"
-  else
-    printf '\nMY EDIT\n' >> "$p/agents/fc-architect.md"
-    awk '{ printf "%s\r\n", $0 }' "$p/skills/fc-grill-me/SKILL.md" > "$t63_root/crlf" && mv "$t63_root/crlf" "$p/skills/fc-grill-me/SKILL.md"
-    [ ! -e "$p/feature-crew.sha256" ] || case_err="$case_err v501-wrote-a-manifest"
-    t63_published_oracle "$p" > "$t63_root/expected"
-    grep -qxF 'outdated: skills/fc-grill-me/SKILL.md' "$t63_root/expected" || case_err="$case_err oracle-lost-crlf-outdated"
-    grep -qxF 'uncertain: agents/fc-architect.md' "$t63_root/expected" || case_err="$case_err oracle-lost-uncertain"
-    t63_run "$engine" "$p" 1 published-check "$installer_repo" --check
-  fi
-  t63_result "T63 $engine without a manifest, CR-normalized published hashes mark older files outdated"
-
-  case_err=""
-  p="$base/precedence"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  if [ ! -f "$t63_root/v501-pm.md" ]; then
-    { seed_v501 "$t63_root/v501" && cp "$t63_root/v501/agents/fc-pm.md" "$t63_root/v501-pm.md"; } \
-      || case_err="$case_err v501-fixture-failed"
-  fi
-  cmp -s "$t63_root/v501-pm.md" "$p/agents/fc-pm.md" && case_err="$case_err v501-agent-matches-current"
-  cp "$t63_root/v501-pm.md" "$p/agents/fc-pm.md" || case_err="$case_err fixture-failed"
-  t63_expect 'feature-crew: checking <P>' 'uncertain: agents/fc-pm.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 precedence-baseline "$installer_repo" --check
-  rm -f "$p/feature-crew.sha256"
-  t63_expect 'feature-crew: checking <P>' 'missing: feature-crew.sha256' 'outdated: agents/fc-pm.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 precedence-published "$installer_repo" --check
-  t63_result "T63 $engine a recorded baseline outranks published hashes, which apply only without one"
-
-  case_err=""
-  p="$base/manifests"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  cp "$p/feature-crew.sha256" "$t63_root/valid.sha256"
-  grep -v '  agents/fc-pm\.md$' "$t63_root/valid.sha256" > "$p/feature-crew.sha256"
-  t63_expect 'feature-crew: checking <P>' 'outdated: feature-crew.sha256' 'check: update-needed'
-  t63_run "$engine" "$p" 1 incomplete-check "$installer_repo" --check
-  { cat "$t63_root/valid.sha256"; printf '%064d  agents/fc-forged.md\n' 0; } > "$p/feature-crew.sha256"
-  t63_run "$engine" "$p" 1 forged-entry-check "$installer_repo" --check
-  : > "$p/feature-crew.sha256"
-  t63_run "$engine" "$p" 1 empty-check "$installer_repo" --check
-  # A forged baseline passes sha256sum -c, yet the install is still not current.
-  printf '\nMY EDIT\n' >> "$p/skills/fc-review/SKILL.md"
-  t63_hash=$("${installer_hash[@]}" < "$p/skills/fc-review/SKILL.md" | cut -d' ' -f1)
-  sed "s|^[0-9a-f]\{64\}  skills/fc-review/SKILL\.md\$|$t63_hash  skills/fc-review/SKILL.md|" \
-    "$t63_root/valid.sha256" > "$p/feature-crew.sha256"
-  check_manifest "$p" > "$installer_root/check.out" 2>&1 || case_err="$case_err forged-baseline-not-checksum-clean"
-  t63_expect 'feature-crew: checking <P>' 'outdated: feature-crew.sha256' \
-    'outdated: skills/fc-review/SKILL.md' 'check: update-needed'
-  t63_run "$engine" "$p" 1 forged-baseline-check "$installer_repo" --check
-  t63_result "T63 $engine forged, incomplete, and empty manifests never read as current"
-
-  case_err=""
-  p="$base/malformed"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  cp "$p/feature-crew.sha256" "$t63_root/valid.sha256"
-  for t63_kind in text crlf parent-segment bom directory; do
-    rm -rf "$p/feature-crew.sha256"
-    case "$t63_kind" in
-      text) printf 'not a manifest\n' > "$p/feature-crew.sha256" ;;
-      crlf) awk '{ printf "%s\r\n", $0 }' "$t63_root/valid.sha256" > "$p/feature-crew.sha256" ;;
-      parent-segment) sed 's|  agents/fc-pm\.md$|  agents/../fc-pm.md|' "$t63_root/valid.sha256" > "$p/feature-crew.sha256" ;;
-      bom) { printf '\357\273\277'; cat "$t63_root/valid.sha256"; } > "$p/feature-crew.sha256" ;;
-      directory) mkdir "$p/feature-crew.sha256" ;;
-    esac
-    t63_expect 'ERROR: not a Feature-Crew manifest (left untouched): <P>/feature-crew.sha256'
-    t63_run "$engine" "$p" 2 "malformed-$t63_kind-check" "$installer_repo" --check
-    t63_run "$engine" "$p" 2 "malformed-$t63_kind-verify" "$installer_repo" --verify
-  done
-  t63_result "T63 $engine malformed manifests (text, CRLF, traversal, BOM, directory) exit 2 untouched"
-
-  case_err=""
-  p="$base/stale"
-  run_installer "$engine" "$p"
-  expect_installer_success install
-  mkdir -p "$p/skills/fc-retired" "$p/skills/fc-scratch" "$p/skills/personal"
-  printf 'retired\n' > "$p/skills/fc-retired/SKILL.md"
-  printf 'retired agent\n' > "$p/agents/fc-retired.md"
-  printf 'mine\n' > "$p/agents/personal.md"
-  cp "$installer_root/personal" "$p/skills/fc-review/.notes.md"
-  t63_expect 'feature-crew: checking <P>' 'stale: agents/fc-retired.md' 'stale: skills/fc-retired' \
-    'stale: skills/fc-scratch' 'check: current'
-  t63_run "$engine" "$p" 0 stale-check "$installer_repo" --check
-  t63_expect 'feature-crew: verifying <P>' 'stale: agents/fc-retired.md' 'stale: skills/fc-retired' \
-    'stale: skills/fc-scratch' "agents: $t63_agents/$t63_agents verified" \
-    "skills: $t63_skills/$t63_skills verified" 'verify: ok'
-  t63_run "$engine" "$p" 0 stale-verify "$installer_repo" --verify
-  t63_result "T63 $engine stale fc-* leftovers are warnings: reported, kept, and no update"
-
-  case_err=""
-  p="$base/model"
-  t63_fixture="$t63_root/model-src"
-  if [ ! -d "$t63_fixture" ]; then
-    { copy_installer_inputs "$t63_fixture" && t63_pin_model "$t63_fixture"; } || case_err="$case_err fixture-failed"
-  fi
-  run_copied_installer "$t63_fixture" "$engine" "$p" --force
-  expect_installer_success pinned-install
-  t63_expect 'feature-crew: checking <P>' 'check: current'
-  t63_run "$engine" "$p" 0 model-check "$t63_fixture" --check
-  t63_expect 'feature-crew: verifying <P>' 'model key: agents/fc-qa-code.md' \
-    "agents: $((t63_agents - 1))/$t63_agents verified" "skills: $t63_skills/$t63_skills verified" 'verify: failed'
-  t63_run "$engine" "$p" 1 model-verify "$t63_fixture" --verify
-  t63_result "T63 $engine verify rejects a model key in role-agent frontmatter, not model prose"
-
-  case_err=""
-  p="$base/fresh"
-  t63_fixture="$t63_root/no-agents-src"
-  if [ ! -d "$t63_fixture" ]; then
-    { copy_installer_inputs "$t63_fixture" && rm -rf "$t63_fixture/agents"; } || case_err="$case_err fixture-failed"
-  fi
-  t63_expect 'ERROR: cannot find agents/ next to the installer (<SRC>/agents)'
-  t63_run "$engine" "$p" 2 no-agents-check "$t63_fixture" --check
-  if [ "$t63_can_lock" -eq 1 ]; then
-    for t63_locked in agents/fc-pm.md feature-crew.sha256; do
-      snapshot_tree "$p" > "$t63_root/locked-before"
-      chmod 000 "$p/$t63_locked"
-      run_installer_at "$t63_cwd" "$engine" "$p" --verify
-      chmod 644 "$p/$t63_locked"
-      [ "$installer_rc" -eq 2 ] || case_err="$case_err unreadable-$t63_locked:exit=$installer_rc(want-2)"
-      printf '%s\n' "$installer_out" | grep -qE '^(missing|outdated|uncertain|stale|check|verify):' \
-        && case_err="$case_err unreadable-$t63_locked:reported-a-verdict"
-      snapshot_tree "$p" > "$t63_root/locked-after"
-      cmp -s "$t63_root/locked-before" "$t63_root/locked-after" || case_err="$case_err unreadable-$t63_locked:prefix-changed"
-    done
-  fi
-  t63_result "T63 $engine operational errors (no agents/ source, unreadable file) exit 2 without a verdict"
-
-  # An unreadable source is an operational error on every walk, never a
-  # mismatch: exit 2 and one ERROR line naming the unreadable path relative to
-  # the source root, identical from both engines however they were started.
-  if [ "$t63_can_lock" -eq 1 ]; then
-    case_err=""
-    p="$base/fresh"
-    t63_fixture="$t63_root/locked-src"
-    if [ ! -d "$t63_fixture" ]; then
-      copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-failed"
-    fi
-    for t63_locked in agents agents/fc-pm.md skills skills/fc-review \
-        skills/fc-build-or-fix/reference skills/fc-review/SKILL.md; do
-      t63_lock_pair "$engine" "$p" "$t63_locked" "${t63_locked%/reference}" \
-        "source-$(printf '%s' "${t63_locked#.claude/}" | tr '/.' '--')"
-    done
-    t63_result "T63 $engine an unreadable source (agents, skills, a skill, a nested dir, a file) exits 2 identically"
-
-    # Every file is current, so only an eager read of the table can fail.
-    case_err=""
-    t63_lock_pair "$engine" "$p" published.sha256 published.sha256 source-published
-    t63_result "T63 $engine an unreadable published.sha256 exits 2 in both modes, even when every file is current"
-
-    # Through a symlinked directory sh keeps the logical path and pwsh the
-    # resolved one, so only a source-relative path prints the same from both.
-    case_err=""
-    [ -L "$t63_root/locked-link" ] || ln -s "$t63_fixture" "$t63_root/locked-link" || case_err="$case_err link-failed"
-    t63_via="$t63_root/locked-link"
-    t63_lock_pair "$engine" "$p" skills/fc-build-or-fix/reference skills/fc-build-or-fix linked-reference
-    t63_via=""
-    t63_result "T63 $engine run by relative path through a symlinked directory names the same source-relative path"
-  fi
-
-  case_err=""
-  p="$base/absent"
-  for t63_pair in '--check --verify' '--check --force' '--verify --uninstall' '--check --dry-run' '--verify --force'; do
-    t63_expect "$t63_usage"
-    # shellcheck disable=SC2086 # split the flag pair on purpose
-    t63_run "$engine" "$p" 2 "usage-${t63_pair// /}" "$installer_repo" $t63_pair
-  done
-  if [ "$engine" = ps1 ]; then
-    t63_expect "$t63_usage"
-    t63_run "$engine" "$p" 2 usage-native "$installer_repo" -Check -Force
-  fi
-  t63_result "T63 $engine --check/--verify with each other, --force, --uninstall, or --dry-run is a usage error"
-done
-[ "$t63_can_lock" -eq 1 ] || skip "T63 unreadable prefix and source exit 2 (file permissions not enforced for this user)"
-
-if [ "${#INSTALLERS[@]}" -eq 2 ]; then
-  case_err=""
-  t63_count=0
-  for t63_f in "$t63_root"/parity/sh-*; do
-    [ -f "$t63_f" ] || continue
-    t63_label=${t63_f##*/sh-}
-    t63_count=$((t63_count + 1))
-    cmp -s "$t63_f" "$t63_root/parity/ps1-$t63_label" || case_err="$case_err $t63_label"
-  done
-  [ "$t63_count" -gt 0 ] || case_err="$case_err no-runs-recorded"
-  t63_result "T63 exit-code and output parity: install.sh and the PowerShell fallback agree on all $t63_count runs"
-
-  # Delegation: a Git-layout stub records argv and returns a chosen exit.
-  t63_git="$t63_root/git"
-  mkdir -p "$t63_git/cmd" "$t63_git/bin"
-  printf '#!/bin/sh\nexit 0\n' > "$t63_git/cmd/git"
-  chmod +x "$t63_git/cmd/git"
-  t63_delegate() { # stub exit, install.ps1 arguments...
-    local code="$1"; shift
-    cat > "$t63_git/bin/bash.exe" <<STUB
-#!/bin/sh
-printf '%s\n' "\$@" > "$t63_root/git-args"
-exit $code
-STUB
-    chmod +x "$t63_git/bin/bash.exe"
-    rm -f "$t63_root/git-args"
-    ( cd "$t63_cwd" && env -i HOME="$installer_root/home" PATH="$t63_git/cmd" \
-        POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-        "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" "$@" ) > "$t63_root/delegate.out" 2>&1
-    installer_rc=$?
-  }
-  case_err=""
-  p="$t63_root/delegated"
-  t63_delegate 1 -Check -Prefix "$p"
-  [ "$installer_rc" -eq 1 ] || case_err="$case_err check:exit=$installer_rc(want-1)"
-  [ "$(tail -n +2 "$t63_root/git-args" 2>/dev/null)" = "--check"$'\n'"--prefix"$'\n'"$p" ] \
-    || case_err="$case_err check:argv-not-forwarded"
-  grep -qF 'using the PowerShell installer' "$t63_root/delegate.out" && case_err="$case_err check:fell-back"
-  t63_delegate 2 --verify --prefix "$p"
-  [ "$installer_rc" -eq 2 ] || case_err="$case_err verify:exit=$installer_rc(want-2)"
-  [ "$(tail -n +2 "$t63_root/git-args" 2>/dev/null)" = "--verify"$'\n'"--prefix"$'\n'"$p" ] \
-    || case_err="$case_err verify:argv-not-forwarded"
-  grep -qF 'using the PowerShell installer' "$t63_root/delegate.out" && case_err="$case_err verify:fell-back"
-  t63_delegate 0 -Check -Force -Prefix "$p"
-  [ "$installer_rc" -eq 2 ] || case_err="$case_err conflict:exit=$installer_rc(want-2)"
-  [ ! -e "$t63_root/git-args" ] || case_err="$case_err conflict:delegated-before-rejecting"
-  grep -qxF -- "$t63_usage" "$t63_root/delegate.out" || case_err="$case_err conflict:usage-missing"
-  [ ! -e "$p" ] || case_err="$case_err prefix-created"
-  t63_result "T63 ps1 forwards -Check/--verify to Git Bash, propagates exits 1 and 2, and rejects conflicts first"
-else
-  skip "T63 ps1 check/verify parity and Git Bash delegation (pwsh unavailable; set PWSH)"
-fi
-
-case_err=""
-t63_flags=$(grep '^Flags:' wiki/Usage.md)
-for t63_flag in --check --verify -Check -Verify; do
-  printf '%s\n' "$t63_flags" | grep -qF -- "\`$t63_flag\`" || case_err="$case_err usage-missing:$t63_flag"
-done
-HOME="$installer_root/home" "$installer_bash" "$installer_repo/install.sh" --help > "$t63_root/help.out" 2>&1 \
-  || case_err="$case_err sh-help-failed"
-for t63_flag in --check --verify; do
-  grep -qF -- "$t63_flag" "$t63_root/help.out" || case_err="$case_err sh-help-missing:$t63_flag"
-done
-if [ -n "$PWSH_BIN" ] && [ -x "$PWSH_BIN" ]; then
-  ( cd "$t63_cwd" && env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
-      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-      "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --help ) > "$t63_root/help.out" 2>&1 \
-    || case_err="$case_err ps1-help-failed"
-  for t63_flag in --check -Check --verify -Verify; do
-    grep -qF -- "$t63_flag" "$t63_root/help.out" || case_err="$case_err ps1-help-missing:$t63_flag"
-  done
-fi
-t63_result "T63 wiki Usage Flags line and both installers' help name --check/-Check and --verify/-Verify"
-
-if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
-  skip "T63 native Windows check/verify workflow steps (PyYAML unavailable)"
-elif t63_out=$(python3 - <<'PY'
-import pathlib, sys, yaml
-doc = yaml.safe_load(pathlib.Path('.github/workflows/test.yml').read_text())
-jobs = doc.get('jobs', {})
-errors = []
-for job in ('framework', 'powershell', 'powershell-delegation'):
-    if job not in jobs or jobs[job].get('name', job) != job:
-        errors.append('job-renamed-or-missing:' + job)
-script = str(doc.get('env', {}).get('TEST_CHECK_VERIFY', ''))
-for token in ('-Check', '-Verify', '--check', '--verify', '-Check -Force', 'Get-Command bash, git',
-              'check: update-needed', 'verify: ok', 'feature-crew.sha256', '$global:LASTEXITCODE',
-              'stale: agents/fc-retired.md', 'stale: skills/fc-retired', 'removed a stale entry'):
-    if token not in script:
-        errors.append('check-verify-script-missing:' + token)
-def runs(job, shell, masked):
-    for step in jobs.get(job, {}).get('steps', []):
-        text = str(step.get('run', ''))
-        if step.get('shell') != shell or '$env:TEST_CHECK_VERIFY' not in text:
-            continue
-        mask = text.find('$env:MASK_BASH')
-        engine = str(step.get('env', {}).get('FC_CHECK_ENGINE', ''))
-        if masked and engine == 'fallback' and -1 < mask < text.find('$env:TEST_CHECK_VERIFY'):
-            return True
-        if not masked and engine == 'git-bash' and mask == -1:
-            return True
-    return False
-for shell in ('pwsh', 'powershell'):
-    if not runs('powershell', shell, True):
-        errors.append('masked-fallback-step-missing:' + shell)
-    if not runs('powershell-delegation', shell, False):
-        errors.append('delegation-step-missing:' + shell)
-print(' '.join(errors))
-sys.exit(bool(errors))
-PY
-); then
-  ok "T63 native Windows runs -Check/-Verify, stale warnings included, in the masked fallback and through Git Bash, pwsh and PowerShell 5.1"
-else
-  bad "T63 native Windows check/verify workflow steps" "issues:$t63_out"
-fi
-
-if ! command -v python3 >/dev/null 2>&1; then
-  skip "T63 check/verify mutation replay (python3 unavailable)"
-else
-  t63_record=0
-  for engine in "${INSTALLERS[@]}"; do
-    for t63_variant in hashing manifest model-key; do
-      case_err=""
-      t63_fixture="$t63_root/mut-$engine-$t63_variant-src"
-      p="$t63_root/mut-$engine-$t63_variant"
-      copy_installer_inputs "$t63_fixture" || case_err="$case_err fixture-copy-failed"
-      case "$t63_variant" in
-        hashing)
-          run_installer "$engine" "$p"
-          printf '\nMY EDIT\n' >> "$p/skills/fc-review/SKILL.md"
-          t63_mode=--check
-          t63_expect 'feature-crew: checking <P>' 'uncertain: skills/fc-review/SKILL.md' 'check: update-needed' ;;
-        manifest)
-          run_installer "$engine" "$p"
-          grep -v '  agents/fc-pm\.md$' "$p/feature-crew.sha256" > "$t63_root/incomplete" \
-            && mv "$t63_root/incomplete" "$p/feature-crew.sha256"
-          t63_mode=--check
-          t63_expect 'feature-crew: checking <P>' 'outdated: feature-crew.sha256' 'check: update-needed' ;;
-        model-key)
-          t63_pin_model "$t63_fixture" || case_err="$case_err pin-failed"
-          run_copied_installer "$t63_fixture" "$engine" "$p" --force
-          t63_mode=--verify
-          t63_expect 'feature-crew: verifying <P>' 'model key: agents/fc-qa-code.md' \
-            "agents: $((t63_agents - 1))/$t63_agents verified" "skills: $t63_skills/$t63_skills verified" 'verify: failed' ;;
-      esac
-      expect_installer_success fixture-install
-      t63_run "$engine" "$p" 1 "$t63_variant-control" "$t63_fixture" "$t63_mode"
-      if [ -n "$case_err" ]; then
-        t63_result "T63 $engine $t63_variant mutation replay (control must pass first)"
-        continue
-      fi
-      if ! t63_mut=$(python3 - "$engine" "$t63_variant" "$t63_fixture/install.$engine" 2>&1 <<'PY'
-import pathlib, sys
-engine, variant, path = sys.argv[1:]
-old, new = {
-    ('sh', 'hashing'): (b'    if [ "$got" = "$want" ]; then\n', b'    if true; then\n'),
-    ('ps1', 'hashing'): (b"  if ((Get-Sha256Raw $file) -ceq $want) { return 'current' }\n",
-                         b"  if ($true) { return 'current' }\n"),
-    ('sh', 'manifest'): (b'  elif ! check_manifest_text | cmp -s - "$MANIFEST"; then\n', b'  elif false; then\n'),
-    ('ps1', 'manifest'): (b'  } elseif (-not (Test-BytesEqual $bytes ([IO.File]::ReadAllBytes((Resolve-AbsPath $Manifest))))) {\n',
-                          b'  } elseif ($false) {\n'),
-    ('sh', 'model-key'): (b'    if [ "$VERIFY" -eq 1 ] && [ -f "$PREFIX/$rel" ] && agent_has_model "$PREFIX/$rel"; then\n',
-                          b'    if false; then\n'),
-    ('ps1', 'model-key'): (b'    if ($Verify -and (Test-Path -LiteralPath $dest -PathType Leaf) -and (Test-AgentHasModelKey $dest)) {\n',
-                           b'    if ($false) {\n'),
-}[engine, variant]
-target = pathlib.Path(path)
-source = target.read_bytes()
-assert source.count(old) == 1, 'check/verify mutation target missing or ambiguous'
-mutant = source.replace(old, new, 1)
-assert mutant != source and old not in mutant, 'check/verify mutation not applied'
-target.write_bytes(mutant)
-PY
-      ); then
-        bad "T63 $engine $t63_variant mutation replay" "$t63_mut"
-        continue
-      fi
-      case_err=""
-      t63_run "$engine" "$p" 1 "$t63_variant" "$t63_fixture" "$t63_mode"
-      t63_detail=""
-      if [ "$case_err" = " $t63_variant:exit=0(want-1) $t63_variant:output-differs" ]; then
-        ok "T63 $engine $t63_variant mutation applied and rejected:$case_err"
-      else
-        bad "T63 $engine $t63_variant mutation replay" \
-          "expected ' $t63_variant:exit=0(want-1) $t63_variant:output-differs', got '${case_err:-<no rejection>}'"
-      fi
-    done
-  done
-  t63_record=1
-fi
+installer_result "T53 fc-update updates through each CLI's plugin commands and only reports old files"
 
 # ---------------------------------------------------------------- T54
 case_err=""
-sed -n '/^## Updating$/,/^## /p' wiki/Usage.md | grep -qF 'feature-crew.sha256' || case_err="$case_err update-section-does-not-name-manifest"
+t54_install=$(sed -n '/^## Install$/,/^## /p' wiki/Usage.md)
+for t54_cmd in 'claude plugin marketplace add D0n9X1n/feature-crew' 'claude plugin install feature-crew@feature-crew' \
+    'copilot plugin marketplace add D0n9X1n/feature-crew' 'copilot plugin install feature-crew@feature-crew'; do
+  case "$t54_install" in *"$t54_cmd"*) ;; *) case_err="$case_err usage-install-missing:${t54_cmd// /_}" ;; esac
+  grep -qF "$t54_cmd" README.md || case_err="$case_err readme-missing:${t54_cmd// /_}"
+done
+sed -n '/^## Updating$/,/^## /p' wiki/Usage.md | grep -qF '/fc-update' || case_err="$case_err update-section-does-not-name-fc-update"
 t54_heads=$(grep -E '^#{1,6} ' README.md | tr '\n' '|')
 [ "$t54_heads" = "# Feature-Crew|## Quick start|## Features|" ] || case_err="$case_err README-headings=$t54_heads"
 count=$(wc -l < README.md | tr -d ' ')
 [ "$count" -le 40 ] || case_err="$case_err README-lines=$count(want<=40)"
 grep -qF 'https://github.com/D0n9X1n/feature-crew/wiki' README.md || case_err="$case_err README-no-wiki-link"
-installer_result "T54 wiki Usage explains the install manifest; README keeps only an introduction, quick start, and features"
+installer_result "T54 README and wiki Usage install through each CLI's plugin commands; README keeps only an introduction, quick start, and features"
 
 # ---------------------------------------------------------------- T58
 # Parse the workflow graph: a Linux-only suite in release.yml cannot substantiate
@@ -4476,209 +1912,6 @@ PY
   fi
 fi
 
-# ---------------------------------------------------------------- T59
-# T44/T45 compare dry-run output over untouched installs. They do not prove a
-# forced dry run preserves edits. Snapshot every path and byte, including any
-# manifest, and use the same behavioral guard on originals and four mutants.
-t59_dry_force() { # engine, fixture root, installer to exercise in the dry run
-  local engine="$1" fixture="$2" script="$3"
-  local prefix="$fixture/prefix"
-  case_err=""
-  mkdir -p "$fixture" || { case_err="fixture-directory-failed"; return; }
-  run_installer "$engine" "$prefix"
-  expect_installer_success install
-  [ -f "$prefix/agents/fc-pm.md" ] || case_err="$case_err missing-agent"
-  [ -f "$prefix/skills/fc-review/SKILL.md" ] || case_err="$case_err missing-skill"
-  [ -z "$case_err" ] || return
-  printf '\nMY AGENT EDIT\n' >> "$prefix/agents/fc-pm.md" || case_err="$case_err agent-edit-failed"
-  printf '\nMY SKILL EDIT\n' >> "$prefix/skills/fc-review/SKILL.md" || case_err="$case_err skill-edit-failed"
-  cp "$prefix/agents/fc-pm.md" "$fixture/agent" || case_err="$case_err agent-snapshot-failed"
-  cp "$prefix/skills/fc-review/SKILL.md" "$fixture/skill" || case_err="$case_err skill-snapshot-failed"
-  snapshot_tree "$prefix" > "$fixture/before" || case_err="$case_err before-snapshot-failed"
-  [ -z "$case_err" ] || return
-  if [ "$engine" = sh ]; then
-    HOME="$installer_root/home" "$installer_bash" "$script" --prefix "$prefix" --dry-run --force \
-      > "$installer_root/run.out" 2>&1
-  else
-    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
-      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-      "$PWSH_BIN" -NonInteractive -File "$script" --prefix "$prefix" --dry-run --force \
-      > "$installer_root/run.out" 2>&1
-  fi
-  installer_rc=$?
-  installer_out=$(cat "$installer_root/run.out")
-  expect_installer_success dry-run
-  cmp -s "$fixture/agent" "$prefix/agents/fc-pm.md" || case_err="$case_err dry-run:agent-changed"
-  cmp -s "$fixture/skill" "$prefix/skills/fc-review/SKILL.md" || case_err="$case_err dry-run:skill-changed"
-  snapshot_tree "$prefix" > "$fixture/after" || case_err="$case_err after-snapshot-failed"
-  cmp -s "$fixture/before" "$fixture/after" || case_err="$case_err dry-run:tree-changed"
-}
-for engine in "${INSTALLERS[@]}"; do
-  for variant in control agent-return skill-copy; do
-    t59_script="$installer_repo/install.$engine"
-    if [ "$variant" != control ]; then
-      if ! command -v python3 >/dev/null 2>&1; then
-        skip "T59 $engine $variant mutation replay (python3 unavailable)"
-        continue
-      fi
-      # Like T21, root-local copies find the real sources. Register before
-      # writing so failures cannot leave a mutant in the working tree.
-      t59_script="$installer_repo/t59-$engine-$variant-$$.$engine"
-      CLEANUP_PATHS+=("$t59_script")
-      if ! t59_mutation_out=$(python3 - "$engine" "$variant" "$t59_script" 2>&1 <<'PY'
-import pathlib, sys
-engine, variant, output = sys.argv[1:]
-old, new = {
-    ('sh', 'agent-return'): (
-        b'    say "DRY-RUN: install $src -> $dest  (name: $name)"\n    return 0\n',
-        b'    say "DRY-RUN: install $src -> $dest  (name: $name)"\n'),
-    ('ps1', 'agent-return'): (
-        b'    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return\n',
-        b'    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"\n'),
-    ('sh', 'skill-copy'): (b'    do_or_echo cp "$s" "$d"\n', b'    cp "$s" "$d"\n'),
-    ('ps1', 'skill-copy'): (
-        b'    if ($DryRun) {\n      Write-Host "DRY-RUN: cp $($_.FullName) $d"\n',
-        b'    if ($false) {\n      Write-Host "DRY-RUN: cp $($_.FullName) $d"\n'),
-}[engine, variant]
-source = pathlib.Path('install.' + engine).read_bytes()
-assert source.count(old) == 1, 'dry-run mutation target missing or ambiguous'
-mutant = source.replace(old, new, 1)
-assert mutant != source and old not in mutant, 'dry-run mutation not applied'
-pathlib.Path(output).write_bytes(mutant)
-PY
-      ); then
-        bad "T59 $engine $variant mutation replay" "$t59_mutation_out"
-        continue
-      fi
-    fi
-    t59_dry_force "$engine" "$installer_root/t59-$engine-$variant" "$t59_script"
-    if [ "$variant" = control ]; then
-      installer_result "T59 $engine --dry-run --force preserves edited agent, skill, and the whole install"
-    else
-      case "$variant" in
-        agent-return) t59_expected=' dry-run:agent-changed dry-run:tree-changed' ;;
-        skill-copy) t59_expected=' dry-run:skill-changed dry-run:tree-changed' ;;
-      esac
-      if [ "$case_err" = "$t59_expected" ]; then
-        ok "T59 $engine $variant mutation applied and rejected:$case_err"
-      else
-        bad "T59 $engine $variant mutation replay" "expected '$t59_expected', got '${case_err:-<no rejection>}'"
-      fi
-      rm -f "$t59_script"
-    fi
-  done
-done
-if [ "${#INSTALLERS[@]}" -eq 1 ]; then
-  for variant in control agent-return skill-copy; do
-    skip "T59 ps1 $variant dry-run guard (pwsh unavailable; set PWSH)"
-  done
-fi
-
-# ---------------------------------------------------------------- T60
-# U3 checks ownership per installed skill file, not by file count. An unknown
-# file or an edit to a shipped file must protect the whole skill. Replace only
-# that predicate in a root-local copy, then require actual deletion to prove
-# this same guard rejects the bypass; a setup failure or nonzero exit is not RED.
-t60_skill_ownership() { # engine, fixture root, scenario, uninstall script
-  local engine="$1" fixture="$2" scenario="$3" script="$4"
-  local prefix="$fixture/prefix" skill personal
-  case_err=""
-  mkdir -p "$fixture" || { case_err="fixture-directory-failed"; return; }
-  run_installer "$engine" "$prefix"
-  expect_installer_success install
-  skill="$prefix/skills/fc-build-or-fix"
-  [ -f "$skill/SKILL.md" ] || case_err="$case_err missing-skill"
-  [ -z "$case_err" ] || return
-  if [ "$scenario" = extra-file ]; then
-    personal="$skill/personal-notes.txt"
-    [ ! -e "$personal" ] || { case_err="personal-file-already-shipped"; return; }
-    cp "$installer_root/personal" "$personal" || case_err="$case_err personal-file-fixture-failed"
-  else
-    personal="$skill/SKILL.md"
-    printf '\nMY SKILL EDIT\n' >> "$personal" || case_err="$case_err edited-file-fixture-failed"
-  fi
-  cp "$personal" "$fixture/personal" || case_err="$case_err personal-snapshot-failed"
-  snapshot_tree "$skill" > "$fixture/before" || case_err="$case_err before-snapshot-failed"
-  [ -z "$case_err" ] || return
-  if [ "$engine" = sh ]; then
-    HOME="$installer_root/home" "$installer_bash" "$script" --prefix "$prefix" --uninstall \
-      > "$installer_root/run.out" 2>&1
-  else
-    env -i HOME="$installer_root/home" PATH="$installer_root/empty-path" \
-      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
-      "$PWSH_BIN" -NonInteractive -File "$script" --prefix "$prefix" --uninstall \
-      > "$installer_root/run.out" 2>&1
-  fi
-  installer_rc=$?
-  installer_out=$(cat "$installer_root/run.out")
-  expect_installer_success uninstall
-  if [ ! -f "$personal" ]; then
-    case_err="$case_err uninstall:personal-file-deleted"
-  elif ! cmp -s "$fixture/personal" "$personal"; then
-    case_err="$case_err uninstall:personal-bytes-changed"
-  fi
-  if [ ! -d "$skill" ]; then
-    case_err="$case_err uninstall:skill-deleted"
-  else
-    snapshot_tree "$skill" > "$fixture/after" || case_err="$case_err after-snapshot-failed"
-    cmp -s "$fixture/before" "$fixture/after" || case_err="$case_err uninstall:skill-tree-changed"
-  fi
-}
-for engine in "${INSTALLERS[@]}"; do
-  for variant in control ownership-bypass; do
-    t60_script="$installer_repo/install.$engine"
-    if [ "$variant" = ownership-bypass ]; then
-      if ! command -v python3 >/dev/null 2>&1; then
-        for scenario in extra-file edited-shipped-file; do
-          skip "T60 $engine $scenario ownership-bypass replay (python3 unavailable)"
-        done
-        continue
-      fi
-      t60_script="$installer_repo/t60-$engine-ownership-bypass-$$.$engine"
-      CLEANUP_PATHS+=("$t60_script")
-      if ! t60_mutation_out=$(python3 - "$engine" "$t60_script" 2>&1 <<'PY'
-import pathlib, re, sys
-engine, output = sys.argv[1:]
-pattern, body = {
-    'sh': (rb'^skill_file_is_ours\(\) \{\n(.*?)^\}', b'  return 0\n'),
-    'ps1': (rb'^function Test-SkillFileIsOurs\(\$src, \$dest, \$relativePath\) \{\n(.*?)^\}',
-            b'  return $true\n'),
-}[engine]
-source = pathlib.Path('install.' + engine).read_bytes()
-matches = list(re.finditer(pattern, source, re.M | re.S))
-assert len(matches) == 1, 'skill ownership predicate missing or ambiguous'
-match = matches[0]
-assert match.group(1) != body, 'skill ownership predicate already bypassed'
-mutant = source[:match.start(1)] + body + source[match.end(1):]
-assert mutant != source and list(re.finditer(pattern, mutant, re.M | re.S))[0].group(1) == body, 'ownership mutation not applied'
-pathlib.Path(output).write_bytes(mutant)
-PY
-      ); then
-        bad "T60 $engine ownership-bypass replay" "$t60_mutation_out"
-        continue
-      fi
-    fi
-    for scenario in extra-file edited-shipped-file; do
-      t60_skill_ownership "$engine" "$installer_root/t60-$engine-$variant-$scenario" "$scenario" "$t60_script"
-      if [ "$variant" = control ]; then
-        installer_result "T60 $engine $scenario preserves personal bytes and the whole skill"
-      elif [ "$case_err" = ' uninstall:personal-file-deleted uninstall:skill-deleted' ]; then
-        ok "T60 $engine $scenario ownership-bypass applied and rejected:$case_err"
-      else
-        bad "T60 $engine $scenario ownership-bypass replay" "expected personal-file and skill deletion, got '${case_err:-<no rejection>}'"
-      fi
-    done
-    [ "$variant" = control ] || rm -f "$t60_script"
-  done
-done
-if [ "${#INSTALLERS[@]}" -eq 1 ]; then
-  for variant in control ownership-bypass; do
-    for scenario in extra-file edited-shipped-file; do
-      skip "T60 ps1 $scenario $variant (pwsh unavailable; set PWSH)"
-    done
-  done
-fi
-
 # ---------------------------------------------------------------- T64
 # fc-ship (#39) finishes a PR with no polling loop: the main agent watches CI
 # in the background, reads real states when the watch exits, and merges only a
@@ -4712,25 +1945,6 @@ for t64_i in 0 1; do
   [ "$t64_got" = "${t64_wants[$t64_i]}" ] || case_err="$case_err mutation-$t64_i:got'$t64_got'"
 done
 installer_result "T64 T9 rejects fc-ship scratch copies missing Use when or Do NOT use for"
-
-# T13 replay: a fresh scratch install passes; the same prefix without the
-# installed fc-ship SKILL.md is reported for fc-ship alone.
-case_err=""
-t64_prefix="$t64_root/prefix"
-if bash install.sh --prefix "$t64_prefix" --force >/dev/null 2>&1; then
-  t64_got=$(t13_contract "$t64_prefix")
-  [ -z "$t64_got" ] || case_err="$case_err control-missing:$t64_got"
-  if [ -f "$t64_prefix/skills/fc-ship/SKILL.md" ]; then
-    rm "$t64_prefix/skills/fc-ship/SKILL.md"
-    t64_got=$(t13_contract "$t64_prefix")
-    [ "$t64_got" = ' fc-ship' ] || case_err="$case_err omission:got'$t64_got'"
-  else
-    case_err="$case_err fc-ship-not-installed"
-  fi
-else
-  case_err="$case_err install.sh-failed"
-fi
-installer_result "T64 T13 rejects an install without fc-ship's SKILL.md"
 
 # Static contract: each approved clause, scoped to its own section.
 t64_words=(zero one two three four five six seven eight nine ten eleven twelve)
@@ -5240,6 +2454,317 @@ else
   fi
   installer_result "T64 behavior: with push.default=matching and a stale local base, the documented push moves only the feature ref"
 fi
+
+# ---------------------------------------------------------------- T73
+# Feature-Crew ships as one plugin that Claude Code and Copilot CLI both read
+# from .claude-plugin/. plugin.json owns the version, and a release tag must
+# equal it: an unchanged version blocks the plugin cache from refreshing.
+# Every shipped name keeps the fc- prefix, so a reader knows the plugin is the
+# one running; agents register as feature-crew:<name>, so every dispatch names
+# the qualified agent while skills keep their bare names.
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "T73 plugin package (python3 unavailable)"
+elif t73_out=$(python3 - <<'PY'
+import json, os, re, pathlib
+errs = []
+def load(p):
+    try:
+        return json.loads(pathlib.Path(p).read_text())
+    except Exception:
+        errs.append(f"{p}:unreadable"); return {}
+plugin = load(".claude-plugin/plugin.json")
+market = load(".claude-plugin/marketplace.json")
+if plugin.get("name") != "feature-crew": errs.append("plugin-name")
+if not re.fullmatch(r"\d+\.\d+\.\d+", str(plugin.get("version", ""))): errs.append("plugin-version-not-semver")
+if not (plugin.get("author") or {}).get("name"): errs.append("plugin-author")
+if plugin.get("repository") != "https://github.com/D0n9X1n/feature-crew": errs.append("plugin-repository")
+if plugin.get("license") != "MIT": errs.append("plugin-license")
+for key in ("skills", "agents", "commands"):
+    if key in plugin: errs.append(f"plugin-overrides-default-{key}-path")
+if market.get("name") != "feature-crew": errs.append("marketplace-name")
+if not (market.get("owner") or {}).get("name"): errs.append("marketplace-owner")
+entries = market.get("plugins") or []
+if len(entries) != 1: errs.append("marketplace-entries")
+else:
+    e = entries[0]
+    if e.get("name") != "feature-crew": errs.append("marketplace-entry-name")
+    if e.get("source") != "./": errs.append("marketplace-entry-source")
+    if "version" in e: errs.append("marketplace-entry-duplicates-version")
+for d in sorted(n for n in os.listdir("skills") if not n.startswith(".")):
+    if not d.startswith("fc-"): errs.append(f"skill-unprefixed:{d}")
+    sk = pathlib.Path("skills", d, "SKILL.md")
+    if not sk.is_file(): errs.append(f"skill-no-SKILL.md:{d}"); continue
+    m = re.search(r"^name: (.+)$", sk.read_text(), re.M)
+    if not m or m.group(1).strip() != d: errs.append(f"skill-name-mismatch:{d}")
+for f in sorted(n for n in os.listdir("agents") if not n.startswith(".")):
+    if not f.startswith("fc-"): errs.append(f"agent-unprefixed:{f}")
+roles = "architect|developer|qa-spec|qa-code|tech-lead"
+bare = re.compile(r"`fc-(%s)`" % roles)
+for line in pathlib.Path("skills/fc-build-or-fix/SKILL.md").read_text().splitlines():
+    if re.search(r"[Dd]ispatch", line) and bare.search(line): errs.append("bare-dispatch-in-build-or-fix")
+flow = re.search(r"^## Flow\n(.*?)^## ", pathlib.Path("skills/fc-build-or-fix/reference/complex-track.md").read_text(), re.S | re.M)
+if not flow or bare.search(flow.group(1)): errs.append("bare-role-in-complex-flow")
+for role in roles.split("|"):
+    if not flow or f"`feature-crew:fc-{role}`" not in flow.group(1): errs.append(f"complex-flow-unqualified:{role}")
+if "`feature-crew:fc-qa-code`" not in pathlib.Path("skills/fc-build-or-fix/SKILL.md").read_text():
+    errs.append("standard-qa-unqualified")
+test_yml = pathlib.Path(".github/workflows/test.yml").read_text()
+if not re.search(r"npm install -g @anthropic-ai/claude-code@\d+\.\d+\.\d+", test_yml): errs.append("ci-claude-cli-not-pinned")
+if "claude plugin validate . --strict" not in test_yml: errs.append("ci-no-plugin-validate")
+release = pathlib.Path(".github/workflows/release.yml").read_text()
+if 'scripts/check-release-version.sh "$GITHUB_REF_NAME"' not in release: errs.append("release-no-version-check")
+print(" ".join(errs))
+PY
+) && [ -z "$t73_out" ]; then
+  ok "T73 one feature-crew plugin with its marketplace, fc- names, qualified agent dispatch, CI validate"
+else
+  bad "T73 plugin package" "issues:${t73_out:-python-failed}"
+fi
+case_err=""
+t73_version=$(python3 -c 'import json;print(json.load(open(".claude-plugin/plugin.json"))["version"])' 2>/dev/null)
+if [ -z "$t73_version" ]; then
+  case_err="$case_err no-version"
+else
+  bash scripts/check-release-version.sh "v$t73_version" >/dev/null 2>&1 || case_err="$case_err matching-tag-rejected"
+  bash scripts/check-release-version.sh "v0.0.0-not-$t73_version" >/dev/null 2>&1 && case_err="$case_err mismatched-tag-accepted"
+  bash scripts/check-release-version.sh "$t73_version" >/dev/null 2>&1 && case_err="$case_err tag-without-v-accepted"
+fi
+installer_result "T73 release version check accepts only v + plugin.json version"
+
+# ---------------------------------------------------------------- T74
+# On Copilot CLI the gate reads ~/.copilot/session-state/<session>/events.jsonl.
+# Run the reference's own two queries against fixtures: the first must list
+# every model that answered one dispatch, the second must expose any task or
+# skill call made inside it, and neither may pick up another dispatch's events.
+case_err=""
+t74_doc=skills/fc-build-or-fix/reference/gate-provenance.md
+t74_section=$(sed -n '/^## Copilot CLI record$/,/^## /p' "$t74_doc")
+for t74_phrase in '~/.copilot/session-state/<session>/events.jsonl' 'GATE UNSATISFIED' 'totalTokens' '`model`'; do
+  case "$t74_section" in *"$t74_phrase"*) ;; *) case_err="$case_err missing-phrase:$t74_phrase" ;; esac
+done
+t74_models=$(printf '%s\n' "$t74_section" | grep -E '^jq -r --arg call ' | sed -n 1p)
+t74_nested=$(printf '%s\n' "$t74_section" | grep -E '^jq -r --arg call ' | sed -n 2p)
+[ -n "$t74_models" ] && [ -n "$t74_nested" ] || case_err="$case_err queries-missing"
+if ! command -v jq >/dev/null 2>&1; then
+  skip "T74 Copilot record queries (jq unavailable)"
+elif [ -n "$t74_models" ] && [ -n "$t74_nested" ]; then
+  t74_dir=$(mktemp -d); CLEANUP_PATHS+=("$t74_dir")
+  ev() { printf '%s\n' "$1" >> "$t74_dir/$2"; }
+  for f in clean fallback delegated; do
+    ev '{"type":"tool.execution_start","data":{"toolCallId":"call_R","toolName":"task","model":"claude-opus-5.5"}}' "$f"
+    ev '{"type":"subagent.started","data":{"toolCallId":"call_R","agentName":"feature-crew:fc-qa-code","model":"gpt-6-astra"}}' "$f"
+    ev '{"type":"assistant.message","data":{"parentToolCallId":"call_R","model":"gpt-6-astra"}}' "$f"
+    ev '{"type":"assistant.message","data":{"model":"claude-opus-5.5"}}' "$f"
+    ev '{"type":"subagent.started","data":{"toolCallId":"call_OTHER","agentName":"general-purpose","model":"claude-sonnet-5"}}' "$f"
+    ev '{"type":"tool.execution_start","data":{"toolCallId":"call_X","toolName":"task","parentToolCallId":"call_OTHER"}}' "$f"
+  done
+  ev '{"type":"assistant.message","data":{"parentToolCallId":"call_R","model":"claude-haiku-4.5"}}' fallback
+  ev '{"type":"tool.execution_start","data":{"toolCallId":"call_N","toolName":"task","parentToolCallId":"call_R"}}' delegated
+  ev '{"type":"tool.execution_start","data":{"toolCallId":"call_S","toolName":"skill","parentToolCallId":"call_R"}}' delegated
+  for f in clean fallback delegated; do
+    ev '{"type":"subagent.completed","data":{"toolCallId":"call_R","model":"gpt-6-astra","totalTokens":1200}}' "$f"
+  done
+  t74_run() { # query, fixture
+    local call=call_R events="$t74_dir/$2"
+    eval "$1" 2>&1 | tr '\n' ' ' | sed 's/ $//'
+  }
+  [ "$(t74_run "$t74_models" clean)" = 'gpt-6-astra' ] || case_err="$case_err clean-models:'$(t74_run "$t74_models" clean)'"
+  [ "$(t74_run "$t74_models" fallback)" = 'claude-haiku-4.5 gpt-6-astra' ] || case_err="$case_err fallback-models:'$(t74_run "$t74_models" fallback)'"
+  [ -z "$(t74_run "$t74_nested" clean)" ] || case_err="$case_err clean-nested:'$(t74_run "$t74_nested" clean)'"
+  [ "$(t74_run "$t74_nested" delegated)" = 'task skill' ] || case_err="$case_err delegated-nested:'$(t74_run "$t74_nested" delegated)'"
+fi
+installer_result "T74 Copilot record queries list every model of one dispatch and expose nested task or skill calls"
+
+# ---------------------------------------------------------------- T76
+# The installers install the plugin through each CLI found on PATH, then
+# remove the old script install: every fc-era path even when edited (the
+# user's decision; edited copies would shadow the plugin's bare skill names),
+# and pre-fc files only when published.sha256 proves them ours. Stub CLIs
+# record every call and keep marketplace/plugin state in files, so no real CLI
+# or network is touched. Both engines must print the same lines.
+t76_root="$installer_root/t76"
+mkdir -p "$t76_root/stub"
+cp tests/stub-cli "$t76_root/stub/cli"
+chmod +x "$t76_root/stub/cli"
+t76_run() { # engine, clis(both|claude|none), prefix, flags...
+  local engine="$1" clis="$2" prefix="$3" bin="$t76_root/bin-$2"; shift 3
+  if [ ! -d "$bin" ]; then
+    mkdir -p "$bin"
+    case "$clis" in both) cp "$t76_root/stub/cli" "$bin/claude"; cp "$t76_root/stub/cli" "$bin/copilot" ;;
+      claude) cp "$t76_root/stub/cli" "$bin/claude" ;; esac
+  fi
+  if [ "$engine" = sh ]; then
+    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" \
+      "$installer_bash" "$installer_repo/install.sh" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
+  else
+    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" \
+      POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
+      "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
+  fi
+  t76_rc=$?
+  t76_out=$(sed "s#$prefix#<P>#g" "$t76_root/out")
+  t76_err=$(sed "s#$prefix#<P>#g" "$t76_root/err")
+  t76_calls=$(cat "$t76_state/calls" 2>/dev/null)
+}
+t76_seed() { # prefix: v5.3.1 then v3.1 installed by their own installers, plus edits
+  local t
+  if [ ! -d "$t76_root/seed" ]; then
+    for t in v5.3.1 v3.1; do
+      mkdir -p "$t76_root/src/$t" && git -c core.autocrlf=false archive "$t" | tar -x -C "$t76_root/src/$t" || return 1
+      HOME="$installer_root/home" "$installer_bash" "$t76_root/src/$t/install.sh" --prefix "$t76_root/seed" --force \
+        > "$t76_root/seed.log" 2>&1 || return 1
+    done
+    printf '\nMY EDIT\n' >> "$t76_root/seed/skills/fc-update/SKILL.md"
+    printf 'my notes\n' > "$t76_root/seed/skills/fc-review/notes.md"
+    printf '\nMY EDIT\n' >> "$t76_root/seed/agents/feature-crew/pm.md"
+    printf 'my sources\n' > "$t76_root/seed/skills/research/sources.md"
+    awk '{ printf "%s\r\n", $0 }' "$t76_root/seed/skills/build-or-fix/SKILL.md" > "$t76_root/crlf" \
+      && mv "$t76_root/crlf" "$t76_root/seed/skills/build-or-fix/SKILL.md"
+    printf 'my own agent\n' > "$t76_root/seed/agents/pm.md"
+    mkdir -p "$t76_root/seed/skills/fc-mine" && printf 'mine\n' > "$t76_root/seed/skills/fc-mine/SKILL.md"
+  fi
+  rm -rf "$1" && cp -R "$t76_root/seed" "$1"
+}
+t76_tree() { (cd "$1" 2>/dev/null && find . \( -type f -o -type l \) | LC_ALL=C sort | while IFS= read -r f; do
+  printf '%s %s\n' "$("${installer_hash[@]}" < "$f" | cut -d' ' -f1)" "$f"; done); }
+t76_left=$'./agents/feature-crew/pm.md\n./agents/pm.md\n./skills/fc-mine/SKILL.md\n./skills/research/sources.md'
+T76_FC_AGENTS=(fc-architect fc-developer fc-pm fc-qa-code fc-qa-spec fc-tech-lead)
+T76_FC_SKILLS=(fc-brainstorm fc-build-or-fix fc-debug fc-explain fc-grill-me fc-research fc-review fc-second-opinion fc-ship fc-update)
+t76_removals() { # verb: removed | would remove | old file
+  local v="$1" n
+  for n in "${T76_FC_AGENTS[@]}"; do printf '%s: <P>/agents/%s.md\n' "$v" "$n"; done
+  for n in "${T76_FC_SKILLS[@]}"; do printf '%s: <P>/skills/%s\n' "$v" "$n"; done
+  printf '%s: <P>/feature-crew.sha256\n' "$v"
+  for n in architect developer qa-code-reviewer qa-spec-reviewer tech-lead; do printf '%s: <P>/agents/feature-crew/%s.md\n' "$v" "$n"; done
+  printf '%s: <P>/skills/build-or-fix/SKILL.md\n%s: <P>/skills/research/SKILL.md\n' "$v" "$v"
+}
+t76_kept() { printf 'kept (not ours): <P>/agents/feature-crew/pm.md\nkept (not ours): <P>/skills/research/sources.md\n'; }
+t76_steps() { # mode: fresh|rerun|dry, clis...
+  local mode="$1" c; shift
+  for c in "$@"; do
+    case "$mode" in
+      fresh) printf 'run: %s plugin marketplace add D0n9X1n/feature-crew\nstub: marketplace added\n' "$c"
+             printf 'run: %s plugin install feature-crew@feature-crew\nstub: plugin installed\n' "$c" ;;
+      rerun) printf 'run: %s plugin marketplace update feature-crew\nstub: marketplace updated\n' "$c"
+             printf 'run: %s plugin update feature-crew@feature-crew\nstub: plugin updated\n' "$c" ;;
+      dry)   printf 'would run: %s plugin marketplace add D0n9X1n/feature-crew\n' "$c"
+             printf 'would run: %s plugin install feature-crew@feature-crew\n' "$c" ;;
+    esac
+  done
+}
+t76_banner=$'Done. Start a new Claude Code or Copilot CLI session to load the plugin.\nDescribe your need naturally in any project; slash commands are optional.\nAvailable: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-explain, /fc-grill-me, /fc-research,\n/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent.'
+t76_head() { printf 'feature-crew: plugin source D0n9X1n/feature-crew; old install at <P>\n'; }
+t76_expect() { # label, want-rc, want-out
+  [ "$t76_rc" = "$2" ] || case_err="$case_err $1:rc=$t76_rc(want-$2):$(printf '%s' "$t76_err" | tail -1)"
+  [ "$t76_out" = "$3" ] || case_err="$case_err $1:out-differs"$'\n'"--- want"$'\n'"$3"$'\n'"--- got"$'\n'"$t76_out"$'\n'
+}
+for engine in "${INSTALLERS[@]}"; do
+  case_err=""
+  p="$t76_root/$engine/p"
+
+  # Fresh: no old install, both CLIs present; then a rerun updates.
+  t76_state="$t76_root/$engine/state-fresh"; rm -rf "$t76_state" "$p"
+  t76_run "$engine" both "$p"
+  t76_expect fresh 0 "$(t76_head; t76_steps fresh claude copilot; printf '%s' "$t76_banner")"
+  [ "$t76_calls" = "$(printf '%s\n' 'claude plugin marketplace list --json' 'claude plugin marketplace add D0n9X1n/feature-crew' \
+    'claude plugin list --json' 'claude plugin install feature-crew@feature-crew' 'copilot plugin marketplace list --json' \
+    'copilot plugin marketplace add D0n9X1n/feature-crew' 'copilot plugin list --json' 'copilot plugin install feature-crew@feature-crew')" ] \
+    || case_err="$case_err fresh:calls:$(printf '%s' "$t76_calls" | tr '\n' '|')"
+  [ ! -e "$p" ] || case_err="$case_err fresh:created-prefix"
+  t76_run "$engine" both "$p"
+  t76_expect rerun 0 "$(t76_head; t76_steps rerun claude copilot; printf '%s' "$t76_banner")"
+
+  # Migrate: install first, then remove the old install; edits to pre-fc files survive.
+  t76_state="$t76_root/$engine/state-migrate"; rm -rf "$t76_state"
+  t76_seed "$p" || case_err="$case_err seed-failed"
+  t76_run "$engine" both "$p" --dry-run
+  t76_expect dry-run 0 "$(t76_head; t76_steps dry claude copilot; t76_removals 'would remove'; t76_kept; printf 'Dry run: nothing changed.')"
+  printf '%s\n' "$t76_calls" | grep -qvE ' list --json$' && case_err="$case_err dry-run:mutating-call"
+  t76_before=$(t76_tree "$p")
+  t76_run "$engine" both "$p" --check
+  t76_expect check-before 1 "$(t76_head; printf 'claude: feature-crew missing\ncopilot: feature-crew missing\n'; t76_removals 'old file'; t76_kept; printf 'check: action-needed')"
+  [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err check:changed-tree"
+  printf '%s\n' "$t76_calls" | grep -qvE ' list --json$' && case_err="$case_err check:mutating-call"
+  t76_fail='copilot plugin install'
+  t76_run "$engine" both "$p"
+  t76_fail=''
+  [ "$t76_rc" = 1 ] || case_err="$case_err cli-failure:rc=$t76_rc"
+  case "$t76_err" in *'feature-crew: copilot step failed; old files left in place.'*) ;; *) case_err="$case_err cli-failure:no-message" ;; esac
+  [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err cli-failure:touched-old-install"
+  t76_run "$engine" both "$p"
+  t76_expect migrate 0 "$(t76_head; printf 'run: claude plugin marketplace update feature-crew\nstub: marketplace updated\nrun: claude plugin update feature-crew@feature-crew\nstub: plugin updated\n'
+    printf 'run: copilot plugin marketplace update feature-crew\nstub: marketplace updated\nrun: copilot plugin install feature-crew@feature-crew\nstub: plugin installed\n'
+    t76_removals removed; t76_kept; printf '%s' "$t76_banner")"
+  [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err migrate:left=$(cd "$p" && find . -type f | LC_ALL=C sort | tr '\n' ' ')"
+  [ ! -e "$p/skills/build-or-fix" ] || case_err="$case_err migrate:empty-dir-kept"
+  t76_run "$engine" both "$p" --check
+  t76_expect check-after 0 "$(t76_head; printf 'claude: feature-crew installed\ncopilot: feature-crew installed\n'; t76_kept; printf 'check: current')"
+
+  # Uninstall removes the plugin from each CLI and keeps the user's files.
+  t76_run "$engine" both "$p" --uninstall
+  t76_expect uninstall 0 "$(printf 'feature-crew: uninstalling; old install at <P>\n'
+    for c in claude copilot; do printf 'run: %s plugin uninstall feature-crew@feature-crew\nstub: plugin uninstalled\nrun: %s plugin marketplace remove feature-crew\nstub: marketplace removed\n' "$c" "$c"; done
+    t76_kept; printf 'Done. Feature-Crew is uninstalled.')"
+  [ ! -e "$t76_state/claude.marketplace" ] && [ ! -e "$t76_state/copilot.plugin" ] || case_err="$case_err uninstall:state-left"
+  [ "$(cd "$p" && find . -type f | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err uninstall:touched-user-files"
+
+  # Only the CLIs on PATH are used; neither on PATH changes nothing.
+  t76_state="$t76_root/$engine/state-claude"; rm -rf "$t76_state" "$p"
+  t76_run "$engine" claude "$p" --source /src/feature-crew
+  t76_expect claude-only 0 "$(printf 'feature-crew: plugin source /src/feature-crew; old install at <P>\n'
+    printf 'run: claude plugin marketplace add /src/feature-crew\nstub: marketplace added\nrun: claude plugin install feature-crew@feature-crew\nstub: plugin installed\n'; printf '%s' "$t76_banner")"
+  t76_state="$t76_root/$engine/state-none"; rm -rf "$t76_state"
+  t76_seed "$p"; t76_before=$(t76_tree "$p")
+  t76_run "$engine" none "$p"
+  [ "$t76_rc" = 2 ] || case_err="$case_err no-cli:rc=$t76_rc"
+  case "$t76_err" in *'feature-crew: neither claude nor copilot is on PATH'*) ;; *) case_err="$case_err no-cli:no-message" ;; esac
+  [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err no-cli:touched-old-install"
+
+  # Usage errors exit 2 before touching anything.
+  for t76_bad in '--bogus' '--check --dry-run' '--check --uninstall' '--source' '--force'; do
+    t76_run "$engine" both "$p" $t76_bad
+    [ "$t76_rc" = 2 ] || case_err="$case_err usage[$t76_bad]:rc=$t76_rc"
+  done
+  [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err usage:touched-old-install"
+  installer_result "T76 $engine installs the plugin per CLI, then removes the old install; dry-run, check, failure, uninstall, usage"
+done
+[ "${#INSTALLERS[@]}" -eq 2 ] || skip "T76 ps1 installer (pwsh unavailable; set PWSH)"
+
+# ---------------------------------------------------------------- T77
+# The installers' fixed old-install lists must equal what tagged installers
+# actually wrote (v3.1 through v5.3.1; v3.0's installer does not run), and
+# every pre-fc file must have a published hash. Both engines carry the same lists.
+case_err=""
+t77_list() { # file, variable name: the quoted words of its one-line array
+  grep -E "^\\\$?$2 *= *(@)?\(" "$1" | head -1 | grep -oE "[\"'][a-z-]+[\"']" | tr -d "\"'" | tr '\n' ' '
+}
+for t77_v in LEGACY_FC_AGENTS LEGACY_FC_SKILLS LEGACY_OLD_AGENTS LEGACY_OLD_SKILLS; do
+  [ -n "$(t77_list install.sh "$t77_v")" ] || case_err="$case_err sh-missing:$t77_v"
+  [ "$(t77_list install.sh "$t77_v")" = "$(t77_list install.ps1 "$t77_v")" ] || case_err="$case_err engines-differ:$t77_v"
+done
+{
+  for n in $(t77_list install.sh LEGACY_FC_AGENTS); do echo "agents/$n.md"; done
+  for n in $(t77_list install.sh LEGACY_FC_SKILLS); do echo "skills/$n"; done
+  echo feature-crew.sha256
+  for n in $(t77_list install.sh LEGACY_OLD_AGENTS); do echo "agents/feature-crew/$n.md"; done
+  for n in $(t77_list install.sh LEGACY_OLD_SKILLS); do echo "skills/$n"; done
+} | LC_ALL=C sort -u > "$installer_root/t77.want"
+: > "$installer_root/t77.files"
+for t77_tag in v3.1 v4.0 v5.0.0 v5.0.1 v5.1.0 v5.1.1 v5.2.0 v5.2.1 v5.3.0 v5.3.1; do
+  t77_src="$installer_root/t77/$t77_tag"; t77_p="$installer_root/t77/$t77_tag-p"
+  mkdir -p "$t77_src" && git -c core.autocrlf=false archive "$t77_tag" | tar -x -C "$t77_src" \
+    || { case_err="$case_err $t77_tag:archive"; continue; }
+  HOME="$installer_root/home" "$installer_bash" "$t77_src/install.sh" --prefix "$t77_p" --force > /dev/null 2>&1 \
+    || { case_err="$case_err $t77_tag:install"; continue; }
+  (cd "$t77_p" && find . -type f | sed 's#^\./##') >> "$installer_root/t77.files"
+done
+sed -E 's#^(skills/[^/]+)/.*#\1#' "$installer_root/t77.files" | LC_ALL=C sort -u > "$installer_root/t77.got"
+cmp -s "$installer_root/t77.want" "$installer_root/t77.got" \
+  || case_err="$case_err lists-differ:$(diff "$installer_root/t77.want" "$installer_root/t77.got" | grep '^[<>]' | tr '\n' ' ')"
+for t77_rel in $(LC_ALL=C sort -u "$installer_root/t77.files" | grep -vE '^(agents/fc-|skills/fc-|feature-crew\.sha256$)'); do
+  grep -qE "  $t77_rel\$" published.sha256 || case_err="$case_err unpublished:$t77_rel"
+done
+installer_result "T77 old-install lists equal what v3.1-v5.3.1 installed, in both engines; pre-fc files all have published hashes"
 
 # ---------------------------------------------------------------- T67
 # T67: the wiki publisher mirrors wiki/ exactly, and its test catches drift.

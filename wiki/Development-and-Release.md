@@ -44,7 +44,7 @@ flowchart TB
 3. **Ruleset.** The repository ruleset "Require test workflow on main" requires all three checks before a merge.
 4. **Merge.** `/fc-ship` squash-merges with `--match-head-commit` and no admin bypass, then confirms the PR shows MERGED and that the merged tree equals the head tree.
 5. **Wiki.** `publish-wiki.yml` runs after each push to `main`. It checks out `main` as it is at run time, so re-running an older run cannot publish stale pages. It clones the wiki repository with the job's short-lived token, rebuilds the top-level pages from `wiki/` with `scripts/publish-wiki.sh`, and pushes to the wiki's `master` only when a page changed. Runs are serialized, and only this job may write.
-6. **Release.** A maintainer tags `main` as `vMAJOR.MINOR.PATCH` and pushes the tag last (`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`). `release.yml` reruns `test.yml`, refuses a tag that is not on `main`, and publishes a release body built from the commits since the previous tag. That body is the only changelog.
+6. **Release.** A maintainer tags `main` as `vMAJOR.MINOR.PATCH` and pushes the tag last (`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`). Bump the version in `.claude-plugin/plugin.json` in the release PR first. `release.yml` reruns `test.yml`, refuses a tag that is not on `main` or does not equal `v` plus that version, and publishes a release body built from the commits since the previous tag. That body is the only changelog.
 
 | Component | Job | Key files | Evidence |
 |---|---|---|---|
@@ -67,7 +67,8 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── skills/fc-*/       # ten skills
+├── .claude-plugin/             # plugin manifest and its marketplace
+├── skills/fc-*/               # ten skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test

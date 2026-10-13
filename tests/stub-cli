@@ -1,0 +1,24 @@
+#!/bin/bash
+PATH=/usr/bin:/bin
+cli=$(basename "$0"); st="$FC_STUB_STATE"; mkdir -p "$st"
+printf '%s %s\n' "$cli" "$*" >> "$st/calls"
+case " $FC_STUB_FAIL " in *" $cli $1 $2 "*) echo "stub: $cli $1 $2 failed" >&2; exit 1 ;; esac
+mp="$st/$cli.marketplace"; pl="$st/$cli.plugin"
+case "$1 $2" in
+  "plugin list")
+    if [ -f "$pl" ]; then
+      if [ "$cli" = claude ]; then printf '[\n  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0"\n  }\n]\n'
+      else printf '[\n  {\n    "name": "feature-crew",\n    "marketplace": "feature-crew",\n    "version": "6.0.0"\n  }\n]\n'; fi
+    else echo '[]'; fi ;;
+  "plugin marketplace")
+    case "$3" in
+      list) if [ -f "$mp" ]; then printf '[\n  {\n    "name": "feature-crew"\n  }\n]\n'; else echo '[]'; fi ;;
+      add) : > "$mp"; echo "stub: marketplace added" ;;
+      update) echo "stub: marketplace updated" ;;
+      remove) rm -f "$mp" "$pl"; echo "stub: marketplace removed" ;;
+    esac ;;
+  "plugin install") : > "$pl"; echo "stub: plugin installed" ;;
+  "plugin update") echo "stub: plugin updated" ;;
+  "plugin uninstall") rm -f "$pl"; echo "stub: plugin uninstalled" ;;
+  *) echo "stub: unexpected $*" >&2; exit 9 ;;
+esac

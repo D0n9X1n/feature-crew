@@ -56,7 +56,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 4. User approves spec unless waived.
 5. Implement TDD: failing test → observe failure → minimal code → observe pass → refactor.
 6. Run the must-pass full suite and paste output.
-7. Dispatch `fc-qa-code` in one-clue mode for combined spec + code review, using the selector below.
+7. Dispatch `feature-crew:fc-qa-code` in one-clue mode for combined spec + code review, using the selector below.
 8. Judge the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.
 9. Commit only when authorized; use a feature branch, then continue with `/fc-ship`.
 

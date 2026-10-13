@@ -6,12 +6,18 @@
 
 ## 安装
 
+Feature-Crew 是一个同时用于 Claude Code 和 GitHub Copilot CLI 的插件。可以装在其中一个或两个里：
+
 ```bash
-./install.sh         # macOS / Linux / Git Bash / WSL
-.\install.ps1        # native Windows PowerShell
+claude plugin marketplace add D0n9X1n/feature-crew
+claude plugin install feature-crew@feature-crew
+copilot plugin marketplace add D0n9X1n/feature-crew
+copilot plugin install feature-crew@feature-crew
 ```
 
-参数：`--force`、`--dry-run`、`--uninstall`、`--check`、`--verify`、`--prefix DIR`；`install.ps1` 还接受 `-Force`、`-DryRun`、`-Uninstall`、`-Check`、`-Verify`、`-Prefix DIR`。代理安装到 `~/.claude/agents/fc-*.md`；技能安装到 `~/.claude/skills/fc-*/`。
+也可以在克隆的仓库里运行 `./install.sh`（macOS / Linux / Git Bash / WSL）或 `.\install.ps1`（原生 Windows PowerShell）：它会在 PATH 上找到的每个 CLI 中安装或更新插件，然后从 `~/.claude` 删除旧的脚本安装。旧的 `fc-*` 代理和技能即使被修改过也会删除，因为它们会代替插件里的版本运行；更早的文件只有在哈希证明是 Feature-Crew 写入时才删除。参数：`--dry-run`、`--check`、`--uninstall`、`--prefix DIR`、`--source SRC`；`install.ps1` 还接受 `-DryRun`、`-Check`、`-Uninstall`、`-Prefix DIR`、`-Source SRC`。
+
+技能保留原名，例如 `/fc-build-or-fix`。代理注册为 `feature-crew:fc-*`，例如 `feature-crew:fc-qa-code`。
 
 ## 描述需求
 
@@ -21,4 +27,4 @@
 
 ## 更新
 
-运行 `/fc-update`，或 `git pull origin main && ./install.sh --force`。覆盖前，更新流程会报告你修改过的已安装文件。遗留清理和卸载只删除内容能精确证明由 Feature-Crew 安装的文件。每次安装都会在 `~/.claude/feature-crew.sha256` 中记录写入了什么，因此更新流程能分辨你的修改和上游的变化。
+运行 `/fc-update`。它通过每个 CLI 自己的命令更新插件，报告已安装的版本，并报告 `~/.claude` 中残留的旧脚本安装；用 `./install.sh --dry-run` 然后 `./install.sh` 删除它。之后开启新会话，或在 Claude Code 中运行 `/reload-plugins`。

@@ -8,16 +8,16 @@
 
 ## Quick start
 
-Requires [Claude Code](https://code.claude.com/docs) 2.1.251 or later.
+Requires [Claude Code](https://code.claude.com/docs) 2.1.251 or later, or GitHub Copilot CLI 1.0.97 or later.
 
 ```bash
-git clone https://github.com/D0n9X1n/feature-crew.git
-cd feature-crew
-./install.sh         # macOS / Linux / Git Bash / WSL
-.\install.ps1        # native Windows PowerShell
+claude plugin marketplace add D0n9X1n/feature-crew
+claude plugin install feature-crew@feature-crew
+copilot plugin marketplace add D0n9X1n/feature-crew
+copilot plugin install feature-crew@feature-crew
 ```
 
-Then describe the change you want in plain words inside Claude Code; Feature-Crew picks the skill and the track. To update later, run `/fc-update` from the clone. Flags and commands are in [Usage](https://github.com/D0n9X1n/feature-crew/wiki/Usage).
+Then describe the change you want in plain words; Feature-Crew picks the skill and the track. To update later, run `/fc-update`. Coming from an old `./install.sh` install? Run `./install.sh` from a clone to switch to the plugin. Details are in [Usage](https://github.com/D0n9X1n/feature-crew/wiki/Usage).
 
 ## Features
 
@@ -28,4 +28,4 @@ Then describe the change you want in plain words inside Claude Code; Feature-Cre
 - **Researched designs:** Standard and Complex designs start from a cited industry survey; a better approach that needs a requirement relaxed is shown to you as a trade-off.
 - **Verified shipping:** `/fc-ship` watches CI in the background and merges only the verified head.
 - **Explained projects:** `/fc-explain` draws evidence-tied Mermaid diagrams.
-- **Safe installers:** `install.sh` and `install.ps1` record what they install and remove only their own files.
+- **One plugin, two CLIs:** the same `feature-crew` plugin installs in Claude Code and GitHub Copilot CLI; `install.sh` and `install.ps1` migrate an old script install.

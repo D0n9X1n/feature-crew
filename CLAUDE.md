@@ -53,6 +53,7 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 
 | What | Where |
 |---|---|
+| Plugin manifest and marketplace | `.claude-plugin/` |
 | Skills | `skills/fc-*/SKILL.md` |
 | Complex track, meta-work cap | `skills/fc-build-or-fix/reference/` |
 | Role prompts | `agents/fc-*.md` |
@@ -63,9 +64,4 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 
 ## Install
 
-```bash
-./install.sh         # macOS / Linux / Git Bash / WSL
-.\install.ps1        # native Windows PowerShell
-```
-
-Agents land at `~/.claude/agents/fc-*.md`; skills at `~/.claude/skills/fc-*/`.
+Feature-Crew is one plugin (`.claude-plugin/`) for Claude Code and GitHub Copilot CLI: `claude plugin install feature-crew@feature-crew` or `copilot plugin install feature-crew@feature-crew` after adding the `D0n9X1n/feature-crew` marketplace. `./install.sh` and `.\install.ps1` do both and remove an old script install. To develop here, run `claude --plugin-dir .` or `copilot --plugin-dir .`. A release tag must equal `v` plus the `plugin.json` version; bump it in the release PR.

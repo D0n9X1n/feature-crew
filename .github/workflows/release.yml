@@ -37,6 +37,10 @@ jobs:
             exit 1
           fi
 
+      - name: Refuse a tag that does not match the plugin version
+        # An unchanged plugin.json version keeps users on their cached copy.
+        run: bash scripts/check-release-version.sh "$GITHUB_REF_NAME"
+
       - name: Build release notes from the previous tag
         id: notes
         env:
@@ -102,16 +106,18 @@ jobs:
             printf 'Automated release for %s.\n\n' "$TAG"
             printf '### Commits\n%s\n\n' "$COMMIT_LIST"
             printf '### Contents\n'
-            printf -- '- %s skills (`~/.claude/skills/fc-*/`)\n' "$SKILLS"
-            printf -- '- %s role agents (`~/.claude/agents/fc-*.md`), unpinned for provenance-based hard-gate selection\n' "$AGENTS"
-            printf -- '- Cross-platform installer (`install.sh` / `install.ps1`)\n\n'
+            printf -- '- One `feature-crew` plugin for Claude Code and GitHub Copilot CLI\n'
+            printf -- '- %s skills (`/fc-*`) and %s role agents (`feature-crew:fc-*`), unpinned for provenance-based hard-gate selection\n' "$SKILLS" "$AGENTS"
+            printf -- '- Installers that migrate an old script install (`install.sh` / `install.ps1`)\n\n'
             printf '### Validation\n%s\n\n' "$VALIDATION"
             printf '### Install\n'
             printf '```bash\n'
-            printf 'git clone https://github.com/%s.git\n' "$GITHUB_REPOSITORY"
-            printf 'cd feature-crew && ./install.sh\n'
+            printf 'claude plugin marketplace add %s\n' "$GITHUB_REPOSITORY"
+            printf 'claude plugin install feature-crew@feature-crew\n'
+            printf 'copilot plugin marketplace add %s\n' "$GITHUB_REPOSITORY"
+            printf 'copilot plugin install feature-crew@feature-crew\n'
             printf '```\n\n'
-            printf 'Already installed? Run `/fc-update`.\n'
+            printf 'Already installed? Run `/fc-update`. Coming from a script install? Run `./install.sh` from a clone to migrate.\n'
             if [ -n "$PREV" ]; then
               printf '\n**Full diff:** https://github.com/%s/compare/%s...%s\n' \
                 "$GITHUB_REPOSITORY" "$PREV" "$TAG"

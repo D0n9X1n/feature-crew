@@ -6,12 +6,18 @@ How to install, run, and update Feature-Crew. Back to [Home](Home).
 
 ## Install
 
+Feature-Crew is one plugin for Claude Code and GitHub Copilot CLI. Install it in either or both:
+
 ```bash
-./install.sh         # macOS / Linux / Git Bash / WSL
-.\install.ps1        # native Windows PowerShell
+claude plugin marketplace add D0n9X1n/feature-crew
+claude plugin install feature-crew@feature-crew
+copilot plugin marketplace add D0n9X1n/feature-crew
+copilot plugin install feature-crew@feature-crew
 ```
 
-Flags: `--force`, `--dry-run`, `--uninstall`, `--check`, `--verify`, `--prefix DIR`; `install.ps1` also accepts `-Force`, `-DryRun`, `-Uninstall`, `-Check`, `-Verify`, `-Prefix DIR`. Agents install to `~/.claude/agents/fc-*.md`; skills to `~/.claude/skills/fc-*/`.
+Or run `./install.sh` (macOS / Linux / Git Bash / WSL) or `.\install.ps1` (native Windows PowerShell) from a clone: it installs or updates the plugin in each CLI on PATH, then removes an old script install from `~/.claude`. Old `fc-*` agents and skills are removed even when edited, because they would run instead of the plugin's; older files are removed only when their hash proves Feature-Crew wrote them. Flags: `--dry-run`, `--check`, `--uninstall`, `--prefix DIR`, `--source SRC`; `install.ps1` also accepts `-DryRun`, `-Check`, `-Uninstall`, `-Prefix DIR`, `-Source SRC`.
+
+Skills keep their names, such as `/fc-build-or-fix`. Agents register as `feature-crew:fc-*`, such as `feature-crew:fc-qa-code`.
 
 ## Describe the need
 
@@ -21,4 +27,4 @@ The exact classifier is stated once in `skills/fc-build-or-fix/SKILL.md`; this p
 
 ## Updating
 
-Run `/fc-update`, or `git pull origin main && ./install.sh --force`. Before overwriting, the update flow reports installed files you edited. Legacy cleanup and uninstall remove only files whose exact content proves Feature-Crew installed them. Each install records what it wrote in `~/.claude/feature-crew.sha256`, so the update flow can tell your edits from upstream changes.
+Run `/fc-update`. It updates the plugin through each CLI's own commands, reports the installed version, and reports any old script install left in `~/.claude`; remove that with `./install.sh --dry-run`, then `./install.sh`. Start a new session afterwards, or run `/reload-plugins` in Claude Code.
