@@ -93,21 +93,26 @@ listing() { # cli, marketplace|plugin
   printf '%s' "$out" | tr -d '\r\n' | tr '}' '\n'
 }
 
-# absent, same (registered from --source), or other; nonzero if the listing failed.
+# absent, same (registered from exactly --source), or other; nonzero if the listing failed.
 marketplace_state() {
-  local rows row
+  local rows row src="${SOURCE//\\/\\\\}"
   rows="$(listing "$1" marketplace)" || return 1
-  row="$(printf '%s\n' "$rows" | grep -E '"name": *"feature-crew"' | head -1 || true)"
+  row="$(printf '%s\n' "$rows" | grep -E '"name": *"feature-crew"' | head -1 | sed -E 's/": *"/": "/g' || true)"
   if [ -z "$row" ]; then echo absent; return 0; fi
-  case "$row" in *"${SOURCE//\\/\\\\}"*) echo same ;; *) echo other ;; esac
+  case "$row" in
+    *"\"path\": \"$src\""*|*"\"repo\": \"$src\""*|*"\"url\": \"$src\""*) echo same ;;
+    *"\"source\": \"Local: $src\""*|*"\"source\": \"GitHub: $src\""*) echo same ;;
+    *) echo other ;;
+  esac
 }
 
-# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace.
+# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace,
+# and in Claude Code only the user-scope install.
 plugin_state() {
   local rows row
   rows="$(listing "$1" plugin)" || return 1
   if [ "$1" = claude ]; then
-    row="$(printf '%s\n' "$rows" | grep -E '"id": *"feature-crew@feature-crew"' | head -1 || true)"
+    row="$(printf '%s\n' "$rows" | grep -E '"id": *"feature-crew@feature-crew"' | grep -E '"scope": *"user"' | head -1 || true)"
   else
     row="$(printf '%s\n' "$rows" | grep -E '"name": *"feature-crew"' | grep -E '"marketplace": *"feature-crew"' | head -1 || true)"
   fi
@@ -115,6 +120,9 @@ plugin_state() {
   elif [[ "$row" =~ \"enabled\":\ *false ]]; then echo disabled
   else echo enabled; fi
 }
+
+# Claude Code installs per scope; this installer manages the user scope only.
+scope_args() { if [ "$1" = claude ]; then printf '%s\n' --scope user; fi; }
 
 cli_failed() {
   echo "feature-crew: $1 step failed; old files left in place." >&2
@@ -141,22 +149,22 @@ install_cli() {
     step "$cli" plugin marketplace update "$MARKETPLACE" || cli_failed "$cli"
   else
     if [ "$mp" = other ]; then
-      if [ "$pl" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" || cli_failed "$cli"; fi
+      if [ "$pl" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"; fi
       step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"
     fi
     step "$cli" plugin marketplace add "$SOURCE" || cli_failed "$cli"
     if [ "$DRY_RUN" -eq 1 ]; then pl=absent; else pl="$(plugin_state "$cli")" || cli_failed "$cli"; fi
   fi
   case "$pl" in
-    enabled) step "$cli" plugin update "$PLUGIN_ID" || cli_failed "$cli" ;;
+    enabled) step "$cli" plugin update "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli" ;;
     disabled)
       if [ "$cli" = claude ]; then
-        step "$cli" plugin enable "$PLUGIN_ID" || cli_failed "$cli"
-        step "$cli" plugin update "$PLUGIN_ID" || cli_failed "$cli"
+        step "$cli" plugin enable "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"
+        step "$cli" plugin update "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"
       else
-        step "$cli" plugin install "$PLUGIN_ID" || cli_failed "$cli"
+        step "$cli" plugin install "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"
       fi ;;
-    *) step "$cli" plugin install "$PLUGIN_ID" || cli_failed "$cli" ;;
+    *) step "$cli" plugin install "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli" ;;
   esac
   if [ "$DRY_RUN" -eq 0 ]; then
     pl="$(plugin_state "$cli")" || cli_failed "$cli"
@@ -167,7 +175,7 @@ install_cli() {
 uninstall_cli() {
   local cli="$1" st
   st="$(plugin_state "$cli")" || cli_failed "$cli"
-  if [ "$st" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" || cli_failed "$cli"; fi
+  if [ "$st" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"; fi
   st="$(marketplace_state "$cli")" || cli_failed "$cli"
   if [ "$st" != absent ]; then step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"; fi
 }

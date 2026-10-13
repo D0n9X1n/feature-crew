@@ -27,17 +27,17 @@ flowchart TB
     cc[["Claude Code<br/>loads skills, runs sessions and subagents"]]
 
     ci -->|runs in strict mode| suite
-    ci -->|installs to clean prefixes on Linux and Windows| inst
+    ci -->|runs migration tests with stub CLIs on Linux and Windows| inst
     suite -->|asserts line caps and rule text| fw
     suite -->|runs both engines, checks parity| inst
     other -->|send code changes to| bof
-    other -->|fc-update runs check, force, verify| inst
+    other -->|fc-update updates the plugin, then runs install.sh --check| inst
     bof -->|invokes one skill per missing ingredient| routed
     routed -->|returns result to caller| bof
     bof -->|dispatches with explicit model override| roles
     bof -->|hands off authorized work| ship
     fw -->|packaged as one plugin, installed by| inst
-    inst -->|writes files and hash manifest| home
+    inst -->|adds the marketplace and installs the plugin| home
     home -->|loaded by| cc
 ```
 

@@ -37,7 +37,7 @@ env:
     switch -Wildcard ($args -join ' ') {
       'plugin list --json' {
         # Like real Copilot, a registered marketplace lists its plugin disabled.
-        if ($cli -eq 'claude') { if (Test-Path $pl) { '[{"id": "feature-crew@feature-crew", "enabled": true}]' } else { '[]' } }
+        if ($cli -eq 'claude') { if (Test-Path $pl) { '[{"id": "feature-crew@feature-crew", "scope": "user", "enabled": true}]' } else { '[]' } }
         elseif (Test-Path $pl) { '[{"name": "feature-crew", "marketplace": "feature-crew", "enabled": true}]' }
         elseif (Test-Path $mp) { '[{"name": "feature-crew", "marketplace": "feature-crew", "enabled": false}]' }
         else { '[]' }

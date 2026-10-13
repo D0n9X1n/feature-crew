@@ -40,7 +40,7 @@ flowchart TB
 **Walkthrough**
 
 1. **Pull request.** Each work item has an issue in the version's milestone. The PR is assigned to the milestone and closes its issues with `Closes #N` lines.
-2. **test.yml** runs on every pull request and every push to `main`. `framework` runs on Ubuntu: the strict suite with pwsh, the wiki publisher and checker test, and a clean-prefix install and uninstall. `powershell` and `powershell-delegation` run on Windows: the PowerShell installer under PowerShell 7 and Windows PowerShell 5.1, and its hand-off to Git Bash.
+2. **test.yml** runs on every pull request and every push to `main`. `framework` runs on Ubuntu: the strict suite with pwsh, the wiki publisher and checker test, and `claude plugin validate . --strict` on a pinned Claude Code. `powershell` and `powershell-delegation` run on Windows: a migration test with stub CLIs for the PowerShell installer under PowerShell 7 and Windows PowerShell 5.1, and for its hand-off to Git Bash.
 3. **Ruleset.** The repository ruleset "Require test workflow on main" requires all three checks before a merge.
 4. **Merge.** `/fc-ship` squash-merges with `--match-head-commit` and no admin bypass, then confirms the PR shows MERGED and that the merged tree equals the head tree.
 5. **Wiki.** `publish-wiki.yml` runs after each push to `main`. It checks out `main` as it is at run time, so re-running an older run cannot publish stale pages. It clones the wiki repository with the job's short-lived token, rebuilds the top-level pages from `wiki/` with `scripts/publish-wiki.sh`, and pushes to the wiki's `master` only when a page changed. Runs are serialized, and only this job may write.

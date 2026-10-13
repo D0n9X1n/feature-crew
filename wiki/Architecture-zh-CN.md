@@ -27,17 +27,17 @@ flowchart TB
     cc[["Claude Code<br/>加载技能，运行会话与子代理"]]
 
     ci -->|以严格模式运行| suite
-    ci -->|在 Linux 和 Windows 上安装到干净前缀| inst
+    ci -->|在 Linux 和 Windows 上用桩 CLI 运行迁移测试| inst
     suite -->|断言行数上限和规则文本| fw
     suite -->|运行两套引擎，检查一致性| inst
     other -->|把代码变更交给| bof
-    other -->|fc-update 运行 check、force、verify| inst
+    other -->|fc-update 更新插件，再运行 install.sh --check| inst
     bof -->|每个缺失要素调用一个技能| routed
     routed -->|把结果返回调用方| bof
     bof -->|以显式模型覆盖派发| roles
     bof -->|移交已授权的工作| ship
     fw -->|打包成一个插件，由安装器安装| inst
-    inst -->|写入文件和哈希清单| home
+    inst -->|添加市场并安装插件| home
     home -->|由 Claude Code 加载| cc
 ```
 

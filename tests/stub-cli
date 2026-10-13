@@ -11,7 +11,7 @@ case "$1 $2" in
     en=false; if [ -f "$pl" ] && [ ! -f "$off" ]; then en=true; fi
     printf '[\n'
     if [ "$cli" = claude ]; then
-      [ -f "$pl" ] && printf '  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0",\n    "enabled": %s\n  },\n' "$en"
+      [ -f "$pl" ] && printf '  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0",\n    "scope": "user",\n    "enabled": %s\n  },\n' "$en"
     elif [ -f "$pl" ] || [ -f "$mp" ]; then
       printf '  {\n    "name": "feature-crew",\n    "marketplace": "feature-crew",\n    "version": "6.0.0",\n    "enabled": %s\n  },\n' "$en"
     fi

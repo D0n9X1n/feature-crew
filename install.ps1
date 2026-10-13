@@ -155,22 +155,28 @@ function Get-Listing($cli, $kind) {
   return ,@((($out | Out-String) -replace "[`r`n]", "") -split '}')
 }
 
-# absent, same (registered from -Source), or other; $null if the listing failed.
+# absent, same (registered from exactly -Source), or other; $null if the listing failed.
 function Get-MarketplaceState($cli) {
   $rows = Get-Listing $cli "marketplace"
   if ($null -eq $rows) { return $null }
   $row = @($rows | Where-Object { $_ -match '"name":\s*"feature-crew"' } | Select-Object -First 1)
   if ($row.Count -eq 0) { return "absent" }
-  if ($row[0].Contains($Source.Replace('\', '\\'))) { return "same" }
+  $norm = $row[0] -replace '":\s*"', '": "'
+  $src = $Source.Replace('\', '\\')
+  foreach ($want in @("""path"": ""$src""", """repo"": ""$src""", """url"": ""$src""",
+      """source"": ""Local: $src""", """source"": ""GitHub: $src""")) {
+    if ($norm.Contains($want)) { return "same" }
+  }
   return "other"
 }
 
-# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace.
+# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace,
+# and in Claude Code only the user-scope install.
 function Get-PluginState($cli) {
   $rows = Get-Listing $cli "plugin"
   if ($null -eq $rows) { return $null }
   if ($cli -eq "claude") {
-    $row = @($rows | Where-Object { $_ -match '"id":\s*"feature-crew@feature-crew"' } | Select-Object -First 1)
+    $row = @($rows | Where-Object { ($_ -match '"id":\s*"feature-crew@feature-crew"') -and ($_ -match '"scope":\s*"user"') } | Select-Object -First 1)
   } else {
     $row = @($rows | Where-Object { ($_ -match '"name":\s*"feature-crew"') -and ($_ -match '"marketplace":\s*"feature-crew"') } | Select-Object -First 1)
   }
@@ -178,6 +184,9 @@ function Get-PluginState($cli) {
   if ($row[0] -match '"enabled":\s*false') { return "disabled" }
   return "enabled"
 }
+
+# Claude Code installs per scope; this installer manages the user scope only.
+function Get-ScopeArgs($cli) { if ($cli -eq "claude") { return @("--scope", "user") }; return @() }
 
 function Stop-Cli($cli) {
   [Console]::Error.WriteLine("feature-crew: $cli step failed; old files left in place.")
@@ -203,19 +212,20 @@ function Install-Cli($cli) {
   $mp = Get-MarketplaceState $cli
   $pl = Get-PluginState $cli
   if ($null -eq $mp -or $null -eq $pl) { Stop-Cli $cli }
+  $sc = @(Get-ScopeArgs $cli)
   if ($mp -eq "same") {
     if (-not (Invoke-Step $cli @("plugin", "marketplace", "update", $Marketplace))) { Stop-Cli $cli }
   } else {
     if ($mp -eq "other") {
-      if ($pl -ne "absent" -and -not (Invoke-Step $cli @("plugin", "uninstall", $PluginId))) { Stop-Cli $cli }
+      if ($pl -ne "absent" -and -not (Invoke-Step $cli (@("plugin", "uninstall", $PluginId) + $sc))) { Stop-Cli $cli }
       if (-not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
     }
     if (-not (Invoke-Step $cli @("plugin", "marketplace", "add", $Source))) { Stop-Cli $cli }
     if ($DryRun) { $pl = "absent" } else { $pl = Get-PluginState $cli; if ($null -eq $pl) { Stop-Cli $cli } }
   }
-  if ($pl -eq "enabled") { $steps = @(,@("plugin", "update", $PluginId)) }
-  elseif ($pl -eq "disabled" -and $cli -eq "claude") { $steps = @(@("plugin", "enable", $PluginId), @("plugin", "update", $PluginId)) }
-  else { $steps = @(,@("plugin", "install", $PluginId)) }
+  if ($pl -eq "enabled") { $steps = @(,(@("plugin", "update", $PluginId) + $sc)) }
+  elseif ($pl -eq "disabled" -and $cli -eq "claude") { $steps = @((@("plugin", "enable", $PluginId) + $sc), (@("plugin", "update", $PluginId) + $sc)) }
+  else { $steps = @(,(@("plugin", "install", $PluginId) + $sc)) }
   foreach ($st in $steps) { if (-not (Invoke-Step $cli $st)) { Stop-Cli $cli } }
   if (-not $DryRun -and (Get-PluginState $cli) -ne "enabled") { Stop-Cli $cli }
 }
@@ -223,7 +233,7 @@ function Install-Cli($cli) {
 function Uninstall-Cli($cli) {
   $pl = Get-PluginState $cli
   if ($null -eq $pl) { Stop-Cli $cli }
-  if ($pl -ne "absent" -and -not (Invoke-Step $cli @("plugin", "uninstall", $PluginId))) { Stop-Cli $cli }
+  if ($pl -ne "absent" -and -not (Invoke-Step $cli (@("plugin", "uninstall", $PluginId) + @(Get-ScopeArgs $cli)))) { Stop-Cli $cli }
   $mp = Get-MarketplaceState $cli
   if ($null -eq $mp) { Stop-Cli $cli }
   if ($mp -ne "absent" -and -not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
@@ -272,11 +282,18 @@ function Remove-Legacy($path) {
 }
 
 # A skill dir's regular files, as slash-separated relative paths in ordinal order.
+# Like find -type f: links are skipped and never followed, files or folders.
 function Get-OldSkillFiles($dir) {
   $root = (Resolve-AbsPath $dir).TrimEnd('\', '/')
   $paths = New-Object 'System.Collections.Generic.List[string]'
-  foreach ($item in @(Get-ChildItem -LiteralPath $dir -Recurse -Force -File)) {
-    $paths.Add($item.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/'))
+  $todo = New-Object 'System.Collections.Generic.Stack[string]'
+  $todo.Push($root)
+  while ($todo.Count -gt 0) {
+    foreach ($item in @(Get-ChildItem -LiteralPath $todo.Pop() -Force)) {
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+      if ($item.PSIsContainer) { $todo.Push($item.FullName); continue }
+      $paths.Add($item.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/'))
+    }
   }
   $paths.Sort([StringComparer]::Ordinal)
   return ,$paths
