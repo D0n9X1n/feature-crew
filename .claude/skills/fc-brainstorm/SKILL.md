@@ -11,7 +11,7 @@ Produces an approved spec by exploring the solution space before committing to i
 
 Restate the problem in one sentence and name the constraint that matters most. Look up anything discoverable yourself: existing patterns, dependencies, prior art in the repo.
 
-Then survey industry practice per [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md): reuse a survey the caller passed in; otherwise dispatch one search author with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, then one validator chosen by its selector, in the `/fc-research` focused-path format. Each survey prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
+Then survey industry practice per [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md): reuse a survey the caller passed in; when the user invoked this skill directly without one, dispatch one search author with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, then one validator chosen by its selector, in the `/fc-research` focused-path format. When another flow invoked it without a survey, return to that flow to survey first. Each survey prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
 
 If a user-owned requirement is missing, use the canonical need classifier in `/fc-build-or-fix`: its leaf exception lets this flow call `/fc-grill-me`, which resolves that category and returns here before the panel runs.
 
@@ -57,7 +57,7 @@ The user approving the spec is a hard gate. If another flow invoked this skill, 
 
 ## Caps
 
-- **Max 9 panel/review dispatches** — 3 panel + up to 3 re-dispatch + 1 cross-audit + 2 survey (author and validator, only without a caller's survey), including descendants at any depth. Reserve the audit slot; re-spawns and descendants count. Pause for user approval before exceeding the cap or starting a second diversity round.
+- **Max 9 panel/review dispatches** — 3 panel + up to 3 re-dispatch + 1 cross-audit + 2 survey (author and validator, only on a direct invocation without a survey), including descendants at any depth. Reserve the audit slot; re-spawns and descendants count. Pause for user approval before exceeding the cap or starting a second diversity round.
 - The only nested skill call is the `/fc-grill-me` leaf; it returns here without invoking skills. For any other missing category, return to the invoking flow to reclassify a distinct gap; do not self-invoke or recurse, per `/fc-build-or-fix`.
 
 ## Anti-patterns

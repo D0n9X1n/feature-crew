@@ -1059,22 +1059,22 @@ t72_docs=(
 )
 t72_labels=(
   research-informs survey-before-design jdi-never reuse
-  route-research own-survey-step broad-then-narrow angles
+  route-research own-survey-step caller-surveys-first broad-then-narrow angles
   cite-every-claim primary-first training-hypothesis gaps-reported
   prior-art-table same-evidence
   research-firewall no-silent-drop tradeoff-row compliant-default user-decides
   standard-survey-first standard-spec-carries complex-survey-first reconcile-tradeoff
-  brainstorm-reuse brainstorm-own-survey brainstorm-survey-no-delegation panel-cites
+  brainstorm-reuse brainstorm-own-survey brainstorm-caller-returns brainstorm-survey-no-delegation panel-cites
   converge-tradeoff brainstorm-survey-cap research-source-rules
 )
 t72_sections=(
   intro when when when
-  how how how how
+  how how how how how
   sources sources sources sources
   output output
   tradeoffs tradeoffs tradeoffs tradeoffs tradeoffs
   standard standard complex2 both
-  frame frame frame panel
+  frame frame frame frame panel
   converge caps phase1
 )
 t72_rules=(
@@ -1084,6 +1084,7 @@ t72_rules=(
   'Reuse a survey for an unchanged problem; never repeat it.'
   'Route it through `/fc-research`: the focused path for one bounded question, the full pipeline for a broad one.'
   'A flow that cannot invoke `/fc-research` follows its own survey step.'
+  'A flow that invokes `/fc-brainstorm` surveys through `/fc-research` first and passes the survey in.'
   'Start broad, then narrow; stop when new searches stop changing the answer.'
   'Cover official docs and standards, published designs and RFCs, real projects, and postmortems or known failure modes.'
   'Every claim carries a URL, publisher, and date.'
@@ -1102,11 +1103,12 @@ t72_rules=(
   'Survey first per [industry-survey.md](industry-survey.md); its evidence goes into the spec and, unchanged, to the architect and the blind second designer.'
   'A better design that needs a stated requirement relaxed follows the trade-off rule in [industry-survey.md](industry-survey.md).'
   'Then survey industry practice per [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md): reuse a survey the caller passed in;'
-  'otherwise dispatch one search author with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, then one validator chosen by its selector, in the `/fc-research` focused-path format.'
+  'when the user invoked this skill directly without one, dispatch one search author with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, then one validator chosen by its selector, in the `/fc-research` focused-path format.'
+  'When another flow invoked it without a survey, return to that flow to survey first.'
   'Each survey prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."'
   "Paste the survey's prior-art table into every panel prompt; each approach cites it."
   'If an approach needs a stated requirement relaxed, show its trade-off row from [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md); the user decides it.'
-  "2 survey (author and validator, only without a caller's survey)"
+  '2 survey (author and validator, only on a direct invocation without a survey)'
   'Apply the source rules in [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md).'
 )
 t72_survey_contract() { # the six t72_docs texts, in order

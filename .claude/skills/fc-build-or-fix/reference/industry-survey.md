@@ -8,7 +8,7 @@ Survey before the first design unless the design is super straightforward, as [d
 
 ## How
 
-Route it through `/fc-research`: the focused path for one bounded question, the full pipeline for a broad one. A flow that cannot invoke `/fc-research` follows its own survey step. Start broad, then narrow; stop when new searches stop changing the answer. Cover official docs and standards, published designs and RFCs, real projects, and postmortems or known failure modes.
+Route it through `/fc-research`: the focused path for one bounded question, the full pipeline for a broad one. A flow that cannot invoke `/fc-research` follows its own survey step. A flow that invokes `/fc-brainstorm` surveys through `/fc-research` first and passes the survey in. Start broad, then narrow; stop when new searches stop changing the answer. Cover official docs and standards, published designs and RFCs, real projects, and postmortems or known failure modes.
 
 ## Sources
 
