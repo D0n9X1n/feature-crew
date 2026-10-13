@@ -84,7 +84,8 @@ listed() { # cli, marketplace|plugin
     if [ "$1" = claude ]; then
       [[ "$out" =~ \"id\":\ *\"feature-crew@feature-crew\" ]] && return 0
     else
-      [[ "$out" =~ \"name\":\ *\"feature-crew\" ]] && return 0
+      # Copilot lists a registered marketplace's plugin disabled until it is installed.
+      [[ "$out" =~ \"name\":\ *\"feature-crew\"[^}]*\"enabled\":\ *true ]] && return 0
     fi
   fi
   return 1

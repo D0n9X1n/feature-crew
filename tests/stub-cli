@@ -6,9 +6,14 @@ case " $FC_STUB_FAIL " in *" $cli $1 $2 "*) echo "stub: $cli $1 $2 failed" >&2; 
 mp="$st/$cli.marketplace"; pl="$st/$cli.plugin"
 case "$1 $2" in
   "plugin list")
-    if [ -f "$pl" ]; then
-      if [ "$cli" = claude ]; then printf '[\n  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0"\n  }\n]\n'
-      else printf '[\n  {\n    "name": "feature-crew",\n    "marketplace": "feature-crew",\n    "version": "6.0.0"\n  }\n]\n'; fi
+    # Like real Copilot, a registered marketplace lists its plugin disabled
+    # until `plugin install` enables it.
+    if [ "$cli" = claude ]; then
+      if [ -f "$pl" ]; then printf '[\n  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0",\n    "enabled": true\n  }\n]\n'
+      else echo '[]'; fi
+    elif [ -f "$pl" ] || [ -f "$mp" ]; then
+      en=false; [ -f "$pl" ] && en=true
+      printf '[\n  {\n    "name": "feature-crew",\n    "marketplace": "feature-crew",\n    "version": "6.0.0",\n    "enabled": %s\n  }\n]\n' "$en"
     else echo '[]'; fi ;;
   "plugin marketplace")
     case "$3" in

@@ -36,9 +36,11 @@ env:
     $mp = Join-Path $st "$cli.marketplace"; $pl = Join-Path $st "$cli.plugin"
     switch -Wildcard ($args -join ' ') {
       'plugin list --json' {
-        if (-not (Test-Path $pl)) { '[]' }
-        elseif ($cli -eq 'claude') { '[{"id": "feature-crew@feature-crew"}]' }
-        else { '[{"name": "feature-crew"}]' }
+        # Like real Copilot, a registered marketplace lists its plugin disabled.
+        if ($cli -eq 'claude') { if (Test-Path $pl) { '[{"id": "feature-crew@feature-crew", "enabled": true}]' } else { '[]' } }
+        elseif (Test-Path $pl) { '[{"name": "feature-crew", "enabled": true}]' }
+        elseif (Test-Path $mp) { '[{"name": "feature-crew", "enabled": false}]' }
+        else { '[]' }
       }
       'plugin marketplace list --json' { if (Test-Path $mp) { '[{"name": "feature-crew"}]' } else { '[]' } }
       'plugin marketplace add *' { New-Item -ItemType File -Force -Path $mp | Out-Null; 'stub: marketplace added' }

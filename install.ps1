@@ -150,6 +150,9 @@ function Get-Listed($cli, $kind) {
   $text = ($out | Out-String)
   if ($kind -eq "plugin" -and $cli -eq "claude") {
     if ($text -match '"id":\s*"feature-crew@feature-crew"') { return 0 }
+  } elseif ($kind -eq "plugin") {
+    # Copilot lists a registered marketplace's plugin disabled until it is installed.
+    if ($text -match '"name":\s*"feature-crew"[^}]*"enabled":\s*true') { return 0 }
   } elseif ($text -match '"name":\s*"feature-crew"') { return 0 }
   return 1
 }
