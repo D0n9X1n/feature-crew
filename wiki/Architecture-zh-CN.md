@@ -135,7 +135,7 @@ sequenceDiagram
 
 - **1–3 进入。** `CLAUDE.md` 让主流程成为任何构建、修复或变更的第一步。PM 自己查找单个事实，把其他任何缺口交给恰好一个技能。
 - **4–5 轨道。** Standard 适合一个连贯的功能。变更触及升级清单时排除 Just Do It：运行时行为、配置、认证、密钥、持久化、公共 API 或部署行为。
-- **6–12 规格。** 要点式规格列出目的、文件、组件图、3–8 条行为、必须通过的测试命令和非目标。盲审第二设计者拿到同一份简报但不含第一份设计，最多返回 300 词，规格记录同意、分歧、选择对照表；只有“极其简单直接”的设计才跳过它。触及升级清单的规格在用户批准前由另一家族的审查者审计。
+- **6–12 规格。** PM 先按 [industry-survey.md][survey] 通过 `fc-research` 调研业界做法：每条结论都注明 URL、发布者和日期；若更好的方案需要放宽某条既定需求，就写成一行取舍，由用户决定。要点式规格列出目的、文件、组件图、3–8 条行为、必须通过的测试命令和非目标。盲审第二设计者拿到同一份简报但不含第一份设计，最多返回 300 词，规格记录同意、分歧、选择对照表；只有“极其简单直接”的设计才跳过它。触及升级清单的规格在用户批准前由另一家族的审查者审计。
 - **13 构建。** 写失败的测试，观察失败，写最少的代码，观察通过，重构；然后运行全量测试并粘贴输出，用户可见的变更还要附运行时证据。
 - **14–19 关卡。** 作者的家族来自会话记录中记录的模型，而不是请求的别名。`fc-qa-code` 以 one-clue 模式审查规格符合性和代码。审查者的记录是否满足关卡，只由 [SKILL.md][bof] 中的规范规则（*Cross-family audit at hard gates*）决定；没有回退。CRITICAL 必须修复；IMPORTANT 修复或跟进；最多三轮修复。
 - **20–26 交付。** `fc-ship` 在一个问题里请求所有缺失的批准，推送，并运行一个后台 `gh pr checks --watch`。失败交给 `fc-debug`，并在构建关卡下修复。合并前它重新检查 head 并确认其包含 base；用 `--match-head-commit` 合并，然后确认状态为 MERGED 且合并后的树等于 head 的树。清理总会执行。
@@ -185,7 +185,7 @@ sequenceDiagram
 
 **已在仓库中验证**
 
-- Claude Code 运行的一切都是 Markdown：十个技能、五个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
+- Claude Code 运行的一切都是 Markdown：十个技能、六个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
 - 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。安装器添加 `name` 和 `description`，并为五个被派发的角色添加 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
 - 关卡失败即关闭：来源未知会让关卡不满足，单独运行的 `/fc-review` 或 `/fc-second-opinion` 不能替代关卡。
 - `/fc-review` 无论差异大小，每次审查都至少派发一个由选择器选定模型的审查视角（lens）；主会话自己写的笔记标注为同会话，永远不算作独立审查。
@@ -220,6 +220,7 @@ sequenceDiagram
 [run]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/run-discipline.md
 [design]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/design-check.md
 [prov]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/gate-provenance.md
+[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/industry-survey.md
 [complex]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/complex-track.md
 [meta]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
 [pm]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-pm.md

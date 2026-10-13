@@ -25,6 +25,7 @@ Then describe the change you want in plain words inside Claude Code; Feature-Cre
 - **Right-sized tracks:** Just Do It, Standard, and Complex, each with TDD and hard gates.
 - **Cross-family review:** every hard-gate artifact is reviewed by a model from another family, chosen from the two most capable models the agent can use and proven from the session record.
 - **Two designs before building:** Standard and Complex designs are compared against an independent second design; only a super straightforward Standard design skips it.
+- **Researched designs:** Standard and Complex designs start from a cited industry survey; a better approach that needs a requirement relaxed is shown to you as a trade-off.
 - **Verified shipping:** `/fc-ship` watches CI in the background and merges only the verified head.
 - **Explained projects:** `/fc-explain` draws evidence-tied Mermaid diagrams.
 - **Safe installers:** `install.sh` and `install.ps1` record what they install and remove only their own files.

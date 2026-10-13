@@ -135,7 +135,7 @@ sequenceDiagram
 
 - **1–3 Entry.** `CLAUDE.md` makes the playbook the first step for any build, fix, or change. The PM looks up single facts itself and sends any other gap to exactly one skill.
 - **4–5 Track.** Standard fits one coherent feature. Just Do It is ruled out when the change touches the escalation list: runtime behavior, config, auth, secrets, persistence, public API, or deploy behavior.
-- **6–12 Spec.** The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
+- **6–12 Spec.** First the PM surveys industry practice through `fc-research` per [industry-survey.md][survey]: every claim cites a URL, publisher, and date, and a better approach that needs a stated requirement relaxed becomes a trade-off row the user decides. The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
 - **13 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
 - **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. Whether the reviewer's record satisfies the gate is decided only by the canonical rule in [SKILL.md][bof] (*Cross-family audit at hard gates*); there is no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
 - **20–26 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Cleanup always runs.
@@ -185,7 +185,7 @@ Principles that hold on every track:
 
 **Verified in the repository**
 
-- Everything Claude Code runs is Markdown: ten skills, five reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
+- Everything Claude Code runs is Markdown: ten skills, six reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
 - Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. The installers add `name` and `description`, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
@@ -220,6 +220,7 @@ Principles that hold on every track:
 [run]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/run-discipline.md
 [design]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/design-check.md
 [prov]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/gate-provenance.md
+[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/industry-survey.md
 [complex]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/complex-track.md
 [meta]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
 [pm]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-pm.md

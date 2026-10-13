@@ -1042,6 +1042,148 @@ fi
 [ -z "$t61_err" ] && ok "T61 static contract alarm: two-direction design check + component map + blind second design" \
                    || bad "T61 design check and blind second design contract" "missing:$t61_err"
 
+# ---------------------------------------------------------------- T72
+# Standard/Complex design and fc-brainstorm start from a cited industry survey,
+# and a better approach that needs a stated requirement relaxed becomes a
+# trade-off row the user decides. One canonical reference holds the contract;
+# the other docs point to it. Section-scoped like T61: after the unmodified
+# documents pass, removing one clause must produce exactly its own diagnostic.
+t72_err=""
+t72_docs=(
+  .claude/skills/fc-build-or-fix/reference/industry-survey.md
+  .claude/skills/fc-build-or-fix/SKILL.md
+  .claude/skills/fc-build-or-fix/reference/complex-track.md
+  .claude/skills/fc-build-or-fix/reference/design-check.md
+  .claude/skills/fc-brainstorm/SKILL.md
+  .claude/skills/fc-research/SKILL.md
+)
+t72_labels=(
+  research-informs survey-before-design jdi-never reuse
+  route-research own-survey-step broad-then-narrow angles
+  cite-every-claim primary-first training-hypothesis gaps-reported
+  prior-art-table same-evidence
+  research-firewall no-silent-drop tradeoff-row compliant-default user-decides
+  standard-survey-first standard-spec-carries complex-survey-first reconcile-tradeoff
+  brainstorm-reuse brainstorm-own-survey brainstorm-survey-no-delegation panel-cites
+  converge-tradeoff brainstorm-survey-cap research-source-rules
+)
+t72_sections=(
+  intro when when when
+  how how how how
+  sources sources sources sources
+  output output
+  tradeoffs tradeoffs tradeoffs tradeoffs tradeoffs
+  standard standard complex2 both
+  frame frame frame panel
+  converge caps phase1
+)
+t72_rules=(
+  'research informs the design, never the requirements.'
+  'Survey before the first design unless the design is super straightforward'
+  'Just Do It never surveys.'
+  'Reuse a survey for an unchanged problem; never repeat it.'
+  'Route it through `/fc-research`: the focused path for one bounded question, the full pipeline for a broad one.'
+  'A flow that cannot invoke `/fc-research` follows its own survey step.'
+  'Start broad, then narrow; stop when new searches stop changing the answer.'
+  'Cover official docs and standards, published designs and RFCs, real projects, and postmortems or known failure modes.'
+  'Every claim carries a URL, publisher, and date.'
+  'Primary sources outrank secondary ones'
+  'Treat what you remember from training as a hypothesis until a source confirms it.'
+  'Report every unreachable source as a gap, never as coverage.'
+  '`practice | source | fit with our constraints | evidence`'
+  "Give both designers the same table, never the other designer's proposal."
+  'Research never changes a requirement by itself.'
+  'do not drop it silently'
+  '`requirement | alternative + evidence | gain | sacrifice | reversibility | compliant fallback`'
+  'keep the compliant design until the user decides.'
+  'The user decides each row; approval waivers do not decide it.'
+  'Survey per [reference/industry-survey.md](reference/industry-survey.md), then write a bullet spec'
+  'prior-art table and any trade-off rows'
+  'Survey first per [industry-survey.md](industry-survey.md); its evidence goes into the spec and, unchanged, to the architect and the blind second designer.'
+  'A better design that needs a stated requirement relaxed follows the trade-off rule in [industry-survey.md](industry-survey.md).'
+  'Then survey industry practice per [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md): reuse a survey the caller passed in;'
+  'otherwise dispatch one search author with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, then one validator chosen by its selector, in the `/fc-research` focused-path format.'
+  'Each survey prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."'
+  "Paste the survey's prior-art table into every panel prompt; each approach cites it."
+  'If an approach needs a stated requirement relaxed, show its trade-off row from [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md); the user decides it.'
+  "2 survey (author and validator, only without a caller's survey)"
+  'Apply the source rules in [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md).'
+)
+t72_survey_contract() { # the six t72_docs texts, in order
+  local intro when how sources output tradeoffs standard complex2 both frame panel converge caps phase1
+  local section i errors=""
+  intro=$(printf '%s\n' "$1" | sed -n '/^# Industry survey/,/^## /p')
+  when=$(printf '%s\n' "$1" | sed -n '/^## When/,/^## /p')
+  how=$(printf '%s\n' "$1" | sed -n '/^## How/,/^## /p')
+  sources=$(printf '%s\n' "$1" | sed -n '/^## Sources/,/^## /p')
+  output=$(printf '%s\n' "$1" | sed -n '/^## Output/,/^## /p')
+  tradeoffs=$(printf '%s\n' "$1" | sed -n '/^## Requirement trade-offs/,/^## /p')
+  standard=$(printf '%s\n' "$2" | sed -n '/^### Standard/,/^### /p' | grep -E '^2\. ')
+  complex2=$(printf '%s\n' "$3" | sed -n '/^## Flow/,/^## /p' | grep -E '^2\. ')
+  both=$(printf '%s\n' "$4" | sed -n '/^## Both directions/,/^## /p')
+  frame=$(printf '%s\n' "$5" | sed -n '/^## 1 — Frame/,/^## /p')
+  panel=$(printf '%s\n' "$5" | sed -n '/^## 2 — Panel/,/^## /p')
+  converge=$(printf '%s\n' "$5" | sed -n '/^## 4 — Converge/,/^## /p')
+  caps=$(printf '%s\n' "$5" | sed -n '/^## Caps/,/^## /p')
+  phase1=$(printf '%s\n' "$6" | sed -n '/^## Phase 1/,/^## /p')
+  for ((i=0; i<${#t72_rules[@]}; i++)); do
+    case "${t72_sections[$i]}" in
+      intro) section="$intro" ;;
+      when) section="$when" ;;
+      how) section="$how" ;;
+      sources) section="$sources" ;;
+      output) section="$output" ;;
+      tradeoffs) section="$tradeoffs" ;;
+      standard) section="$standard" ;;
+      complex2) section="$complex2" ;;
+      both) section="$both" ;;
+      frame) section="$frame" ;;
+      panel) section="$panel" ;;
+      converge) section="$converge" ;;
+      caps) section="$caps" ;;
+      phase1) section="$phase1" ;;
+      *) section="" ;;
+    esac
+    [[ "$section" == *"${t72_rules[$i]}"* ]] || errors="$errors ${t72_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t72_texts=()
+for t72_doc in "${t72_docs[@]}"; do
+  [ -f "$t72_doc" ] || t72_err="$t72_err file:$t72_doc"
+  t72_texts+=("$(cat "$t72_doc" 2>/dev/null)")
+done
+[ "${#t72_labels[@]}" -eq "${#t72_rules[@]}" ] && [ "${#t72_sections[@]}" -eq "${#t72_rules[@]}" ] \
+  || t72_err="$t72_err rule-table-misaligned"
+t72_out=$(t72_survey_contract "${t72_texts[@]}")
+t72_err="$t72_err$t72_out"
+if [ -z "$t72_err" ]; then
+  for ((t72_i=0; t72_i<${#t72_rules[@]}; t72_i++)); do
+    case "${t72_sections[$t72_i]}" in
+      intro|when|how|sources|output|tradeoffs) t72_doc_i=0 ;;
+      standard) t72_doc_i=1 ;;
+      complex2) t72_doc_i=2 ;;
+      both) t72_doc_i=3 ;;
+      frame|panel|converge|caps) t72_doc_i=4 ;;
+      *) t72_doc_i=5 ;;
+    esac
+    t72_rule="${t72_rules[$t72_i]}"
+    t72_mut=("${t72_texts[@]}")
+    t72_text="${t72_mut[$t72_doc_i]}"
+    t72_text="${t72_text/"$t72_rule"/}"
+    t72_mut[$t72_doc_i]="$t72_text"
+    t72_mut_out=$(t72_survey_contract "${t72_mut[@]}")
+    if [ "$t72_mut_out" = " ${t72_labels[$t72_i]}" ]; then
+      ok "T72 removal mutation: ${t72_labels[$t72_i]} rejected by its own check"
+    else
+      bad "T72 removal mutation: ${t72_labels[$t72_i]}" \
+        "got '${t72_mut_out:-<empty>}', want ' ${t72_labels[$t72_i]}'"
+    fi
+  done
+fi
+[ -z "$t72_err" ] && ok "T72 static contract alarm: cited industry survey before design + requirement trade-offs the user decides" \
+                   || bad "T72 industry survey and requirement trade-off contract" "missing:$t72_err"
+
 # ---------------------------------------------------------------- T27
 # The provenance classifier's real boundaries, both directions. Each case here
 # is a bug that actually shipped or a false negative a reviewer demonstrated.
@@ -1399,7 +1541,7 @@ echo "$bs_spec" | grep -qF 'Hand off to `/fc-build-or-fix`' \
   && t33_err="$t33_err brainstorm-unconditional-build-handoff"
 echo "$bs_spec" | grep -qiE 'only if the user invoked.*directly.*offer.*fc-build-or-fix' \
   || t33_err="$t33_err brainstorm-direct-invocation-not-distinguished"
-echo "$bs_caps" | grep -qiE 'max 7 panel/review dispatches.*3 panel \+ (up to 3|≤3) re-dispatch \+ 1 cross-audit' \
+echo "$bs_caps" | grep -qiE 'max 9 panel/review dispatches.*3 panel \+ (up to 3|≤3) re-dispatch \+ 1 cross-audit \+ 2 survey' \
   || t33_err="$t33_err brainstorm-cap-omits-diversity-round"
 echo "$bs_caps" | grep -qiE 'descendants.*any depth' \
   || t33_err="$t33_err brainstorm-descendants-not-counted"
@@ -3503,7 +3645,12 @@ for engine in "${INSTALLERS[@]}"; do
     expect_output_line "outdated: agents/$a.md" "untouched-check:$a"
   done
   expect_output_line 'outdated: feature-crew.sha256' untouched-check
-  printf '%s\n' "$installer_out" | grep -qE '^(missing|uncertain):' && case_err="$case_err untouched-check:unrecognized-file"
+  printf '%s\n' "$installer_out" | grep -qE '^uncertain:' && case_err="$case_err untouched-check:unrecognized-file"
+  # A file added after v5.2.0 is legitimately missing; one that v5.2.0 shipped is not.
+  while IFS= read -r t69_missing; do
+    t69_src="$t69_missing"; case "$t69_src" in skills/*) t69_src=".claude/$t69_src" ;; esac
+    git cat-file -e "v5.2.0:$t69_src" 2>/dev/null && case_err="$case_err untouched-check:missing-$t69_missing"
+  done < <(printf '%s\n' "$installer_out" | sed -n 's/^missing: //p')
   expect_output_line 'check: update-needed' untouched-check
   run_installer "$engine" "$p" --force
   expect_installer_success force-install

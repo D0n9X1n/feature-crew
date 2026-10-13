@@ -6,7 +6,7 @@ Loaded by `/fc-build-or-fix` for every Standard or Complex design; paste it into
 
 1. **Top-down:** requirements → responsibilities → components → interfaces. Every requirement has a home; every component traces to a requirement.
 2. **Bottom-up:** map the existing code near the change before creating anything, one row per component: `component | job | key files | depends on | evidence (file:line)`. Mark inferences and unknowns. Reuse or extend before creating.
-3. **Reconcile:** fit the design to existing seams, walk one normal and one failure path through it, and raise real conflicts as decisions, never guesses.
+3. **Reconcile:** fit the design to existing seams, walk one normal and one failure path through it, and raise real conflicts as decisions, never guesses. A better design that needs a stated requirement relaxed follows the trade-off rule in [industry-survey.md](industry-survey.md).
 
 ## Fitness check
 
