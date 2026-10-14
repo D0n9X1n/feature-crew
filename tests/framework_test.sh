@@ -2938,13 +2938,16 @@ for engine in "${INSTALLERS[@]}"; do
     [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused-parent:rerun-did-not-finish(rc=$t76_rc)"
     # A folder above the prefix that cannot be entered makes the old install
     # unreachable, not absent: exit 2 before any change, exit 1 after one. The
-    # OS decides, so a path through a link behaves the same.
-    for t76_lay in direct alias; do
-      t76_par="$t76_root/$engine/par"; rm -rf "$t76_par" "$t76_root/$engine/alias"; mkdir -p "$t76_par/private"
-      if [ "$t76_lay" = direct ]; then t76_pp="$t76_par/old"
-      else ln -s "$t76_par/private" "$t76_root/$engine/alias"; t76_pp="$t76_root/$engine/alias/old"; fi
+    # OS decides, so a path through a link, or a prefix that is a link, behaves the same.
+    for t76_lay in direct alias link; do
+      t76_par="$t76_root/$engine/par"; rm -rf "$t76_par" "$t76_root/$engine/alias" "$t76_root/$engine/linkp"; mkdir -p "$t76_par/private"
+      case "$t76_lay" in
+        direct) t76_pp="$t76_par/old"; t76_seed "$t76_pp" ;;
+        alias) ln -s "$t76_par/private" "$t76_root/$engine/alias"; t76_pp="$t76_root/$engine/alias/old"; t76_seed "$t76_pp" ;;
+        link) t76_seed "$t76_par/private/old"; ln -s "$t76_par/private/old" "$t76_root/$engine/linkp"; t76_pp="$t76_root/$engine/linkp" ;;
+      esac
       t76_state="$t76_root/$engine/state-ancestor"; rm -rf "$t76_state"
-      t76_seed "$t76_pp"; t76_before=$(t76_tree "$t76_pp")
+      t76_before=$(t76_tree "$t76_pp")
       chmod 000 "$t76_par"
       for t76_flags in '' --check --dry-run; do
         t76_run "$engine" both "$t76_pp" $t76_flags
@@ -2963,8 +2966,14 @@ for engine in "${INSTALLERS[@]}"; do
       case "$t76_err" in *'feature-crew: not removed: <P>'*'run again'*) ;; *) case_err="$case_err ancestor-$t76_lay-late:not-listed" ;; esac
       case "$t76_out" in *'Done.'*) case_err="$case_err ancestor-$t76_lay-late:printed-done" ;; esac
       t76_run "$engine" both "$t76_pp"
-      [ "$t76_rc" = 0 ] && [ "$(cd "$t76_pp" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err ancestor-$t76_lay-late:rerun-did-not-finish(rc=$t76_rc)"
-      rm -rf "$t76_par" "$t76_root/$engine/alias"
+      if [ "$t76_lay" = link ]; then
+        # A linked prefix is never cleaned through: the rerun only reports it.
+        [ "$t76_rc" = 0 ] && [ "$(t76_tree "$t76_pp")" = "$t76_before" ] || case_err="$case_err ancestor-link-late:rerun(rc=$t76_rc)"
+        case "$t76_out" in *'kept (linked folder): '*) ;; *) case_err="$case_err ancestor-link-late:not-reported" ;; esac
+      else
+        [ "$t76_rc" = 0 ] && [ "$(cd "$t76_pp" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err ancestor-$t76_lay-late:rerun-did-not-finish(rc=$t76_rc)"
+      fi
+      rm -rf "$t76_par" "$t76_root/$engine/alias" "$t76_root/$engine/linkp"
     done
   fi
 

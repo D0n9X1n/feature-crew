@@ -297,10 +297,10 @@ check_removable() {
 }
 
 # True when the prefix cannot be reached rather than missing. The OS tells the
-# two apart even through a link ("Permission denied" vs "No such file").
+# two apart ("Permission denied" vs "No such file"); probing PREFIX/. follows a
+# link anywhere in the path, including the prefix itself.
 prefix_unreachable() {
-  if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then return 1; fi
-  case "$(LC_ALL=C ls -d -- "$PREFIX" 2>&1 >/dev/null)" in *'ermission denied'*) return 0 ;; esac
+  case "$(LC_ALL=C ls -d -- "$PREFIX/." 2>&1 >/dev/null)" in *'ermission denied'*) return 0 ;; esac
   return 1
 }
 

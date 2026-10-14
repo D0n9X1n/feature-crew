@@ -385,15 +385,15 @@ function Test-Readable($path, [bool]$dir) {
 # A folder whose entries can be removed, like `test -w DIR -a -x DIR`. Windows
 # has no such mode bits; there, a run that cannot remove an entry exits 1.
 # True when the prefix cannot be reached rather than missing. The OS tells the
-# two apart even through a link ("Permission denied" vs "No such file").
+# two apart ("Permission denied" vs "No such file"); probing PREFIX/. follows a
+# link anywhere in the path, including the prefix itself.
 function Test-PrefixUnreachable {
   if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $false }
-  if (Test-Exists $Prefix) { return $false }
   $ErrorActionPreference = "Continue"
   foreach ($ls in '/bin/ls', '/usr/bin/ls') {
     if (Test-Path -LiteralPath $ls -PathType Leaf) {
       $old = $env:LC_ALL; $env:LC_ALL = 'C'
-      try { $msg = (& $ls -d -- $Prefix 2>&1 | Out-String) } catch { $msg = "$_" } finally { $env:LC_ALL = $old }
+      try { $msg = (& $ls -d -- "$Prefix/." 2>&1 | Out-String) } catch { $msg = "$_" } finally { $env:LC_ALL = $old }
       return ($msg -match 'ermission denied')
     }
   }
