@@ -20,17 +20,17 @@ Every model-authored review below uses the canonical artifact-author selector in
 
 ## Worked example
 
-> "Build OAuth + SAML auth." (Illustrative. In an Opus-family session the same rules request `model: opus` for authoring and select `model: sonnet` for review.)
+> "Build OAuth + SAML auth." (Illustrative. In Claude Code the same rules request `model: opus` for authoring and `model: sonnet` for review; a relay may route `sonnet` to GPT-6 Astra, and the records decide the families.)
 >
-> PM proposes Complex in a Sonnet-family session. `/fc-brainstorm` returns a chosen approach; `/fc-grill-me` returns settled provider/session/RBAC decisions. Spec written, 850 words. The harness records a Sonnet-family author, selecting `model: opus`; the recorded reviewer is Opus. The audit flags a missing logout criterion → addressed → user approves.
+> PM proposes Complex in an Opus-family session. `/fc-brainstorm` returns a chosen approach; `/fc-grill-me` returns settled provider/session/RBAC decisions. Spec written, 850 words. The harness records an Opus-family author, selecting `model: sonnet`; the recorded reviewer is GPT-6 Astra. The audit flags a missing logout criterion → addressed → user approves.
 >
-> `fc-architect`, requested with `model: sonnet` under the authoring rule, returns a 380-line plan, 12 tasks. Its recorded model is Sonnet, so the selector requests `model: opus`; the recorded reviewer is Opus. The audit passes → user approves. These families are observed, not inferred from aliases; a substituted same-family reviewer would leave the gate unsatisfied.
+> `fc-architect`, requested with `model: opus` under the authoring rule, returns a 380-line plan, 12 tasks. Its recorded model is Opus, so the selector requests `model: sonnet`; the recorded reviewer is GPT. The audit passes → user approves. These families are observed, not inferred from aliases; a substituted same-family reviewer would leave the gate unsatisfied.
 >
-> 4 tasks are independent (DB schema, OAuth config, SAML config, login shell) → parallel. 8 are sequenced. Developers requested with `model: sonnet` under the authoring rule record as Sonnet; each QA and final dispatch records artifact identity, recorded author model, author family, and selected override first, then checks the recorded reviewer model.
+> 4 tasks are independent (DB schema, OAuth config, SAML config, login shell) → parallel. 8 are sequenced. Developers requested with `model: opus` under the authoring rule record as Opus; each QA and final dispatch records artifact identity, recorded author model, author family, and selected override first, then checks the recorded reviewer model.
 >
 > Per-task QA catches a CRITICAL: session token not invalidated on logout. Fixed in one dev cycle. `fc-tech-lead` approves. PR opened.
 >
-> `Cost: 17 dispatches, ~30M dispatch tokens, ~3h wall-clock, models: Sonnet + Opus (recorded)`
+> `Cost: 17 dispatches, ~30M dispatch tokens, ~3h wall-clock, models: Opus + GPT (recorded)`
 
 ## Failure modes
 

@@ -40,7 +40,7 @@ A missing or unreadable file, no `subagent.completed` event for the dispatch, or
 
 ## Map model ids to families
 
-- Opus, Sonnet, Haiku, and GPT are four separate families; any two are cross-family. `claude-sonnet-*` → Sonnet; `claude-opus-*` → Opus; `claude-haiku-*` → Haiku. Version or context suffixes do not create a new family.
+- Opus and GPT are the families in use; Sonnet and Haiku stay mapped so an older record still classifies. All four are separate families; any two are cross-family. `claude-sonnet-*` → Sonnet; `claude-opus-*` → Opus; `claude-haiku-*` → Haiku. Version or context suffixes do not create a new family.
 - A model whose family is unmapped never qualifies for the review pair; pick only from mapped families.
 - A non-Claude id maps by its provider/vendor model-line prefix to a family: `gpt-*` → GPT. Every id in one vendor line is one family, regardless of version or suffix; do not infer a family from the requested alias. For a recorded non-Claude id, provenance is unknown only when its vendor cannot be identified.
 - Keep the author family set separate from each reviewer's set. Authoring children join the author family set at every depth, according to their task rather than the parent record. Children doing review join the set for that reviewer at every depth, not the author set unless they changed the artifact. Every model in a reviewer set must be known and outside the author family set. Do not cherry-pick the last model after a fallback or omit a child's model because delegation was forbidden.
