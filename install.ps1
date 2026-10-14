@@ -384,6 +384,30 @@ function Test-Readable($path, [bool]$dir) {
 
 # A folder whose entries can be removed, like `test -w DIR -a -x DIR`. Windows
 # has no such mode bits; there, a run that cannot remove an entry exits 1.
+# Like `test -x DIR`: a folder that can be entered. Windows has no such bit.
+function Test-Searchable($dir) {
+  if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $true }
+  foreach ($t in '/usr/bin/test', '/bin/test') {
+    if (Test-Path -LiteralPath $t -PathType Leaf) { & $t -x $dir; return ($LASTEXITCODE -eq 0) }
+  }
+  return $true
+}
+
+# The nearest existing folder above the prefix, when it cannot be entered: the
+# old install is then unreachable, not absent, and every check below it is false.
+function Get-UnreachableAncestor {
+  if (-not $Prefix.Contains('/')) { return $null }
+  $d = $Prefix.Substring(0, $Prefix.LastIndexOf('/'))
+  while ($d -and -not (Test-Exists $d)) {
+    $i = $d.LastIndexOf('/')
+    if ($i -lt 0) { return $null }
+    $d = $d.Substring(0, $i)
+  }
+  if (-not $d) { $d = '/' }
+  if ((Test-Exists $d "Container") -and -not (Test-Searchable $d)) { return $d }
+  return $null
+}
+
 function Test-Writable($dir) {
   if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $true }
   foreach ($t in '/usr/bin/test', '/bin/test') {
@@ -426,7 +450,7 @@ function Test-Removable($path) {
 # Resolve the prefix, so a trailing / or /. on a linked prefix cannot hide the
 # link from Test-LinkedDir.
 function Resolve-Prefix($p) {
-  if (Test-Path -LiteralPath $p -PathType Container) {
+  if (Test-Exists $p "Container") {
     if (-not (Test-Readable $p $true)) { Stop-Cannot "read" $p }
     $p = [IO.Path]::GetFullPath((Resolve-AbsPath $p))
   }
@@ -479,6 +503,8 @@ function Remove-Emptied {
 # readable and removable before any CLI or file changes (exit 2 otherwise).
 function Clear-Legacy {
   $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
+  $a = Get-UnreachableAncestor
+  if ($a) { Stop-Cannot "read" $a }
   foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
     if ((Test-Exists $d "Container") -and -not (Test-Readable $d $true)) { Stop-Cannot "read" $d }
   }

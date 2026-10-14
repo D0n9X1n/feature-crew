@@ -296,6 +296,20 @@ check_removable() {
   { [ -w "${p%/*}" ] && [ -x "${p%/*}" ]; } || cannot remove "$p"
 }
 
+# The nearest existing folder above the prefix, when it cannot be entered: the
+# old install is then unreachable, not absent, and every check below it is false.
+unreachable_ancestor() {
+  local d
+  case "$PREFIX" in */*) d="${PREFIX%/*}" ;; *) return 1 ;; esac
+  while [ -n "$d" ] && [ ! -e "$d" ] && [ ! -L "$d" ]; do
+    [ "${d%/*}" != "$d" ] || return 1
+    d="${d%/*}"
+  done
+  [ -n "$d" ] || d=/
+  if [ -d "$d" ] && [ ! -x "$d" ]; then printf '%s\n' "$d"; return 0; fi
+  return 1
+}
+
 linked_old() { # path: an fc-* path in a linked folder still shadows the plugin
   LEGACY_FOUND=1
   [ "$VALIDATE" -eq 1 ] || say "kept (linked folder): $1"
@@ -310,6 +324,7 @@ old_skill_files() { # skill dir: its regular files, sorted
 clean_legacy() {
   local n p rel d
   KEPT=(); PLANNED=""; EMPTIED=""
+  if d="$(unreachable_ancestor)"; then cannot read "$d"; fi
   for d in "$PREFIX" "$PREFIX/agents" "$PREFIX/skills" "$PREFIX/agents/feature-crew"; do
     if [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; then cannot read "$d"; fi
   done
