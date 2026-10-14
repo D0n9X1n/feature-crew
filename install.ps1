@@ -171,7 +171,7 @@ function Get-MarketplaceState($cli) {
   $norm = $row[0] -replace '":\s*"', '": "'
   $src = $Source.Replace('\', '\\')
   foreach ($want in @("""path"": ""$src""", """repo"": ""$src""", """url"": ""$src""",
-      """source"": ""Local: $src""", """source"": ""GitHub: $src""")) {
+      """source"": ""Local: $src""", """source"": ""GitHub: $src""", """source"": ""URL: $src""")) {
     if ($norm.Contains($want)) { return "same" }
   }
   return "other"
@@ -312,13 +312,14 @@ function Remove-Legacy($path) {
   Write-Host "removed: $path"
 }
 
-# True when DIR, or a folder between it and the prefix, is a link: nothing
-# beneath it is removed, because removing there would reach outside the prefix.
+# True when DIR, a folder between it and the prefix, or the prefix itself is a
+# link: nothing beneath it is removed, because that would reach outside the prefix.
 function Test-LinkedDir($dir) {
   $d = $dir
-  while ($d -and $d -ne $Prefix) {
+  while ($d) {
     $item = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
     if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $true }
+    if ($d -eq $Prefix) { break }
     $i = $d.LastIndexOf('/')
     if ($i -lt 1) { break }
     $d = $d.Substring(0, $i)
@@ -340,7 +341,7 @@ function Get-OldSkillFiles($dir) {
   $todo = New-Object 'System.Collections.Generic.Stack[string]'
   $todo.Push($root)
   while ($todo.Count -gt 0) {
-    foreach ($item in @(Get-ChildItem -LiteralPath $todo.Pop() -Force)) {
+    foreach ($item in @(Get-ChildItem -LiteralPath $todo.Pop() -Force -ErrorAction Stop)) {
       if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
       if ($item.PSIsContainer) { $todo.Push($item.FullName); continue }
       $paths.Add($item.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/'))
@@ -348,6 +349,38 @@ function Get-OldSkillFiles($dir) {
   }
   $paths.Sort([StringComparer]::Ordinal)
   return ,$paths
+}
+
+function Stop-Fs($path) {
+  [Console]::Error.WriteLine("feature-crew: cannot read $path")
+  exit 2
+}
+
+function Test-Readable($path, [bool]$dir) {
+  try {
+    if ($dir) { [void](Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) }
+    else { (New-Object IO.FileStream((Resolve-AbsPath $path), [IO.FileMode]::Open, [IO.FileAccess]::Read)).Dispose() }
+    return $true
+  } catch { return $false }
+}
+
+# Read every old path this run may inspect before anything changes, so an
+# unreadable one stops the run (exit 2) with nothing installed or removed.
+function Invoke-Prescan {
+  foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
+    if ((Test-Path -LiteralPath $d -PathType Container) -and -not (Test-Readable $d $true)) { Stop-Fs $d }
+  }
+  foreach ($n in $LEGACY_OLD_AGENTS) {
+    $p = "$Prefix/agents/feature-crew/$n.md"
+    if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-Readable $p $false)) { Stop-Fs $p }
+  }
+  foreach ($n in $LEGACY_OLD_SKILLS) {
+    $p = "$Prefix/skills/$n"
+    if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-LinkedDir $p)) {
+      try { $files = Get-OldSkillFiles $p } catch { Stop-Fs $p }
+      foreach ($rel in $files) { if (-not (Test-Readable "$p/$rel" $false)) { Stop-Fs "$p/$rel" } }
+    }
+  }
 }
 
 # Every folder from the path's parent up to root.
@@ -396,7 +429,9 @@ function Clear-Legacy {
     }
   }
   $p = "$Prefix/feature-crew.sha256"
-  if (Test-Path -LiteralPath $p) { Remove-Legacy $p }
+  if (Test-Path -LiteralPath $p) {
+    if (Test-LinkedDir $Prefix) { Write-LinkedOld $p } else { Remove-Legacy $p }
+  }
   foreach ($n in $LEGACY_OLD_AGENTS) {
     $p = "$Prefix/agents/feature-crew/$n.md"
     if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
@@ -420,6 +455,8 @@ if ($Uninstall) {
 } else {
   Write-Host "feature-crew: plugin source $Source; old install at $Prefix"
 }
+
+Invoke-Prescan
 
 if ($Check) {
   foreach ($c in $Clis) {

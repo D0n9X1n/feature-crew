@@ -15,7 +15,7 @@ copilot plugin marketplace add D0n9X1n/feature-crew
 copilot plugin install feature-crew@feature-crew
 ```
 
-也可以在克隆的仓库里运行 `./install.sh`（macOS / Linux / Git Bash / WSL）或 `.\install.ps1`（原生 Windows PowerShell）：它会在 PATH 上找到的每个 CLI 中安装或更新插件，然后从 `~/.claude` 删除旧的脚本安装。旧的 `fc-*` 代理和技能即使被修改过也会删除，因为它们会代替插件里的版本运行；更早的文件只有在哈希证明是 Feature-Crew 写入时才删除。链接形式的 `agents` 或 `skills` 文件夹里的内容不会删除；其中旧的 `fc-*` 条目会被报告。在 Claude Code 中它只管理用户作用域的安装，项目自己的 Feature-Crew 设置保持不变。参数：`--dry-run`、`--check`、`--uninstall`、`--prefix DIR`、`--source SRC`；`install.ps1` 还接受 `-DryRun`、`-Check`、`-Uninstall`、`-Prefix DIR`、`-Source SRC`。
+也可以在克隆的仓库里运行 `./install.sh`（macOS / Linux / Git Bash / WSL）或 `.\install.ps1`（原生 Windows PowerShell）：它会在 PATH 上找到的每个 CLI 中安装或更新插件，然后从 `~/.claude` 删除旧的脚本安装。旧的 `fc-*` 代理和技能即使被修改过也会删除，因为它们会代替插件里的版本运行；更早的文件只有在哈希证明是 Feature-Crew 写入时才删除。不会经由链接删除任何内容，无论链接的是前缀、`agents` 还是 `skills`；其中旧的 `fc-*` 条目会被报告。旧文件或文件夹不可读时，运行在任何改动之前以退出码 2 停止。在 Claude Code 中它只管理用户作用域的安装，项目自己的 Feature-Crew 设置保持不变。参数：`--dry-run`、`--check`、`--uninstall`、`--prefix DIR`、`--source SRC`；`install.ps1` 还接受 `-DryRun`、`-Check`、`-Uninstall`、`-Prefix DIR`、`-Source SRC`。
 
 技能保留原名，例如 `/fc-build-or-fix`。代理注册为 `feature-crew:fc-*`，例如 `feature-crew:fc-qa-code`。
 

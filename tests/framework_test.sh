@@ -2848,6 +2848,40 @@ for engine in "${INSTALLERS[@]}"; do
   case "$t76_out" in *'kept (linked folder): <P>/agents/fc-pm.md'*'kept (linked folder): <P>/skills/fc-review'*) ;;
     *) case_err="$case_err linkdir:not-reported" ;; esac
 
+  # A Copilot URL source is matched like any other, so a rerun updates it.
+  t76_state="$t76_root/$engine/state-url"; rm -rf "$t76_state" "$p"
+  t76_run "$engine" both "$p" --source https://example.invalid/feature-crew.git
+  t76_run "$engine" both "$p" --source https://example.invalid/feature-crew.git --check
+  [ "$t76_rc" = 0 ] || case_err="$case_err url-source:check-rc=$t76_rc"
+  t76_run "$engine" both "$p" --source https://example.invalid/feature-crew.git
+  case "$t76_out" in *'run: copilot plugin marketplace update feature-crew'*) ;; *) case_err="$case_err url-source:rerun-not-update" ;; esac
+
+  # A linked prefix is never cleaned through either.
+  t76_state="$t76_root/$engine/state-linkprefix"; rm -rf "$t76_state" "$p" "$t76_root/$engine/outside-p"
+  t76_seed "$t76_root/$engine/outside-p"; ln -s "$t76_root/$engine/outside-p" "$p"
+  t76_outside=$(t76_tree "$t76_root/$engine/outside-p")
+  t76_run "$engine" both "$p"
+  [ "$t76_rc" = 0 ] || case_err="$case_err linkprefix:rc=$t76_rc"
+  [ "$(t76_tree "$t76_root/$engine/outside-p")" = "$t76_outside" ] || case_err="$case_err linkprefix:changed-files-outside-prefix"
+  printf '%s\n' "$t76_out" | grep -qE '^(removed|would remove): ' && case_err="$case_err linkprefix:removed-through-link"
+  case "$t76_out" in *'kept (linked folder): <P>/agents/fc-pm.md'*) ;; *) case_err="$case_err linkprefix:not-reported" ;; esac
+  rm -f "$p"
+
+  # An unreadable old file or folder is an error (exit 2) before anything is removed.
+  if [ "$(id -u)" != 0 ]; then
+    for t76_lock in skills/research skills/research/SKILL.md; do
+      t76_state="$t76_root/$engine/state-unreadable"; rm -rf "$t76_state"
+      t76_seed "$p"; t76_before=$(t76_tree "$p")
+      chmod 000 "$p/$t76_lock"
+      t76_run "$engine" both "$p" --check; t76_check_rc=$t76_rc; t76_check_err=$t76_err
+      t76_run "$engine" both "$p"
+      chmod 755 "$p/$t76_lock"; [ -d "$p/$t76_lock" ] || chmod 644 "$p/$t76_lock"
+      [ "$t76_check_rc" = 2 ] && [ "$t76_rc" = 2 ] || case_err="$case_err unreadable[$t76_lock]:rc=$t76_check_rc/$t76_rc"
+      case "$t76_check_err$t76_err" in *"feature-crew: cannot read <P>/$t76_lock"*) ;; *) case_err="$case_err unreadable[$t76_lock]:no-message" ;; esac
+      [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err unreadable[$t76_lock]:removed-files"
+    done
+  fi
+
   # An install that reports success but leaves the plugin unlisted removes nothing.
   t76_state="$t76_root/$engine/state-ghost"; rm -rf "$t76_state"
   t76_seed "$p"; t76_before=$(t76_tree "$p")

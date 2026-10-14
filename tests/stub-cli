@@ -28,7 +28,11 @@ case "$1 $2" in
         printf '[\n'
         if [ -f "$mp" ]; then
           if [ "$cli" = claude ]; then printf '  {\n    "name": "feature-crew",\n    "source": "github",\n    "repo": "%s"\n  },\n' "$(cat "$mp")"
-          else printf '  {\n    "name": "feature-crew",\n    "source": "GitHub: %s"\n  },\n' "$(cat "$mp")"; fi
+          else
+            src=$(cat "$mp")
+            case "$src" in http://*|https://*|git@*) label=URL ;; /*) label=Local ;; *) label=GitHub ;; esac
+            printf '  {\n    "name": "feature-crew",\n    "source": "%s: %s"\n  },\n' "$label" "$src"
+          fi
         fi
         printf '  {\n    "name": "builtin-market"\n  }\n]\n' ;;
       add) printf '%s' "$4" > "$mp"; [ "$scoped" = 0 ] || : > "$user"; echo "stub: marketplace added" ;;

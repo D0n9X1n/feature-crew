@@ -105,7 +105,7 @@ marketplace_state() {
   if [ -z "$row" ]; then echo absent; return 0; fi
   case "$row" in
     *"\"path\": \"$src\""*|*"\"repo\": \"$src\""*|*"\"url\": \"$src\""*) echo same ;;
-    *"\"source\": \"Local: $src\""*|*"\"source\": \"GitHub: $src\""*) echo same ;;
+    *"\"source\": \"Local: $src\""*|*"\"source\": \"GitHub: $src\""*|*"\"source\": \"URL: $src\""*) echo same ;;
     *) echo other ;;
   esac
 }
@@ -243,16 +243,44 @@ may_empty() { # root, path under it: every folder from the path's parent up to r
   done
 }
 
-# True when DIR, or a folder between it and the prefix, is a link: nothing
-# beneath it is removed, because removing there would reach outside the prefix.
+# True when DIR, a folder between it and the prefix, or the prefix itself is a
+# link: nothing beneath it is removed, because that would reach outside the prefix.
 linked_dir() {
   local d="$1"
-  while [ -n "$d" ] && [ "$d" != "$PREFIX" ] && [ "$d" != / ]; do
+  while [ -n "$d" ] && [ "$d" != / ]; do
     [ -L "$d" ] && return 0
+    [ "$d" != "$PREFIX" ] || break
     [ "${d%/*}" != "$d" ] || break
     d="${d%/*}"
   done
   return 1
+}
+
+fs_failed() {
+  echo "feature-crew: cannot read $1" >&2
+  exit 2
+}
+
+# Read every old path this run may inspect before anything changes, so an
+# unreadable one stops the run (exit 2) with nothing installed or removed.
+prescan_legacy() {
+  local d n p rel
+  for d in "$PREFIX" "$PREFIX/agents" "$PREFIX/skills" "$PREFIX/agents/feature-crew"; do
+    if [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; then fs_failed "$d"; fi
+  done
+  for n in "${LEGACY_OLD_AGENTS[@]}"; do
+    p="$PREFIX/agents/feature-crew/$n.md"
+    if [ -f "$p" ] && [ ! -L "$p" ] && [ ! -r "$p" ]; then fs_failed "$p"; fi
+  done
+  for n in "${LEGACY_OLD_SKILLS[@]}"; do
+    p="$PREFIX/skills/$n"
+    if [ -d "$p" ] && ! linked_dir "$p"; then
+      (cd "$p" 2>/dev/null && find . >/dev/null 2>&1) || fs_failed "$p"
+      while IFS= read -r rel; do
+        [ -z "$rel" ] || [ -r "$p/$rel" ] || fs_failed "$p/$rel"
+      done < <(old_skill_files "$p")
+    fi
+  done
 }
 
 linked_old() { # path: an fc-* path in a linked folder still shadows the plugin
@@ -280,7 +308,9 @@ clean_legacy() {
     fi
   done
   p="$PREFIX/feature-crew.sha256"
-  if [ -e "$p" ] || [ -L "$p" ]; then legacy_remove "$p"; fi
+  if [ -e "$p" ] || [ -L "$p" ]; then
+    if linked_dir "$PREFIX"; then linked_old "$p"; else legacy_remove "$p"; fi
+  fi
   for n in "${LEGACY_OLD_AGENTS[@]}"; do
     p="$PREFIX/agents/feature-crew/$n.md"
     if [ -f "$p" ] && [ ! -L "$p" ] && ! linked_dir "$PREFIX/agents/feature-crew"; then
@@ -327,6 +357,8 @@ if [ "$UNINSTALL" -eq 1 ]; then
 else
   say "feature-crew: plugin source $SOURCE; old install at $PREFIX"
 fi
+
+prescan_legacy
 
 if [ "$CHECK" -eq 1 ]; then
   for c in "${CLIS[@]}"; do
