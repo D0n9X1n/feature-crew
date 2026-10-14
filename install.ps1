@@ -280,9 +280,14 @@ function Get-Sha256Lf($path) {
   } finally { $sha.Dispose() }
 }
 
+# Like bash [ -e ] / -f / -d: false, never an error, when a parent cannot be read.
+function Test-Exists($path, $type = "Any") {
+  try { return [bool](Test-Path -LiteralPath $path -PathType $type -ErrorAction Stop) } catch { return $false }
+}
+
 function Test-PublishedFile($file, $relativePath) {
-  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $false }
-  return $PublishedHashes.Contains((Get-Sha256Lf $file) + "  " + $relativePath)
+  if (-not (Test-Exists $file "Leaf")) { return $false }
+  try { return $PublishedHashes.Contains((Get-Sha256Lf $file) + "  " + $relativePath) } catch { return $false }
 }
 
 function Test-Link($path) {
@@ -450,9 +455,10 @@ function Remove-Emptied {
     if ($da -ne $db) { return $db - $da }
     return [string]::CompareOrdinal($a, $b) })
   foreach ($d in $dirs) {
-    if (-not (Test-Path -LiteralPath $d -PathType Container) -or (Test-Link $d)) { continue }
+    if (-not (Test-Exists $d "Container") -or (Test-Link $d)) { continue }
     $left = $false
-    foreach ($e in @(Get-ChildItem -LiteralPath $d -Force)) {
+    try { $entries = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { $script:NotRemoved.Add($d); continue }
+    foreach ($e in $entries) {
       if (-not $script:Planned.Contains("$d/$($e.Name)")) { $left = $true; break }
     }
     if ($left) { continue }
@@ -474,34 +480,34 @@ function Remove-Emptied {
 function Clear-Legacy {
   $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
   foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
-    if ((Test-Path -LiteralPath $d -PathType Container) -and -not (Test-Readable $d $true)) { Stop-Cannot "read" $d }
+    if ((Test-Exists $d "Container") -and -not (Test-Readable $d $true)) { Stop-Cannot "read" $d }
   }
   foreach ($n in $LEGACY_FC_AGENTS) {
     $p = "$Prefix/agents/$n.md"
-    if (Test-Path -LiteralPath $p) {
+    if (Test-Exists $p) {
       if (Test-LinkedDir "$Prefix/agents") { Write-LinkedOld $p } else { Remove-Legacy $p }
     }
   }
   foreach ($n in $LEGACY_FC_SKILLS) {
     $p = "$Prefix/skills/$n"
-    if (Test-Path -LiteralPath $p) {
+    if (Test-Exists $p) {
       if (Test-LinkedDir "$Prefix/skills") { Write-LinkedOld $p } else { Remove-Legacy $p }
     }
   }
   $p = "$Prefix/feature-crew.sha256"
-  if (Test-Path -LiteralPath $p) {
+  if (Test-Exists $p) {
     if (Test-LinkedDir $Prefix) { Write-LinkedOld $p } else { Remove-Legacy $p }
   }
   foreach ($n in $LEGACY_OLD_AGENTS) {
     $p = "$Prefix/agents/feature-crew/$n.md"
-    if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
+    if ((Test-Exists $p "Leaf") -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
       if (-not (Test-Readable $p $false)) { Stop-Cannot "read" $p; continue }
       if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p; Add-Emptied "$Prefix/agents/feature-crew" $p } else { $script:Kept.Add($p) }
     }
   }
   foreach ($n in $LEGACY_OLD_SKILLS) {
     $p = "$Prefix/skills/$n"
-    if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-LinkedDir $p)) {
+    if ((Test-Exists $p "Container") -and -not (Test-LinkedDir $p)) {
       if (-not (Test-Readable $p $true)) { Stop-Cannot "read" $p; continue }
       [void](Get-ReadableDirs $p)
       foreach ($rel in (Get-OldSkillFiles $p)) {

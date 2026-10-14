@@ -2923,6 +2923,19 @@ for engine in "${INSTALLERS[@]}"; do
     case "$t76_out" in *'Done.'*) case_err="$case_err refused-read:printed-done" ;; esac
     t76_run "$engine" both "$p"
     [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused-read:rerun-did-not-finish(rc=$t76_rc)"
+    # The same holds when a parent folder (agents, skills) changes mid-run.
+    t76_state="$t76_root/$engine/state-refused-parent"; rm -rf "$t76_state"
+    t76_seed "$p"
+    t76_stub_lock="$p/agents"; t76_stub_hide="$p/skills"
+    t76_run "$engine" both "$p"
+    t76_stub_lock=''; t76_stub_hide=''
+    chmod 755 "$p/agents" "$p/skills"
+    [ "$t76_rc" = 1 ] || case_err="$case_err refused-parent:rc=$t76_rc"
+    case "$t76_err" in *'not removed: <P>/skills'*) ;; *) case_err="$case_err refused-parent:skills-not-listed" ;; esac
+    case "$t76_err" in *'not removed: <P>/agents/fc-pm.md'*) ;; *) case_err="$case_err refused-parent:agent-not-listed" ;; esac
+    [ ! -e "$p/feature-crew.sha256" ] || case_err="$case_err refused-parent:stopped-before-the-rest"
+    t76_run "$engine" both "$p"
+    [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused-parent:rerun-did-not-finish(rc=$t76_rc)"
   fi
 
   # An install that reports success but leaves the plugin unlisted removes nothing.
