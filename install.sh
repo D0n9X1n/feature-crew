@@ -242,6 +242,8 @@ legacy_remove() { # path; rm -rf removes a link itself, never its target
     say "old file: $1"
   elif [ "$DRY_RUN" -eq 1 ]; then
     say "would remove: $1"
+  elif [ ! -L "$1" ] && { [ ! -r "$1" ] || { [ -d "$1" ] && [ ! -x "$1" ]; }; }; then
+    cannot read "$1"
   elif rm -rf "$1" 2>/dev/null && [ ! -e "$1" ] && [ ! -L "$1" ]; then
     say "removed: $1"
   else
@@ -296,12 +298,14 @@ check_removable() {
   { [ -w "${p%/*}" ] && [ -x "${p%/*}" ]; } || cannot remove "$p"
 }
 
-# True when the prefix cannot be reached rather than missing. The OS tells the
-# two apart ("Permission denied" vs "No such file"); probing PREFIX/. follows a
-# link anywhere in the path, including the prefix itself.
-prefix_unreachable() {
-  case "$(LC_ALL=C ls -d -- "$PREFIX/." 2>&1 >/dev/null)" in *'ermission denied'*) return 0 ;; esac
-  return 1
+# True when DIR cannot be reached rather than missing: any OS failure other
+# than "No such file" or "Not a directory" (a folder that cannot be entered, a
+# link loop). Probing DIR/. follows a link anywhere in the path, DIR included.
+dir_unreachable() {
+  local err
+  err="$(LC_ALL=C ls -d -- "$1/." 2>&1 >/dev/null)" && return 1
+  case "$err" in *'No such file'*|*'Not a directory'*) return 1 ;; esac
+  return 0
 }
 
 linked_old() { # path: an fc-* path in a linked folder still shadows the plugin
@@ -318,9 +322,10 @@ old_skill_files() { # skill dir: its regular files, sorted
 clean_legacy() {
   local n p rel d
   KEPT=(); PLANNED=""; EMPTIED=""
-  if prefix_unreachable; then cannot read "$PREFIX"; fi
+  local bad=""
   for d in "$PREFIX" "$PREFIX/agents" "$PREFIX/skills" "$PREFIX/agents/feature-crew"; do
-    if [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; then cannot read "$d"; fi
+    if [ -n "$bad" ]; then case "$d" in "$bad"/*) continue ;; esac; fi
+    if dir_unreachable "$d" || { [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; }; then cannot read "$d"; bad="$d"; fi
   done
   for n in "${LEGACY_FC_AGENTS[@]}"; do
     p="$PREFIX/agents/$n.md"

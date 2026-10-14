@@ -2975,6 +2975,55 @@ for engine in "${INSTALLERS[@]}"; do
       fi
       rm -rf "$t76_par" "$t76_root/$engine/alias" "$t76_root/$engine/linkp"
     done
+    # Any OS failure other than "missing" makes a folder unreachable, not absent:
+    # a linked agents folder behind one that cannot be entered, or a link loop.
+    t76_par="$t76_root/$engine/par"; rm -rf "$t76_par"; mkdir -p "$t76_par/private/agents"
+    printf 'mine\n' > "$t76_par/private/agents/fc-pm.md"
+    t76_state="$t76_root/$engine/state-linked-agents"; rm -rf "$t76_state"
+    t76_seed "$p"; rm -rf "$p/agents"; ln -s "$t76_par/private/agents" "$p/agents"
+    t76_before=$(t76_tree "$p")
+    chmod 000 "$t76_par"
+    for t76_flags in '' --check --dry-run; do
+      t76_run "$engine" both "$p" $t76_flags
+      [ "$t76_rc" = 2 ] || case_err="$case_err linked-agents[$t76_flags]:rc=$t76_rc"
+      case "$t76_err" in *'feature-crew: cannot read <P>/agents'*) ;; *) case_err="$case_err linked-agents[$t76_flags]:no-message" ;; esac
+    done
+    chmod 755 "$t76_par"
+    printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err linked-agents:changed-cli-state"
+    [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err linked-agents:changed-files"
+    t76_state="$t76_root/$engine/state-linked-agents-late"; rm -rf "$t76_state"
+    t76_stub_hide="$t76_par"
+    t76_run "$engine" both "$p"
+    t76_stub_hide=''
+    chmod 755 "$t76_par"
+    [ "$t76_rc" = 1 ] || case_err="$case_err linked-agents-late:rc=$t76_rc"
+    case "$t76_err" in *'feature-crew: not removed: <P>/agents'*'run again'*) ;; *) case_err="$case_err linked-agents-late:not-listed" ;; esac
+    case "$t76_out" in *'Done.'*) case_err="$case_err linked-agents-late:printed-done" ;; esac
+    [ -f "$t76_par/private/agents/fc-pm.md" ] || case_err="$case_err linked-agents-late:removed-outside-file"
+    rm -rf "$t76_par" "$p"
+    t76_state="$t76_root/$engine/state-loop"; rm -rf "$t76_state"
+    ln -s "$p" "$p"
+    for t76_flags in '' --check --dry-run; do
+      t76_run "$engine" both "$p" $t76_flags
+      [ "$t76_rc" = 2 ] || case_err="$case_err link-loop[$t76_flags]:rc=$t76_rc"
+      case "$t76_err" in *'feature-crew: cannot read <P>'*) ;; *) case_err="$case_err link-loop[$t76_flags]:no-message" ;; esac
+    done
+    printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err link-loop:changed-cli-state"
+    rm -f "$p"
+
+    # An old fc-* file that becomes unreadable during the run is listed, not deleted.
+    t76_state="$t76_root/$engine/state-fc-unreadable-late"; rm -rf "$t76_state"
+    t76_seed "$p"
+    t76_stub_hide="$p/agents/fc-pm.md"
+    t76_run "$engine" both "$p"
+    t76_stub_hide=''
+    [ -f "$p/agents/fc-pm.md" ] && chmod 644 "$p/agents/fc-pm.md"
+    [ "$t76_rc" = 1 ] || case_err="$case_err fc-unreadable-late:rc=$t76_rc"
+    case "$t76_err" in *'feature-crew: not removed: <P>/agents/fc-pm.md'*'run again'*) ;; *) case_err="$case_err fc-unreadable-late:not-listed" ;; esac
+    case "$t76_out" in *'Done.'*) case_err="$case_err fc-unreadable-late:printed-done" ;; esac
+    [ -f "$p/agents/fc-pm.md" ] || case_err="$case_err fc-unreadable-late:deleted"
+    t76_run "$engine" both "$p"
+    [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err fc-unreadable-late:rerun-did-not-finish(rc=$t76_rc)"
   fi
 
   # An install that reports success but leaves the plugin unlisted removes nothing.

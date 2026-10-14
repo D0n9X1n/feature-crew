@@ -308,6 +308,10 @@ function Remove-Legacy($path) {
   if ($script:Validate) { Test-Removable $path; return }
   if ($Check) { Write-Host "old file: $path"; return }
   if ($DryRun) { Write-Host "would remove: $path"; return }
+  $it = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  if ($it -and -not ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not (Test-Readable $path ([bool]$it.PSIsContainer))) {
+    Stop-Cannot "read" $path; return
+  }
   $abs = Resolve-AbsPath $path
   try {
     $item = Get-Item -LiteralPath $abs -Force
@@ -384,17 +388,18 @@ function Test-Readable($path, [bool]$dir) {
 
 # A folder whose entries can be removed, like `test -w DIR -a -x DIR`. Windows
 # has no such mode bits; there, a run that cannot remove an entry exits 1.
-# True when the prefix cannot be reached rather than missing. The OS tells the
-# two apart ("Permission denied" vs "No such file"); probing PREFIX/. follows a
-# link anywhere in the path, including the prefix itself.
-function Test-PrefixUnreachable {
+# True when DIR cannot be reached rather than missing: any OS failure other
+# than "No such file" or "Not a directory" (a folder that cannot be entered, a
+# link loop). Probing DIR/. follows a link anywhere in the path, DIR included.
+function Test-UnreachableDir($dir) {
   if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $false }
   $ErrorActionPreference = "Continue"
   foreach ($ls in '/bin/ls', '/usr/bin/ls') {
     if (Test-Path -LiteralPath $ls -PathType Leaf) {
       $old = $env:LC_ALL; $env:LC_ALL = 'C'
-      try { $msg = (& $ls -d -- "$Prefix/." 2>&1 | Out-String) } catch { $msg = "$_" } finally { $env:LC_ALL = $old }
-      return ($msg -match 'ermission denied')
+      try { $msg = (& $ls -d -- "$dir/." 2>&1 | Out-String); $rc = $LASTEXITCODE } catch { $msg = "$_"; $rc = 1 } finally { $env:LC_ALL = $old }
+      if ($rc -eq 0) { return $false }
+      return -not ($msg -match 'No such file|Not a directory')
     }
   }
   return $false
@@ -495,9 +500,10 @@ function Remove-Emptied {
 # readable and removable before any CLI or file changes (exit 2 otherwise).
 function Clear-Legacy {
   $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
-  if (Test-PrefixUnreachable) { Stop-Cannot "read" $Prefix }
+  $bad = $null
   foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
-    if ((Test-Exists $d "Container") -and -not (Test-Readable $d $true)) { Stop-Cannot "read" $d }
+    if ($bad -and $d.StartsWith("$bad/")) { continue }
+    if ((Test-UnreachableDir $d) -or ((Test-Exists $d "Container") -and -not (Test-Readable $d $true))) { Stop-Cannot "read" $d; $bad = $d }
   }
   foreach ($n in $LEGACY_FC_AGENTS) {
     $p = "$Prefix/agents/$n.md"
