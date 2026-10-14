@@ -2607,10 +2607,10 @@ t76_run() { # engine, clis(both|claude|none), prefix, flags...
       claude) cp "$t76_root/stub/cli" "$bin/claude" ;; esac
   fi
   if [ "$engine" = sh ]; then
-    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" \
+    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" FC_STUB_LOCK="${t76_stub_lock:-}" \
       "$installer_bash" "$installer_repo/install.sh" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
   else
-    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" \
+    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" FC_STUB_LOCK="${t76_stub_lock:-}" \
       POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
       "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
   fi
@@ -2893,6 +2893,23 @@ for engine in "${INSTALLERS[@]}"; do
     case "$t76_err" in *'feature-crew: cannot remove <P>/skills/fc-review'*) ;; *) case_err="$case_err unremovable:no-message" ;; esac
     [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err unremovable:removed-files"
     printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err unremovable:changed-cli-state"
+  fi
+
+  # A removal the OS refuses after the checks passed stops with exit 1, lists
+  # what is left, and prints no success banner; a rerun finishes the job.
+  if [ "$(id -u)" != 0 ]; then
+    t76_state="$t76_root/$engine/state-refused"; rm -rf "$t76_state"
+    t76_seed "$p"
+    t76_stub_lock="$p/skills/fc-review"
+    t76_run "$engine" both "$p"
+    t76_stub_lock=''
+    chmod 755 "$p/skills/fc-review"
+    [ "$t76_rc" = 1 ] || case_err="$case_err refused:rc=$t76_rc"
+    case "$t76_err" in *'feature-crew: not removed: <P>/skills/fc-review'*'run again'*) ;; *) case_err="$case_err refused:not-listed" ;; esac
+    case "$t76_out" in *'Done.'*) case_err="$case_err refused:printed-done" ;; esac
+    [ -d "$p/skills/fc-review" ] && [ ! -e "$p/agents/fc-pm.md" ] || case_err="$case_err refused:unexpected-tree"
+    t76_run "$engine" both "$p"
+    [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused:rerun-did-not-finish(rc=$t76_rc)"
   fi
 
   # An install that reports success but leaves the plugin unlisted removes nothing.

@@ -230,6 +230,7 @@ published_file() { # file, prefix-relative path
 LEGACY_FOUND=0
 VALIDATE=0
 KEPT=()
+NOT_REMOVED=()
 PLANNED=""
 EMPTIED=""
 legacy_remove() { # path; rm -rf removes a link itself, never its target
@@ -241,9 +242,10 @@ legacy_remove() { # path; rm -rf removes a link itself, never its target
     say "old file: $1"
   elif [ "$DRY_RUN" -eq 1 ]; then
     say "would remove: $1"
-  else
-    rm -rf "$1"
+  elif rm -rf "$1" 2>/dev/null && [ ! -e "$1" ] && [ ! -L "$1" ]; then
     say "removed: $1"
+  else
+    NOT_REMOVED+=("$1")
   fi
 }
 
@@ -345,6 +347,13 @@ clean_legacy() {
   if [ "${#KEPT[@]}" -gt 0 ] && [ "$VALIDATE" -eq 0 ]; then
     for p in "${KEPT[@]}"; do say "kept (not ours): $p"; done
   fi
+  # The checks cannot foresee every refusal (an immutable file, a lock); list
+  # what is left and stop. Every step is safe to repeat, so a rerun finishes.
+  if [ "${#NOT_REMOVED[@]}" -gt 0 ]; then
+    for p in "${NOT_REMOVED[@]}"; do echo "feature-crew: not removed: $p" >&2; done
+    echo "feature-crew: fix these and run again; every other step is done." >&2
+    exit 1
+  fi
 }
 
 # Remove only folders this run empties, deepest first; never one that was already empty.
@@ -364,7 +373,7 @@ remove_emptied() {
     elif [ "$DRY_RUN" -eq 1 ]; then
       say "would remove: $d"
     else
-      rmdir "$d" && say "removed: $d"
+      if rmdir "$d" 2>/dev/null; then say "removed: $d"; else NOT_REMOVED+=("$d"); fi
     fi
   done < <(printf '%s' "$EMPTIED" | awk 'NF' | sort -u | awk -F/ '{ print NF "\t" $0 }' | sort -t "$(printf '\t')" -k1,1nr -k2,2 | cut -f2-)
 }

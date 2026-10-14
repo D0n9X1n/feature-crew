@@ -292,6 +292,7 @@ function Test-Link($path) {
 
 $script:LegacyFound = $false
 $script:Validate = $false
+$script:NotRemoved = New-Object 'System.Collections.Generic.List[string]'
 $script:Kept = New-Object 'System.Collections.Generic.List[string]'
 $script:Planned = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $script:Emptied = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -303,14 +304,17 @@ function Remove-Legacy($path) {
   if ($Check) { Write-Host "old file: $path"; return }
   if ($DryRun) { Write-Host "would remove: $path"; return }
   $abs = Resolve-AbsPath $path
-  $item = Get-Item -LiteralPath $abs -Force
-  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-    if ($item.PSIsContainer) { [IO.Directory]::Delete($abs) } else { [IO.File]::Delete($abs) }
-  } elseif ($item.PSIsContainer) {
-    Remove-Item -LiteralPath $abs -Recurse -Force
-  } else {
-    Remove-Item -LiteralPath $abs -Force
-  }
+  try {
+    $item = Get-Item -LiteralPath $abs -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      if ($item.PSIsContainer) { [IO.Directory]::Delete($abs) } else { [IO.File]::Delete($abs) }
+    } elseif ($item.PSIsContainer) {
+      Remove-Item -LiteralPath $abs -Recurse -Force -ErrorAction Stop
+    } else {
+      Remove-Item -LiteralPath $abs -Force -ErrorAction Stop
+    }
+  } catch { }
+  if (Get-Item -LiteralPath $abs -Force -ErrorAction SilentlyContinue) { $script:NotRemoved.Add($path); return }
   Write-Host "removed: $path"
 }
 
@@ -451,7 +455,10 @@ function Remove-Emptied {
       continue
     }
     if ($DryRun) { Write-Host "would remove: $d" }
-    else { Remove-Item -LiteralPath $d -Force; Write-Host "removed: $d" }
+    else {
+      try { Remove-Item -LiteralPath $d -Force -ErrorAction Stop; Write-Host "removed: $d" }
+      catch { $script:NotRemoved.Add($d) }
+    }
   }
 }
 
@@ -497,6 +504,13 @@ function Clear-Legacy {
   }
   if (-not $Check -or $script:Validate) { Remove-Emptied }
   if (-not $script:Validate) { foreach ($p in $script:Kept) { Write-Host "kept (not ours): $p" } }
+  # The checks cannot foresee every refusal (an immutable file, a lock); list
+  # what is left and stop. Every step is safe to repeat, so a rerun finishes.
+  if ($script:NotRemoved.Count -gt 0) {
+    foreach ($p in $script:NotRemoved) { [Console]::Error.WriteLine("feature-crew: not removed: $p") }
+    [Console]::Error.WriteLine("feature-crew: fix these and run again; every other step is done.")
+    exit 1
+  }
 }
 
 $Prefix = Resolve-Prefix $Prefix

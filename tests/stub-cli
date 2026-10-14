@@ -50,6 +50,8 @@ case "$1 $2" in
   "plugin install")
     # FC_STUB_GHOST names a CLI whose install reports success but enables nothing.
     if [ "${FC_STUB_GHOST:-}" != "$cli" ]; then : > "$pl"; rm -f "$off"; fi
+    # FC_STUB_LOCK names a folder made unremovable after the installer's checks passed.
+    [ -z "${FC_STUB_LOCK:-}" ] || chmod 555 "$FC_STUB_LOCK"
     echo "stub: plugin installed" ;;
   "plugin enable") rm -f "$off"; echo "stub: plugin enabled" ;;
   "plugin update") echo "stub: plugin updated" ;;
