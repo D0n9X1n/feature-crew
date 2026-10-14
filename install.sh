@@ -58,6 +58,9 @@ if [ "$CHECK" -eq 1 ] && [ $((DRY_RUN + UNINSTALL)) -gt 0 ]; then
   exit 2
 fi
 
+# A local --source is registered as an absolute path, so a rerun from anywhere matches it.
+if [ -d "$SOURCE" ]; then SOURCE="$(cd "$SOURCE" && pwd)"; fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PUBLISHED_HASHES="${SCRIPT_DIR}/published.sha256"
 PLUGIN_ID="feature-crew@feature-crew"
@@ -82,13 +85,14 @@ if [ "${#CLIS[@]}" -eq 0 ]; then
 fi
 
 # The CLIs' own JSON listings are the only plugin state this script reads.
-# One object per line, so a match never spans two entries.
+# One object per line, so a match never spans two entries. Every CLI call runs
+# from /, because a project's .claude/settings.json changes what both CLIs list.
 listing() { # cli, marketplace|plugin
   local out
   if [ "$2" = marketplace ]; then
-    out="$("$1" plugin marketplace list --json 2>/dev/null)" || return 1
+    out="$(cd / && "$1" plugin marketplace list --json 2>/dev/null)" || return 1
   else
-    out="$("$1" plugin list --json 2>/dev/null)" || return 1
+    out="$(cd / && "$1" plugin list --json 2>/dev/null)" || return 1
   fi
   printf '%s' "$out" | tr -d '\r\n' | tr '}' '\n'
 }
@@ -107,7 +111,7 @@ marketplace_state() {
 }
 
 # absent, disabled, or enabled: only feature-crew from the feature-crew marketplace,
-# and in Claude Code only the user-scope install.
+# and in Claude Code only the user-scope install. Only "enabled": true is enabled.
 plugin_state() {
   local rows row
   rows="$(listing "$1" plugin)" || return 1
@@ -117,8 +121,8 @@ plugin_state() {
     row="$(printf '%s\n' "$rows" | grep -E '"name": *"feature-crew"' | grep -E '"marketplace": *"feature-crew"' | head -1 || true)"
   fi
   if [ -z "$row" ]; then echo absent
-  elif [[ "$row" =~ \"enabled\":\ *false ]]; then echo disabled
-  else echo enabled; fi
+  elif [[ "$row" =~ \"enabled\":[[:space:]]*true([^[:alnum:]_]|$) ]]; then echo enabled
+  else echo disabled; fi
 }
 
 # Claude Code installs per scope; this installer manages the user scope only.
@@ -135,12 +139,13 @@ step() {
     say "would run: $*"
   else
     say "run: $*"
-    "$@"
+    (cd / && "$@")
   fi
 }
 
-# A marketplace from another source is replaced, never updated. The old
-# install is removed only after the CLI lists the plugin enabled.
+# A marketplace from another source is replaced, never updated. Claude Code
+# replaces it in user settings, and its plugin follows; other scopes keep
+# theirs. The old install is removed only after the CLI lists the plugin enabled.
 install_cli() {
   local cli="$1" mp pl
   mp="$(marketplace_state "$cli")" || cli_failed "$cli"
@@ -148,11 +153,11 @@ install_cli() {
   if [ "$mp" = same ]; then
     step "$cli" plugin marketplace update "$MARKETPLACE" || cli_failed "$cli"
   else
-    if [ "$mp" = other ]; then
-      if [ "$pl" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"; fi
+    if [ "$mp" = other ] && [ "$cli" != claude ]; then
+      if [ "$pl" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" || cli_failed "$cli"; fi
       step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"
     fi
-    step "$cli" plugin marketplace add "$SOURCE" || cli_failed "$cli"
+    step "$cli" plugin marketplace add "$SOURCE" $(scope_args "$cli") || cli_failed "$cli"
     if [ "$DRY_RUN" -eq 1 ]; then pl=absent; else pl="$(plugin_state "$cli")" || cli_failed "$cli"; fi
   fi
   case "$pl" in
@@ -172,12 +177,29 @@ install_cli() {
   fi
 }
 
+# Claude Code: remove the marketplace from user settings only. When only a
+# project declares it, the CLI says not_configured and it stays for that project.
+remove_user_marketplace() {
+  local out
+  if [ "$DRY_RUN" -eq 1 ]; then say "would run: claude plugin marketplace remove $MARKETPLACE --scope user --json"; return 0; fi
+  say "run: claude plugin marketplace remove $MARKETPLACE --scope user --json"
+  if out="$(cd / && claude plugin marketplace remove "$MARKETPLACE" --scope user --json 2>&1)"; then
+    say "claude: marketplace removed from user settings"
+  elif printf '%s' "$out" | grep -qE '"failureCode": *"not_configured"'; then
+    say "claude: marketplace not in user settings; left for other scopes"
+  else
+    printf '%s\n' "$out" >&2; return 1
+  fi
+}
+
 uninstall_cli() {
   local cli="$1" st
   st="$(plugin_state "$cli")" || cli_failed "$cli"
   if [ "$st" != absent ]; then step "$cli" plugin uninstall "$PLUGIN_ID" $(scope_args "$cli") || cli_failed "$cli"; fi
   st="$(marketplace_state "$cli")" || cli_failed "$cli"
-  if [ "$st" != absent ]; then step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"; fi
+  [ "$st" != absent ] || return 0
+  if [ "$cli" = claude ]; then remove_user_marketplace || cli_failed "$cli"
+  else step "$cli" plugin marketplace remove "$MARKETPLACE" || cli_failed "$cli"; fi
 }
 
 # Hash a file with CRLF normalized to LF, so a Windows checkout of a genuine
@@ -221,6 +243,23 @@ may_empty() { # root, path under it: every folder from the path's parent up to r
   done
 }
 
+# True when DIR, or a folder between it and the prefix, is a link: nothing
+# beneath it is removed, because removing there would reach outside the prefix.
+linked_dir() {
+  local d="$1"
+  while [ -n "$d" ] && [ "$d" != "$PREFIX" ] && [ "$d" != / ]; do
+    [ -L "$d" ] && return 0
+    [ "${d%/*}" != "$d" ] || break
+    d="${d%/*}"
+  done
+  return 1
+}
+
+linked_old() { # path: an fc-* path in a linked folder still shadows the plugin
+  LEGACY_FOUND=1
+  say "kept (linked folder): $1"
+}
+
 old_skill_files() { # skill dir: its regular files, sorted
   (cd "$1" && find . -type f | sed 's#^\./##' | sort)
 }
@@ -230,23 +269,27 @@ clean_legacy() {
   KEPT=(); PLANNED=""; EMPTIED=""
   for n in "${LEGACY_FC_AGENTS[@]}"; do
     p="$PREFIX/agents/$n.md"
-    if [ -e "$p" ] || [ -L "$p" ]; then legacy_remove "$p"; fi
+    if [ -e "$p" ] || [ -L "$p" ]; then
+      if linked_dir "$PREFIX/agents"; then linked_old "$p"; else legacy_remove "$p"; fi
+    fi
   done
   for n in "${LEGACY_FC_SKILLS[@]}"; do
     p="$PREFIX/skills/$n"
-    if [ -e "$p" ] || [ -L "$p" ]; then legacy_remove "$p"; fi
+    if [ -e "$p" ] || [ -L "$p" ]; then
+      if linked_dir "$PREFIX/skills"; then linked_old "$p"; else legacy_remove "$p"; fi
+    fi
   done
   p="$PREFIX/feature-crew.sha256"
   if [ -e "$p" ] || [ -L "$p" ]; then legacy_remove "$p"; fi
   for n in "${LEGACY_OLD_AGENTS[@]}"; do
     p="$PREFIX/agents/feature-crew/$n.md"
-    if [ -f "$p" ] && [ ! -L "$p" ]; then
+    if [ -f "$p" ] && [ ! -L "$p" ] && ! linked_dir "$PREFIX/agents/feature-crew"; then
       if published_file "$p" "agents/feature-crew/$n.md"; then legacy_remove "$p"; may_empty "$PREFIX/agents/feature-crew" "$p"; else KEPT+=("$p"); fi
     fi
   done
   for n in "${LEGACY_OLD_SKILLS[@]}"; do
     p="$PREFIX/skills/$n"
-    if [ -d "$p" ] && [ ! -L "$p" ]; then
+    if [ -d "$p" ] && ! linked_dir "$p"; then
       while IFS= read -r rel; do
         [ -n "$rel" ] || continue
         if published_file "$p/$rel" "skills/$n/$rel"; then legacy_remove "$p/$rel"; may_empty "$p" "$p/$rel"; else KEPT+=("$p/$rel"); fi
@@ -288,8 +331,11 @@ fi
 if [ "$CHECK" -eq 1 ]; then
   for c in "${CLIS[@]}"; do
     st="$(plugin_state "$c")" || { echo "feature-crew: $c plugin list failed" >&2; exit 2; }
+    mp="$(marketplace_state "$c")" || { echo "feature-crew: $c marketplace list failed" >&2; exit 2; }
     case "$st" in
-      enabled) say "$c: feature-crew installed" ;;
+      enabled)
+        if [ "$mp" = same ]; then say "$c: feature-crew installed"
+        else say "$c: feature-crew installed from another source"; LEGACY_FOUND=1; fi ;;
       disabled) say "$c: feature-crew disabled"; LEGACY_FOUND=1 ;;
       *) say "$c: feature-crew missing"; LEGACY_FOUND=1 ;;
     esac

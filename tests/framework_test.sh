@@ -2543,18 +2543,20 @@ installer_result "T73 release version check accepts only v + plugin.json version
 case_err=""
 t74_doc=skills/fc-build-or-fix/reference/gate-provenance.md
 t74_section=$(sed -n '/^## Copilot CLI record$/,/^## /p' "$t74_doc")
-for t74_phrase in '~/.copilot/session-state/<session>/events.jsonl' 'GATE UNSATISFIED' 'totalTokens' '`model`'; do
+for t74_phrase in '~/.copilot/session-state/<session>/events.jsonl' 'GATE UNSATISFIED' 'totalTokens' '`model`' \
+    'A missing or unreadable file' 'no `subagent.completed` event for the dispatch' 'an `UNKNOWN` model'; do
   case "$t74_section" in *"$t74_phrase"*) ;; *) case_err="$case_err missing-phrase:$t74_phrase" ;; esac
 done
 t74_models=$(printf '%s\n' "$t74_section" | grep -E '^jq -r --arg call ' | sed -n 1p)
 t74_nested=$(printf '%s\n' "$t74_section" | grep -E '^jq -r --arg call ' | sed -n 2p)
-[ -n "$t74_models" ] && [ -n "$t74_nested" ] || case_err="$case_err queries-missing"
+t74_done=$(printf '%s\n' "$t74_section" | grep -E '^jq -r --arg call ' | sed -n 3p)
+[ -n "$t74_models" ] && [ -n "$t74_nested" ] && [ -n "$t74_done" ] || case_err="$case_err queries-missing"
 if ! command -v jq >/dev/null 2>&1; then
   skip "T74 Copilot record queries (jq unavailable)"
-elif [ -n "$t74_models" ] && [ -n "$t74_nested" ]; then
+elif [ -n "$t74_models" ] && [ -n "$t74_nested" ] && [ -n "$t74_done" ]; then
   t74_dir=$(mktemp -d); CLEANUP_PATHS+=("$t74_dir")
   ev() { printf '%s\n' "$1" >> "$t74_dir/$2"; }
-  for f in clean fallback delegated; do
+  for f in clean fallback delegated unknown incomplete; do
     ev '{"type":"tool.execution_start","data":{"toolCallId":"call_R","toolName":"task","model":"claude-opus-5.5"}}' "$f"
     ev '{"type":"subagent.started","data":{"toolCallId":"call_R","agentName":"feature-crew:fc-qa-code","model":"gpt-6-astra"}}' "$f"
     ev '{"type":"assistant.message","data":{"parentToolCallId":"call_R","model":"gpt-6-astra"}}' "$f"
@@ -2565,7 +2567,8 @@ elif [ -n "$t74_models" ] && [ -n "$t74_nested" ]; then
   ev '{"type":"assistant.message","data":{"parentToolCallId":"call_R","model":"claude-haiku-4.5"}}' fallback
   ev '{"type":"tool.execution_start","data":{"toolCallId":"call_N","toolName":"task","parentToolCallId":"call_R"}}' delegated
   ev '{"type":"tool.execution_start","data":{"toolCallId":"call_S","toolName":"skill","parentToolCallId":"call_R"}}' delegated
-  for f in clean fallback delegated; do
+  ev '{"type":"assistant.message","data":{"parentToolCallId":"call_R"}}' unknown
+  for f in clean fallback delegated unknown; do
     ev '{"type":"subagent.completed","data":{"toolCallId":"call_R","model":"gpt-6-astra","totalTokens":1200}}' "$f"
   done
   t74_run() { # query, fixture
@@ -2576,8 +2579,14 @@ elif [ -n "$t74_models" ] && [ -n "$t74_nested" ]; then
   [ "$(t74_run "$t74_models" fallback)" = 'claude-haiku-4.5 gpt-6-astra' ] || case_err="$case_err fallback-models:'$(t74_run "$t74_models" fallback)'"
   [ -z "$(t74_run "$t74_nested" clean)" ] || case_err="$case_err clean-nested:'$(t74_run "$t74_nested" clean)'"
   [ "$(t74_run "$t74_nested" delegated)" = 'task skill' ] || case_err="$case_err delegated-nested:'$(t74_run "$t74_nested" delegated)'"
+  # Fail closed: an unknown model is visible, and a missing completion or file proves nothing.
+  case " $(t74_run "$t74_models" unknown) " in *' UNKNOWN '*) ;; *) case_err="$case_err unknown-model-hidden" ;; esac
+  [ "$(t74_run "$t74_done" clean)" = call_R ] || case_err="$case_err completed-not-found:'$(t74_run "$t74_done" clean)'"
+  [ -z "$(t74_run "$t74_done" incomplete)" ] || case_err="$case_err incomplete-reads-completed"
+  case "$(t74_run "$t74_done" missing)" in *call_R*) case_err="$case_err missing-file-reads-completed" ;; esac
+  case "$(t74_run "$t74_models" missing)" in *gpt-*|*claude-*) case_err="$case_err missing-file-reads-a-model" ;; esac
 fi
-installer_result "T74 Copilot record queries list every model of one dispatch and expose nested task or skill calls"
+installer_result "T74 Copilot record queries list every model of one dispatch, expose nested task or skill calls, and fail closed"
 
 # ---------------------------------------------------------------- T76
 # The installers install the plugin through each CLI found on PATH, then
@@ -2651,11 +2660,11 @@ t76_steps() { # mode: fresh|rerun|dry, clis...
   local mode="$1" c; shift
   for c in "$@"; do
     case "$mode" in
-      fresh) printf 'run: %s plugin marketplace add D0n9X1n/feature-crew\nstub: marketplace added\n' "$c"
+      fresh) printf 'run: %s plugin marketplace add D0n9X1n/feature-crew%s\nstub: marketplace added\n' "$c" "$(t76_sc "$c")"
              printf 'run: %s plugin install feature-crew@feature-crew%s\nstub: plugin installed\n' "$c" "$(t76_sc "$c")" ;;
       rerun) printf 'run: %s plugin marketplace update feature-crew\nstub: marketplace updated\n' "$c"
              printf 'run: %s plugin update feature-crew@feature-crew%s\nstub: plugin updated\n' "$c" "$(t76_sc "$c")" ;;
-      dry)   printf 'would run: %s plugin marketplace add D0n9X1n/feature-crew\n' "$c"
+      dry)   printf 'would run: %s plugin marketplace add D0n9X1n/feature-crew%s\n' "$c" "$(t76_sc "$c")"
              printf 'would run: %s plugin install feature-crew@feature-crew%s\n' "$c" "$(t76_sc "$c")" ;;
     esac
   done
@@ -2676,7 +2685,7 @@ for engine in "${INSTALLERS[@]}"; do
   t76_expect fresh 0 "$(t76_head; t76_steps fresh claude copilot; printf '%s' "$t76_banner")"
   [ "$t76_calls" = "$(printf '%s\n' 'claude plugin marketplace list --json' \
     'claude plugin list --json' \
-    'claude plugin marketplace add D0n9X1n/feature-crew' \
+    'claude plugin marketplace add D0n9X1n/feature-crew --scope user' \
     'claude plugin list --json' \
     'claude plugin install feature-crew@feature-crew --scope user' \
     'claude plugin list --json' \
@@ -2688,6 +2697,7 @@ for engine in "${INSTALLERS[@]}"; do
     'copilot plugin list --json')" ] \
     || case_err="$case_err fresh:calls:$(printf '%s' "$t76_calls" | tr '\n' '|')"
   [ ! -e "$p" ] || case_err="$case_err fresh:created-prefix"
+  [ "$(sort -u "$t76_state/cwds")" = / ] || case_err="$case_err fresh:cli-called-from:$(sort -u "$t76_state/cwds" | tr '\n' ' ')"
   t76_run "$engine" both "$p"
   t76_expect rerun 0 "$(t76_head; t76_steps rerun claude copilot; printf '%s' "$t76_banner")"
 
@@ -2723,7 +2733,8 @@ for engine in "${INSTALLERS[@]}"; do
   # Uninstall removes the plugin from each CLI and keeps the user's files.
   t76_run "$engine" both "$p" --uninstall
   t76_expect uninstall 0 "$(printf 'feature-crew: uninstalling; old install at <P>\n'
-    for c in claude copilot; do printf 'run: %s plugin uninstall feature-crew@feature-crew%s\nstub: plugin uninstalled\nrun: %s plugin marketplace remove feature-crew\nstub: marketplace removed\n' "$c" "$(t76_sc "$c")" "$c"; done
+    printf 'run: claude plugin uninstall feature-crew@feature-crew --scope user\nstub: plugin uninstalled\nrun: claude plugin marketplace remove feature-crew --scope user --json\nclaude: marketplace removed from user settings\n'
+    printf 'run: copilot plugin uninstall feature-crew@feature-crew\nstub: plugin uninstalled\nrun: copilot plugin marketplace remove feature-crew\nstub: marketplace removed\n'
     t76_kept; printf 'Done. Feature-Crew is uninstalled.')"
   [ ! -e "$t76_state/claude.marketplace" ] && [ ! -e "$t76_state/copilot.plugin" ] || case_err="$case_err uninstall:state-left"
   [ "$(cd "$p" && find . -type f | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err uninstall:touched-user-files"
@@ -2731,10 +2742,14 @@ for engine in "${INSTALLERS[@]}"; do
   # A marketplace from another source is replaced, never silently updated.
   t76_state="$t76_root/$engine/state-stale"; rm -rf "$t76_state" "$p"; mkdir -p "$t76_state"
   for c in claude copilot; do printf 'someone/fork' > "$t76_state/$c.marketplace"; : > "$t76_state/$c.plugin"; done
+  : > "$t76_state/claude.user"
+  t76_run "$engine" both "$p" --check
+  t76_expect stale-check 1 "$(t76_head; printf 'claude: feature-crew installed from another source\ncopilot: feature-crew installed from another source\ncheck: action-needed')"
   t76_run "$engine" both "$p"
-  t76_expect stale-source 0 "$(t76_head; for c in claude copilot; do
-    printf 'run: %s plugin uninstall feature-crew@feature-crew%s\nstub: plugin uninstalled\nrun: %s plugin marketplace remove feature-crew\nstub: marketplace removed\n' "$c" "$(t76_sc "$c")" "$c"
-    printf 'run: %s plugin marketplace add D0n9X1n/feature-crew\nstub: marketplace added\nrun: %s plugin install feature-crew@feature-crew%s\nstub: plugin installed\n' "$c" "$c" "$(t76_sc "$c")"; done
+  t76_expect stale-source 0 "$(t76_head
+    printf 'run: claude plugin marketplace add D0n9X1n/feature-crew --scope user\nstub: marketplace added\nrun: claude plugin update feature-crew@feature-crew --scope user\nstub: plugin updated\n'
+    printf 'run: copilot plugin uninstall feature-crew@feature-crew\nstub: plugin uninstalled\nrun: copilot plugin marketplace remove feature-crew\nstub: marketplace removed\n'
+    printf 'run: copilot plugin marketplace add D0n9X1n/feature-crew\nstub: marketplace added\nrun: copilot plugin install feature-crew@feature-crew\nstub: plugin installed\n'
     printf '%s' "$t76_banner")"
   [ "$(cat "$t76_state/claude.marketplace" 2>/dev/null)" = D0n9X1n/feature-crew ] || case_err="$case_err stale-source:not-replaced"
 
@@ -2763,9 +2778,21 @@ for engine in "${INSTALLERS[@]}"; do
   t76_state="$t76_root/$engine/state-near"; rm -rf "$t76_state" "$p"; mkdir -p "$t76_state"
   for c in claude copilot; do printf 'D0n9X1n/feature-crew-old' > "$t76_state/$c.marketplace"; done
   t76_run "$engine" both "$p"
-  case "$t76_out" in *'run: claude plugin marketplace remove feature-crew'*'run: copilot plugin marketplace remove feature-crew'*) ;;
+  case "$t76_out" in *'run: claude plugin marketplace add D0n9X1n/feature-crew --scope user'*'run: copilot plugin marketplace remove feature-crew'*) ;;
     *) case_err="$case_err near-source:not-replaced" ;; esac
-  [ "$(cat "$t76_state/copilot.marketplace" 2>/dev/null)" = D0n9X1n/feature-crew ] || case_err="$case_err near-source:kept-old-source"
+  for c in claude copilot; do
+    [ "$(cat "$t76_state/$c.marketplace" 2>/dev/null)" = D0n9X1n/feature-crew ] || case_err="$case_err near-source:$c-kept-old-source"
+  done
+
+  # A relative local source is registered as an absolute path, so a rerun matches it.
+  t76_state="$t76_root/$engine/state-relative"; rm -rf "$t76_state" "$p" "$t76_root/$engine/rel"
+  mkdir -p "$t76_root/$engine/rel/src"
+  pushd "$t76_root/$engine/rel" >/dev/null
+  t76_run "$engine" claude "$p" --source src
+  t76_run "$engine" claude "$p" --source src
+  popd >/dev/null
+  [ "$(cat "$t76_state/claude.marketplace" 2>/dev/null)" = "$(cd "$t76_root/$engine/rel/src" && pwd -P)" ] || case_err="$case_err relative-source:stored-$(cat "$t76_state/claude.marketplace" 2>/dev/null)"
+  case "$t76_out" in *'run: claude plugin marketplace update feature-crew'*) ;; *) case_err="$case_err relative-source:rerun-not-update" ;; esac
 
   # A project-scoped Claude plugin does not count: the user scope is installed.
   t76_state="$t76_root/$engine/state-project"; rm -rf "$t76_state" "$p"; mkdir -p "$t76_state"
@@ -2786,6 +2813,41 @@ for engine in "${INSTALLERS[@]}"; do
   [ -L "$p/skills/research/SKILL.md" ] && [ -f "$t76_root/$engine/outside.md" ] || case_err="$case_err link:followed-or-removed"
   case "$t76_out" in *'research/SKILL.md'*) case_err="$case_err link:reported" ;; esac
 
+  # Uninstall never removes a marketplace that only a project declares.
+  t76_state="$t76_root/$engine/state-project-only"; rm -rf "$t76_state" "$p"; mkdir -p "$t76_state"
+  printf 'D0n9X1n/feature-crew' > "$t76_state/claude.marketplace"
+  printf '  {\n    "id": "feature-crew@feature-crew",\n    "scope": "project",\n    "enabled": true\n  },\n' > "$t76_state/claude.extra"
+  t76_run "$engine" claude "$p" --uninstall
+  t76_expect project-only-uninstall 0 "$(printf 'feature-crew: uninstalling; old install at <P>\n'
+    printf 'run: claude plugin marketplace remove feature-crew --scope user --json\nclaude: marketplace not in user settings; left for other scopes\n'
+    printf 'Done. Feature-Crew is uninstalled.')"
+  [ -e "$t76_state/claude.marketplace" ] || case_err="$case_err project-only:removed-project-marketplace"
+  printf '%s\n' "$t76_calls" | grep -qxE 'claude plugin (uninstall .*|marketplace remove feature-crew)' && case_err="$case_err project-only:unscoped-call"
+
+  # Old files go only once the CLI lists the plugin "enabled": true.
+  for t76_row in '{"id": "feature-crew@feature-crew", "scope": "user"}' '{"id": "feature-crew@feature-crew", "scope": "user", "enabled":	false}'; do
+    t76_state="$t76_root/$engine/state-unproven"; rm -rf "$t76_state"; mkdir -p "$t76_state"
+    printf 'D0n9X1n/feature-crew' > "$t76_state/claude.marketplace"; : > "$t76_state/claude.user"
+    printf '[%s]\n' "$t76_row" > "$t76_state/claude.raw"
+    t76_seed "$p"; t76_before=$(t76_tree "$p")
+    t76_run "$engine" claude "$p"
+    [ "$t76_rc" = 1 ] && [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err unproven-enabled:removed-old-files(rc=$t76_rc,row=$t76_row)"
+  done
+
+  # A linked agents or skills folder is never cleaned through; its fc-* entries are reported.
+  t76_state="$t76_root/$engine/state-linkdir"; rm -rf "$t76_state" "$t76_root/$engine/outside"
+  t76_seed "$p"; mkdir -p "$t76_root/$engine/outside"
+  for d in agents skills; do mv "$p/$d" "$t76_root/$engine/outside/$d"; ln -s "$t76_root/$engine/outside/$d" "$p/$d"; done
+  t76_outside=$(t76_tree "$t76_root/$engine/outside")
+  t76_run "$engine" both "$p" --check
+  [ "$t76_rc" = 1 ] || case_err="$case_err linkdir-check:rc=$t76_rc"
+  t76_run "$engine" both "$p"
+  [ "$t76_rc" = 0 ] || case_err="$case_err linkdir:rc=$t76_rc"
+  [ "$(t76_tree "$t76_root/$engine/outside")" = "$t76_outside" ] || case_err="$case_err linkdir:changed-files-outside-prefix"
+  [ "$(printf '%s\n' "$t76_out" | grep -E '^(removed|would remove): ')" = 'removed: <P>/feature-crew.sha256' ] || case_err="$case_err linkdir:removed-through-link"
+  case "$t76_out" in *'kept (linked folder): <P>/agents/fc-pm.md'*'kept (linked folder): <P>/skills/fc-review'*) ;;
+    *) case_err="$case_err linkdir:not-reported" ;; esac
+
   # An install that reports success but leaves the plugin unlisted removes nothing.
   t76_state="$t76_root/$engine/state-ghost"; rm -rf "$t76_state"
   t76_seed "$p"; t76_before=$(t76_tree "$p")
@@ -2805,7 +2867,7 @@ for engine in "${INSTALLERS[@]}"; do
   t76_state="$t76_root/$engine/state-claude"; rm -rf "$t76_state" "$p"
   t76_run "$engine" claude "$p" --source /src/feature-crew
   t76_expect claude-only 0 "$(printf 'feature-crew: plugin source /src/feature-crew; old install at <P>\n'
-    printf 'run: claude plugin marketplace add /src/feature-crew\nstub: marketplace added\nrun: claude plugin install feature-crew@feature-crew --scope user\nstub: plugin installed\n'; printf '%s' "$t76_banner")"
+    printf 'run: claude plugin marketplace add /src/feature-crew --scope user\nstub: marketplace added\nrun: claude plugin install feature-crew@feature-crew --scope user\nstub: plugin installed\n'; printf '%s' "$t76_banner")"
   t76_state="$t76_root/$engine/state-none"; rm -rf "$t76_state"
   t76_seed "$p"; t76_before=$(t76_tree "$p")
   t76_run "$engine" none "$p"

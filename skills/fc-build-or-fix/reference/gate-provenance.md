@@ -30,6 +30,12 @@ A `task` or `skill` call inside the dispatch is the canonical rule's Agent or Sk
 jq -r --arg call "$call" 'select(.type=="tool.execution_start" and .data.parentToolCallId==$call and (.data.toolName=="task" or .data.toolName=="skill")) | .data.toolName' "$events"
 ```
 
+The dispatch must have completed; this must print its call id:
+
+```bash
+jq -r --arg call "$call" 'select(.type=="subagent.completed" and .data.toolCallId==$call) | .data.toolCallId' "$events"
+```
+
 A missing or unreadable file, no `subagent.completed` event for the dispatch, or an `UNKNOWN` model leaves provenance unknown: GATE UNSATISFIED. For cost telemetry, use `subagent.completed` `totalTokens`.
 
 ## Map model ids to families

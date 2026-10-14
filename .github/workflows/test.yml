@@ -47,7 +47,15 @@ env:
         elseif ($cli -eq 'claude') { '[{"name": "feature-crew", "repo": "' + (Get-Content -Raw $mp) + '"}]' }
         else { '[{"name": "feature-crew", "source": "GitHub: ' + (Get-Content -Raw $mp) + '"}]' }
       }
-      'plugin marketplace add *' { Set-Content -NoNewline -LiteralPath $mp -Value $args[3]; 'stub: marketplace added' }
+      'plugin marketplace add *' {
+        Set-Content -NoNewline -LiteralPath $mp -Value $args[3]
+        if ($args -contains '--scope') { New-Item -ItemType File -Force -Path "$mp.user" | Out-Null }
+        'stub: marketplace added'
+      }
+      'plugin marketplace remove * --scope user --json' {
+        if (-not (Test-Path "$mp.user")) { '{"outcome":"failed","failureCode":"not_configured"}'; exit 1 }
+        Remove-Item -Force $mp, "$mp.user"; '{"outcome":"ok"}'
+      }
       'plugin marketplace update *' { 'stub: marketplace updated' }
       'plugin marketplace remove *' { Remove-Item -Force $mp, $pl -ErrorAction SilentlyContinue; 'stub: marketplace removed' }
       'plugin install *' { New-Item -ItemType File -Force -Path $pl | Out-Null; 'stub: plugin installed' }

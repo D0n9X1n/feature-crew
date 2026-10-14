@@ -62,6 +62,8 @@ if ($Check -and ($DryRun -or $Uninstall)) {
   [Console]::Error.WriteLine("--check cannot be combined with --dry-run or --uninstall")
   exit 2
 }
+# A local -Source is registered as an absolute path, so a rerun from anywhere matches it.
+if (Test-Path -LiteralPath $Source -PathType Container) { $Source = (Resolve-Path -LiteralPath $Source).ProviderPath }
 
 function Find-GitBash {
   $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -141,8 +143,13 @@ function Resolve-AbsPath($p) {
 
 # The CLIs' own JSON listings are the only plugin state this script reads.
 # One object per entry, so a match never spans two entries; $null if the listing failed.
+# Every CLI call runs from the filesystem root, because a project's
+# .claude/settings.json changes what both CLIs list.
+$NeutralDir = [IO.Path]::GetPathRoot([IO.Path]::GetTempPath())
+
 function Get-Listing($cli, $kind) {
   $ErrorActionPreference = "Continue"
+  Push-Location -LiteralPath $NeutralDir
   try {
     if ($kind -eq "marketplace") {
       $out = & $CliPath[$cli] plugin marketplace list --json 2>$null
@@ -150,7 +157,7 @@ function Get-Listing($cli, $kind) {
       $out = & $CliPath[$cli] plugin list --json 2>$null
     }
     $rc = $LASTEXITCODE
-  } catch { return $null }
+  } catch { return $null } finally { Pop-Location }
   if ($rc -ne 0) { return $null }
   return ,@((($out | Out-String) -replace "[`r`n]", "") -split '}')
 }
@@ -171,7 +178,7 @@ function Get-MarketplaceState($cli) {
 }
 
 # absent, disabled, or enabled: only feature-crew from the feature-crew marketplace,
-# and in Claude Code only the user-scope install.
+# and in Claude Code only the user-scope install. Only "enabled": true is enabled.
 function Get-PluginState($cli) {
   $rows = Get-Listing $cli "plugin"
   if ($null -eq $rows) { return $null }
@@ -181,8 +188,8 @@ function Get-PluginState($cli) {
     $row = @($rows | Where-Object { ($_ -match '"name":\s*"feature-crew"') -and ($_ -match '"marketplace":\s*"feature-crew"') } | Select-Object -First 1)
   }
   if ($row.Count -eq 0) { return "absent" }
-  if ($row[0] -match '"enabled":\s*false') { return "disabled" }
-  return "enabled"
+  if ($row[0] -match '"enabled":\s*true(?![A-Za-z0-9_])') { return "enabled" }
+  return "disabled"
 }
 
 # Claude Code installs per scope; this installer manages the user scope only.
@@ -199,15 +206,17 @@ function Invoke-Step($cli, [string[]]$stepArgs) {
   if ($DryRun) { Write-Host "would run: $line"; return $true }
   Write-Host "run: $line"
   $ErrorActionPreference = "Continue"
+  Push-Location -LiteralPath $NeutralDir
   try {
     & $CliPath[$cli] @stepArgs | ForEach-Object { Write-Host $_ }
     $rc = $LASTEXITCODE
-  } catch { $rc = 1 }
+  } catch { $rc = 1 } finally { Pop-Location }
   return ($rc -eq 0)
 }
 
-# A marketplace from another source is replaced, never updated. The old
-# install is removed only after the CLI lists the plugin enabled.
+# A marketplace from another source is replaced, never updated. Claude Code
+# replaces it in user settings, and its plugin follows; other scopes keep
+# theirs. The old install is removed only after the CLI lists the plugin enabled.
 function Install-Cli($cli) {
   $mp = Get-MarketplaceState $cli
   $pl = Get-PluginState $cli
@@ -216,11 +225,11 @@ function Install-Cli($cli) {
   if ($mp -eq "same") {
     if (-not (Invoke-Step $cli @("plugin", "marketplace", "update", $Marketplace))) { Stop-Cli $cli }
   } else {
-    if ($mp -eq "other") {
-      if ($pl -ne "absent" -and -not (Invoke-Step $cli (@("plugin", "uninstall", $PluginId) + $sc))) { Stop-Cli $cli }
+    if ($mp -eq "other" -and $cli -ne "claude") {
+      if ($pl -ne "absent" -and -not (Invoke-Step $cli @("plugin", "uninstall", $PluginId))) { Stop-Cli $cli }
       if (-not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
     }
-    if (-not (Invoke-Step $cli @("plugin", "marketplace", "add", $Source))) { Stop-Cli $cli }
+    if (-not (Invoke-Step $cli (@("plugin", "marketplace", "add", $Source) + $sc))) { Stop-Cli $cli }
     if ($DryRun) { $pl = "absent" } else { $pl = Get-PluginState $cli; if ($null -eq $pl) { Stop-Cli $cli } }
   }
   if ($pl -eq "enabled") { $steps = @(,(@("plugin", "update", $PluginId) + $sc)) }
@@ -230,13 +239,35 @@ function Install-Cli($cli) {
   if (-not $DryRun -and (Get-PluginState $cli) -ne "enabled") { Stop-Cli $cli }
 }
 
+# Claude Code: remove the marketplace from user settings only. When only a
+# project declares it, the CLI says not_configured and it stays for that project.
+function Remove-UserMarketplace {
+  $line = "claude plugin marketplace remove $Marketplace --scope user --json"
+  if ($DryRun) { Write-Host "would run: $line"; return $true }
+  Write-Host "run: $line"
+  $ErrorActionPreference = "Continue"
+  Push-Location -LiteralPath $NeutralDir
+  try {
+    $out = (& $CliPath["claude"] plugin marketplace remove $Marketplace --scope user --json 2>&1 | Out-String)
+    $rc = $LASTEXITCODE
+  } catch { $out = "$_"; $rc = 1 } finally { Pop-Location }
+  if ($rc -eq 0) { Write-Host "claude: marketplace removed from user settings"; return $true }
+  if ($out -match '"failureCode":\s*"not_configured"') {
+    Write-Host "claude: marketplace not in user settings; left for other scopes"; return $true
+  }
+  [Console]::Error.WriteLine($out.TrimEnd())
+  return $false
+}
+
 function Uninstall-Cli($cli) {
   $pl = Get-PluginState $cli
   if ($null -eq $pl) { Stop-Cli $cli }
   if ($pl -ne "absent" -and -not (Invoke-Step $cli (@("plugin", "uninstall", $PluginId) + @(Get-ScopeArgs $cli)))) { Stop-Cli $cli }
   $mp = Get-MarketplaceState $cli
   if ($null -eq $mp) { Stop-Cli $cli }
-  if ($mp -ne "absent" -and -not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
+  if ($mp -eq "absent") { return }
+  if ($cli -eq "claude") { if (-not (Remove-UserMarketplace)) { Stop-Cli $cli } }
+  elseif (-not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
 }
 
 # Hash with CR stripped, so a Windows checkout of a genuine legacy file still matches.
@@ -279,6 +310,26 @@ function Remove-Legacy($path) {
     Remove-Item -LiteralPath $abs -Force
   }
   Write-Host "removed: $path"
+}
+
+# True when DIR, or a folder between it and the prefix, is a link: nothing
+# beneath it is removed, because removing there would reach outside the prefix.
+function Test-LinkedDir($dir) {
+  $d = $dir
+  while ($d -and $d -ne $Prefix) {
+    $item = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
+    if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $true }
+    $i = $d.LastIndexOf('/')
+    if ($i -lt 1) { break }
+    $d = $d.Substring(0, $i)
+  }
+  return $false
+}
+
+# An fc-* path in a linked folder still shadows the plugin.
+function Write-LinkedOld($path) {
+  $script:LegacyFound = $true
+  Write-Host "kept (linked folder): $path"
 }
 
 # A skill dir's regular files, as slash-separated relative paths in ordinal order.
@@ -334,23 +385,27 @@ function Clear-Legacy {
   $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
   foreach ($n in $LEGACY_FC_AGENTS) {
     $p = "$Prefix/agents/$n.md"
-    if (Test-Path -LiteralPath $p) { Remove-Legacy $p }
+    if (Test-Path -LiteralPath $p) {
+      if (Test-LinkedDir "$Prefix/agents") { Write-LinkedOld $p } else { Remove-Legacy $p }
+    }
   }
   foreach ($n in $LEGACY_FC_SKILLS) {
     $p = "$Prefix/skills/$n"
-    if (Test-Path -LiteralPath $p) { Remove-Legacy $p }
+    if (Test-Path -LiteralPath $p) {
+      if (Test-LinkedDir "$Prefix/skills") { Write-LinkedOld $p } else { Remove-Legacy $p }
+    }
   }
   $p = "$Prefix/feature-crew.sha256"
   if (Test-Path -LiteralPath $p) { Remove-Legacy $p }
   foreach ($n in $LEGACY_OLD_AGENTS) {
     $p = "$Prefix/agents/feature-crew/$n.md"
-    if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p)) {
+    if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
       if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p; Add-Emptied "$Prefix/agents/feature-crew" $p } else { $script:Kept.Add($p) }
     }
   }
   foreach ($n in $LEGACY_OLD_SKILLS) {
     $p = "$Prefix/skills/$n"
-    if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-Link $p)) {
+    if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-LinkedDir $p)) {
       foreach ($rel in (Get-OldSkillFiles $p)) {
         if (Test-PublishedFile "$p/$rel" "skills/$n/$rel") { Remove-Legacy "$p/$rel"; Add-Emptied $p "$p/$rel" } else { $script:Kept.Add("$p/$rel") }
       }
@@ -370,7 +425,10 @@ if ($Check) {
   foreach ($c in $Clis) {
     $st = Get-PluginState $c
     if ($null -eq $st) { [Console]::Error.WriteLine("feature-crew: $c plugin list failed"); exit 2 }
-    if ($st -eq "enabled") { Write-Host "${c}: feature-crew installed" }
+    $mp = Get-MarketplaceState $c
+    if ($null -eq $mp) { [Console]::Error.WriteLine("feature-crew: $c marketplace list failed"); exit 2 }
+    if ($st -eq "enabled" -and $mp -eq "same") { Write-Host "${c}: feature-crew installed" }
+    elseif ($st -eq "enabled") { Write-Host "${c}: feature-crew installed from another source"; $script:LegacyFound = $true }
     elseif ($st -eq "disabled") { Write-Host "${c}: feature-crew disabled"; $script:LegacyFound = $true }
     else { Write-Host "${c}: feature-crew missing"; $script:LegacyFound = $true }
   }

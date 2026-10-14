@@ -2,15 +2,20 @@
 PATH=/usr/bin:/bin
 cli=$(basename "$0"); st="$FC_STUB_STATE"; mkdir -p "$st"
 printf '%s %s\n' "$cli" "$*" >> "$st/calls"
+pwd >> "$st/cwds"  # a project's settings change what a CLI lists, so the installers call from /
 case " $FC_STUB_FAIL " in *" $cli $1 $2 "*) echo "stub: $cli $1 $2 failed" >&2; exit 1 ;; esac
 mp="$st/$cli.marketplace"; pl="$st/$cli.plugin"; off="$st/$cli.disabled"; extra="$st/$cli.extra"
+# $user marks a marketplace declared in user settings; $raw replaces the plugin's own row.
+user="$st/$cli.user"; raw="$st/$cli.raw"
+case " $* " in *" --scope user "*) scoped=1 ;; *) scoped=0 ;; esac
 case "$1 $2" in
   "plugin list")
     # Like real Copilot, a registered marketplace lists its plugin disabled
     # until `plugin install` enables it. $extra adds other plugins' entries.
     en=false; if [ -f "$pl" ] && [ ! -f "$off" ]; then en=true; fi
     printf '[\n'
-    if [ "$cli" = claude ]; then
+    if [ -f "$raw" ]; then cat "$raw"
+    elif [ "$cli" = claude ]; then
       [ -f "$pl" ] && printf '  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0",\n    "scope": "user",\n    "enabled": %s\n  },\n' "$en"
     elif [ -f "$pl" ] || [ -f "$mp" ]; then
       printf '  {\n    "name": "feature-crew",\n    "marketplace": "feature-crew",\n    "version": "6.0.0",\n    "enabled": %s\n  },\n' "$en"
@@ -26,9 +31,17 @@ case "$1 $2" in
           else printf '  {\n    "name": "feature-crew",\n    "source": "GitHub: %s"\n  },\n' "$(cat "$mp")"; fi
         fi
         printf '  {\n    "name": "builtin-market"\n  }\n]\n' ;;
-      add) printf '%s' "$4" > "$mp"; echo "stub: marketplace added" ;;
+      add) printf '%s' "$4" > "$mp"; [ "$scoped" = 0 ] || : > "$user"; echo "stub: marketplace added" ;;
       update) echo "stub: marketplace updated" ;;
-      remove) rm -f "$mp" "$pl" "$off"; echo "stub: marketplace removed" ;;
+      remove)
+        # Like real Claude Code, a scoped remove leaves other scopes and fails
+        # when the marketplace is not declared in that scope.
+        if [ "$scoped" = 1 ]; then
+          if [ ! -f "$user" ]; then
+            echo '{"command":"marketplace-remove","outcome":"failed","failureCode":"not_configured"}'; exit 1
+          fi
+          rm -f "$user" "$mp"; echo '{"command":"marketplace-remove","outcome":"ok"}'
+        else rm -f "$mp" "$pl" "$off" "$user"; echo "stub: marketplace removed"; fi ;;
     esac ;;
   "plugin install")
     # FC_STUB_GHOST names a CLI whose install reports success but enables nothing.
