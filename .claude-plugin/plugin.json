@@ -1,6 +1,6 @@
 {
   "name": "feature-crew",
-  "version": "6.0.0",
+  "version": "6.0.1",
   "description": "A need-based agent team: right-sized tracks, TDD, hard gates, and cross-family review for Claude Code and GitHub Copilot CLI.",
   "author": { "name": "D0n9X1n", "url": "https://github.com/D0n9X1n" },
   "homepage": "https://github.com/D0n9X1n/feature-crew/wiki",

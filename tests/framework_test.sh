@@ -769,6 +769,7 @@ echo "$selector" | grep -qiE 'Copilot.*Opus.*GPT-6 Astra' || t32_err="$t32_err c
 echo "$selector" | grep -qiE 'first pair member outside.*author family' \
   || t32_err="$t32_err pair-reviewer-rule-missing"
 echo "$selector" | grep -qiE 'non-Sonnet.family' && t32_err="$t32_err stale-sonnet-centric-rule"
+echo "$selector" | grep -qF 'Opus and Sonnet as the pair' && t32_err="$t32_err stale-opus-sonnet-pair"
 echo "$selector" | grep -qiE 'Agent.*model.*override|explicit.*model.*override' \
   || t32_err="$t32_err explicit-agent-override-missing"
 echo "$selector" | grep -qi 'artifact.*identity' || t32_err="$t32_err artifact-identity-missing"
@@ -824,14 +825,14 @@ t32_pair_labels=(
 t32_pair_rules=(
   'At each gate, choose the **review pair** yourself'
   'the two most capable models you can dispatch, from different mapped families, most capable first'
-  'such as Claude Code `opus`, `sonnet` or GitHub Copilot Opus, GPT-6 Astra'
+  'such as Opus and GPT: Claude Code `opus` and `sonnet` (a relay may route `sonnet` to GPT-6 Astra; the record decides), or GitHub Copilot Opus, GPT-6 Astra'
   'Request each model the way your harness does'
   'never look behind a model into a relay or gateway'
   'Record the pair in the gate record'
   'fewer than two qualifying families → `GATE UNSATISFIED`'
   'an Opus-family author is reviewed by `sonnet`'
   'any other author by `opus`'
-  'with Opus and Sonnet as the pair'
+  'with Opus and GPT as the pair, requested in Claude Code as `opus` and `sonnet`'
   'In Claude Code, use family aliases for requests, not version-specific IDs; other harnesses use their own model names'
 )
 t32_pair_contract() { # selector text
@@ -1253,7 +1254,9 @@ if [ -f "$provenance" ]; then
     || t55_err="$t55_err vendor-line-family-boundary-missing"
   echo "$families" | grep -qiE 'unknown only when.*vendor cannot be (told|identified)' \
     || t55_err="$t55_err unknown-vendor-boundary-missing"
-  echo "$families" | grep -qiE 'Opus, Sonnet, Haiku, and GPT are four separate families' \
+  echo "$families" | grep -qF 'Opus and GPT are the families in use; Sonnet and Haiku stay mapped so an older record still classifies.' \
+    || t55_err="$t55_err families-in-use-missing"
+  echo "$families" | grep -qF 'All four are separate families; any two are cross-family.' \
     || t55_err="$t55_err four-families-missing"
   echo "$families" | grep -qiE 'unmapped.*never qualifies for the review pair' \
     || t55_err="$t55_err unmapped-family-qualifies"
@@ -1277,7 +1280,7 @@ else
   t55_err="$t55_err gate-provenance-missing"
 fi
 # Pin the caller's choice, not a fixed author family. Each call site must use
-# the canonical default so a Sonnet session is not silently moved to Opus.
+# the canonical default so a GPT session is not silently moved to Opus.
 echo "$selector" | grep -qiE 'authoring dispatches.*explicit.*`model`.*default.*pair member in the session.s own family.*otherwise the first pair member.*unless the user chose another' \
   || t55_err="$t55_err session-authoring-alias-default-missing"
 complex_flow=$(sed -n '/^## Flow/,/^## /p' skills/fc-build-or-fix/reference/complex-track.md)
@@ -1300,9 +1303,9 @@ for authoring_site in architect developer synthesis; do
     && t55_err="$t55_err $authoring_site:hardcoded-authoring-alias"
 done
 complex_example=$(sed -n '/^## Worked example/,/^## /p' skills/fc-build-or-fix/reference/complex-track.md)
-echo "$complex_example" | grep -qE '^> .*fc-architect.*requested with `model: sonnet`' \
+echo "$complex_example" | grep -qE '^> .*fc-architect.*requested with `model: opus`' \
   || t55_err="$t55_err example-architect-changes-session-family"
-echo "$complex_example" | grep -qE '^> .*Developers requested with `model: sonnet`' \
+echo "$complex_example" | grep -qE '^> .*Developers requested with `model: opus`' \
   || t55_err="$t55_err example-developers-change-session-family"
 # Delegation can hide contributors from the dispatched agent's own record.
 # Keep these literal contract sentences scoped to their operative sections.
@@ -1620,8 +1623,8 @@ t70_rules=(
   'cost-recorded-models|bof|^## Cost telemetry$|^## |Name the models those records show, not the requested aliases.'
   'complex-cost-pointer|complex|^## Flow$|^## |Append the `Cost:` line defined in `/fc-build-or-fix` to the PR description.'
   'research-cost-line|research|^## Output$|^## |Cost: <N> dispatches, ~<T> dispatch tokens, ~<M> min wall-clock, models: <recorded models>'
-  'complex-example-family-note|complex|^## Worked example$|^## |In an Opus-family session the same rules request `model: opus` for authoring and select `model: sonnet` for review.'
-  'complex-example-cost|complex|^## Worked example$|^## |`Cost: 17 dispatches, ~30M dispatch tokens, ~3h wall-clock, models: Sonnet + Opus (recorded)`'
+  'complex-example-family-note|complex|^## Worked example$|^## |In Claude Code the same rules request `model: opus` for authoring and `model: sonnet` for review; a relay may route `sonnet` to GPT-6 Astra, and the records decide the families.'
+  'complex-example-cost|complex|^## Worked example$|^## |`Cost: 17 dispatches, ~30M dispatch tokens, ~3h wall-clock, models: Opus + GPT (recorded)`'
   'meta-cap-every-skill|meta|^## Numeric caps$|^## |not a named list, so a new skill cannot add orchestration text outside the cap.'
   'grill-user-owned-scope|grill|^# fc-grill-me$|^## |Interview the user about each user-owned decision this work depends on until you reach a shared understanding.'
   'lead-approve-quickly|lead|^## Rules$|^## |- If the work is genuinely good, approve quickly.'
