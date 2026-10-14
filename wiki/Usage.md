@@ -19,6 +19,12 @@ Or run `./install.sh` (macOS / Linux / Git Bash / WSL) or `.\install.ps1` (nativ
 
 Skills keep their names, such as `/fc-build-or-fix`. Agents register as `feature-crew:fc-*`, such as `feature-crew:fc-qa-code`.
 
+**Known limits.**
+- An old `fc-*` skill folder is removed whole; a file inside it that becomes unreadable during the run goes with it.
+- Native Windows cannot check permissions upfront, so a file it cannot remove is found only during the run (exit 1).
+- Claude Code keeps one source per marketplace name: if a project declares `feature-crew` from another source, switching your install's source moves the project's too, and `--uninstall` drops the project's install while its settings stay.
+- A Copilot marketplace added from a Git URL is matched by the `URL:` label Copilot prints; that path is tested only with stub CLIs.
+
 ## Describe the need
 
 Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, adversarial confidence in a chosen consequential decision, and an unexplained failure. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
