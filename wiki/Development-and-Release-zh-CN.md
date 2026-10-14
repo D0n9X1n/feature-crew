@@ -40,11 +40,11 @@ flowchart TB
 **逐步说明**
 
 1. **拉取请求。** 每个工作项在该版本的里程碑中有一个 issue。PR 被分配到该里程碑，并用 `Closes #N` 行关闭它的 issue。
-2. **test.yml** 在每个拉取请求和每次推送到 `main` 时运行。`framework` 在 Ubuntu 上运行：带 pwsh 的严格测试套件、wiki 发布器和检查器测试，以及干净前缀的安装和卸载。`powershell` 和 `powershell-delegation` 在 Windows 上运行：PowerShell 7 和 Windows PowerShell 5.1 下的 PowerShell 安装器，以及它向 Git Bash 的交接。
+2. **test.yml** 在每个拉取请求和每次推送到 `main` 时运行。`framework` 在 Ubuntu 上运行：带 pwsh 的严格测试套件、wiki 发布器和检查器测试，以及在固定版本的 Claude Code 上运行 `claude plugin validate . --strict`。`powershell` 和 `powershell-delegation` 在 Windows 上运行：用桩 CLI 对 PowerShell 7 和 Windows PowerShell 5.1 下的 PowerShell 安装器及其向 Git Bash 的交接进行迁移测试。
 3. **规则集。** 仓库规则集 "Require test workflow on main" 要求合并前三项检查都通过。
 4. **合并。** `/fc-ship` 用 `--match-head-commit` 做 squash 合并，不使用管理员绕过，然后确认 PR 显示 MERGED，且合并后的树等于 head 的树。
 5. **Wiki。** `publish-wiki.yml` 在每次推送到 `main` 后运行。它检出运行时的 `main`，因此重新运行旧的运行不会发布过时的页面。它用该作业的短期令牌克隆 wiki 仓库，用 `scripts/publish-wiki.sh` 从 `wiki/` 重建顶层页面，只有页面有变化时才推送到 wiki 的 `master`。运行是串行的，而且只有这个作业可以写入。
-6. **发布。** 维护者给 `main` 打上 `vMAJOR.MINOR.PATCH` 标签，并最后推送标签（`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`）。`release.yml` 重新运行 `test.yml`，拒绝不在 `main` 上的标签，并根据上一个标签以来的提交发布版本说明。这份说明就是唯一的变更日志。
+6. **发布。** 维护者给 `main` 打上 `vMAJOR.MINOR.PATCH` 标签，并最后推送标签（`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`）。先在发布 PR 中更新 `.claude-plugin/plugin.json` 的版本。`release.yml` 重新运行 `test.yml`，拒绝不在 `main` 上、或不等于 `v` 加该版本的标签，并根据上一个标签以来的提交发布版本说明。这份说明就是唯一的变更日志。
 
 | 组件 | 职责 | 关键文件 | 证据 |
 |---|---|---|---|
@@ -67,13 +67,14 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── .claude/skills/fc-*/       # ten skills
+├── .claude-plugin/             # plugin manifest and its marketplace
+├── skills/fc-*/               # ten skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test
 ├── wiki/                      # this wiki: English pages and -zh-CN twins
 ├── tests/framework_test.sh
-├── CLAUDE.md                  # repository instructions
+├── .claude/CLAUDE.md          # repository instructions
 └── install.sh / install.ps1
 ```
 
@@ -93,11 +94,11 @@ feature-crew/
 2. [publish-wiki.yml][pubwf]、[publish-wiki.sh][pubsh]、[test-wiki-publish.sh][pubtest] 和 [check-wiki.py][checkwiki]：wiki 流水线。
 3. [release.yml][rel] 以及 [CLAUDE.md][claude] 中的 *Release process*。
 
-[claude]: https://github.com/D0n9X1n/feature-crew/blob/main/CLAUDE.md
+[claude]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/CLAUDE.md
 [test]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/test.yml
 [pubwf]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/publish-wiki.yml
 [pubsh]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/publish-wiki.sh
 [pubtest]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/test-wiki-publish.sh
 [checkwiki]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/check-wiki.py
 [rel]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/release.yml
-[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
+[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md

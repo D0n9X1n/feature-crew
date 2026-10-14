@@ -2,9 +2,9 @@
 
 [简体中文](Architecture-zh-CN)
 
-Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`. Two installers copy the prompts into `~/.claude`, and a bash suite plus CI check the prompts' size and rule text and that the two installers match.
+Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`. The prompts ship as one plugin for Claude Code and GitHub Copilot CLI; two mirrored installers install it and remove an old script install, and a bash suite plus CI check the prompts' size and rule text, the plugin package, and that the two installers match.
 
-Scope: the whole repository at v5.2.1, focused on the build path. The diagrams were drawn with `/fc-explain`; each node and arrow traces to the files in the table after its diagram. CI, releases, and this wiki's publishing are on [Development and Release](Development-and-Release).
+Scope: the whole repository on `main`, focused on the build path. The diagrams were drawn with `/fc-explain`; each node and arrow traces to the files in the table after its diagram. CI, releases, and this wiki's publishing are on [Development and Release](Development-and-Release).
 
 ## Building blocks
 
@@ -22,22 +22,22 @@ flowchart TB
         roles["Role prompts<br/>architect, developer, two QA, tech lead"]
         ship["fc-ship<br/>watch CI, verified merge, cleanup"]
     end
-    inst["Installers<br/>install.sh and mirrored install.ps1"]
-    home[("Installed state<br/>~/.claude agents, skills, hash manifest")]
+    inst["Installers<br/>install.sh and mirrored install.ps1:<br/>install the plugin, migrate"]
+    home[("Installed plugin<br/>feature-crew in each CLI's plugin cache")]
     cc[["Claude Code<br/>loads skills, runs sessions and subagents"]]
 
     ci -->|runs in strict mode| suite
-    ci -->|installs to clean prefixes on Linux and Windows| inst
+    ci -->|runs migration tests with stub CLIs on Linux and Windows| inst
     suite -->|asserts line caps and rule text| fw
     suite -->|runs both engines, checks parity| inst
     other -->|send code changes to| bof
-    other -->|fc-update runs check, force, verify| inst
+    other -->|fc-update updates the plugin, then runs install.sh --check| inst
     bof -->|invokes one skill per missing ingredient| routed
     routed -->|returns result to caller| bof
     bof -->|dispatches with explicit model override| roles
     bof -->|hands off authorized work| ship
-    fw -->|copied by| inst
-    inst -->|writes files and hash manifest| home
+    fw -->|packaged as one plugin, installed by| inst
+    inst -->|adds the marketplace and installs the plugin| home
     home -->|loaded by| cc
 ```
 
@@ -47,26 +47,26 @@ flowchart TB
 
 **Walkthrough**
 
-1. **Standalone skills send code changes to the hub.** `fc-update` pulls, then drives the installer: `--check`, `--force`, then `--verify`.
+1. **Standalone skills send code changes to the hub.** `fc-update` updates the plugin through each CLI's own plugin commands and reports any old script install.
 2. **The hub routes one missing ingredient at a time.** A single fact is looked up directly. Evidence from several places goes to `fc-research`, a user-owned decision to `fc-grill-me`, an open approach to `fc-brainstorm`, a chosen consequential decision to `fc-second-opinion`, and an unexplained failure to `fc-debug`. Each returns its result to the caller. Only `fc-grill-me` may be called from inside another skill, and the same gap is never routed twice.
 3. **The hub dispatches role prompts** with the task text pasted inline, an explicit model override, and a closing line that forbids further delegation.
 4. **Authorized work goes to `fc-ship`.**
-5. **The installers copy the prompts into `~/.claude`.** They add `name` and `description` frontmatter to agents, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and record `feature-crew.sha256`. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
-6. **Claude Code loads the installed files** from `~/.claude/agents` and `~/.claude/skills`. How it discovers them is Claude Code behavior, not code in this repository.
+5. **The installers install the plugin.** For each of `claude` and `copilot` on PATH they add or update the marketplace (replacing one registered from another source), install, enable, or update `feature-crew` (in Claude Code at user scope only), and check that the CLI lists it `"enabled": true`. Only then do they remove an old script install: every old `fc-*` path, and older files whose hash is in [published.sha256][pub], never through a link, including a linked prefix. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
+6. **Each CLI loads the installed plugin** from its plugin cache: skills by their `fc-*` names, agents as `feature-crew:fc-*`. How it does so is CLI behavior, not code in this repository.
 7. **The suite and CI check both halves:** line caps, rule text with removal mutations, installer parity, and the PowerShell engine, all under `FC_STRICT=1`.
 
 | Component | Job | Key files | Evidence |
 |---|---|---|---|
 | fc-build-or-fix playbook | Makes the main session the PM: classifies the need, picks a track, runs it, enforces the hard gates, and selects reviewers. Loads run discipline (feedback checks, a checkpoint, runtime proof) at entry. `fc-pm.md` only points here. | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md: *Need classifier*, *Step 1*, *Hard gates*, *Cross-family audit at hard gates*; [run-discipline.md][run] |
 | Routed skills | Each resolves one missing ingredient and returns it to the caller; `fc-research` also has a focused path for one bounded question | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md: *Need classifier*; fc-research: *Focused path* |
-| Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five are installed with `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
+| Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five carry a committed least-privilege `tools:` list and `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
 | fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and always cleans up | [SKILL.md][ship] | fc-ship: sections 1–7 |
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
-| Installers | Copy agents (adding frontmatter) and every skill directory, record hashes, and delete only files proven to be theirs; `--check` and `--verify` are read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
-| Installed state | The agents, skills, and install manifest | `~/.claude/agents/fc-*.md`, `~/.claude/skills/fc-*/`, `~/.claude/feature-crew.sha256` | [Usage](Usage): *Install*; [install.sh][sh] names the manifest |
+| Installers | Install or update the plugin in each CLI on PATH, then remove an old script install; `--dry-run` previews and `--check` is read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
+| Installed plugin | `feature-crew@feature-crew` in each CLI's plugin cache | `.claude-plugin/`, `skills/`, `agents/` | [Usage](Usage): *Install* |
 | Claude Code | Loads the skills (inferred), runs the session and subagents, and records transcripts | not in this repository | [gate-provenance.md][prov]: *Read the record* |
 | Self-test suite | Dev-only bash checks that exit nonzero on any failure; `FC_STRICT=1` turns skipped checks into failures | [framework_test.sh][suite] | the suite's header |
-| CI workflows | Run the suite and clean-prefix installs, publish this wiki, and cut releases | [.github/workflows/][wf] | [Development and Release](Development-and-Release) |
+| CI workflows | Run the suite, validate the plugin, test migration on Windows, publish this wiki, and cut releases | [.github/workflows/][wf] | [Development and Release](Development-and-Release) |
 
 ## Key flow: a Standard build request
 
@@ -186,7 +186,7 @@ Principles that hold on every track:
 **Verified in the repository**
 
 - Everything Claude Code runs is Markdown: ten skills, six reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
-- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. The installers add `name` and `description`, plus `disallowedTools: Agent, Skill` on the five dispatched roles, and every authoring or review dispatch sets its model explicitly.
+- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the five dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
 - The suite's rule-text checks prove a rule is present, not what it means; its header says so.
@@ -196,15 +196,15 @@ Principles that hold on every track:
 
 - Outside this repository, a request reaches the playbook only if Claude Code matches its description to a plain-language request. The repository states that intent but cannot enforce it.
 - In Standard, the PM session writes the code itself: the build step names no developer, and the 2–3 dispatch budget fits the second designer, the optional spec audit, and `fc-qa-code`.
-- Claude Code discovers files under `~/.claude/agents` and `~/.claude/skills`.
+- Claude Code and Copilot CLI load the plugin's `skills/` and `agents/` from their plugin caches.
 
 **Unknown**
 
 - Which agent type runs the blind second designer; `design-check.md` does not name one.
 - Whether models follow these prompts: the suite checks prompt text and installers, not live runs.
 - Whether the transcript fields stay accurate; `gate-provenance.md` calls them an internal, undocumented format.
-- What `fc-pm` does if dispatched as a subagent anyway: the installer registers it as an agent, while its description and prompt say it runs only as the main session.
-- Whether Claude Code enforces `disallowedTools`: an open upstream report, [anthropics/claude-code#94202](https://github.com/anthropics/claude-code/issues/94202), says listed tools can still load, so the transcript check at each gate remains the enforced control.
+- What `fc-pm` does if dispatched as a subagent anyway: the plugin registers it as `feature-crew:fc-pm`, while its description and prompt say it runs only as the main session.
+- Whether Claude Code enforces `disallowedTools`: an open upstream report, [anthropics/claude-code#94202](https://github.com/anthropics/claude-code/issues/94202), says listed tools can still load, and Copilot CLI ignores the field; the `tools:` allowlist and the record check at each gate are the enforced controls.
 
 ## Where to start reading
 
@@ -215,27 +215,27 @@ Principles that hold on every track:
 5. [fc-ship SKILL.md][ship]: the merge path.
 6. [install.sh][sh], then the top of [framework_test.sh][suite]: how the prompts ship, and what a passing suite does and does not prove.
 
-[bof]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/SKILL.md
-[ref]: https://github.com/D0n9X1n/feature-crew/tree/main/.claude/skills/fc-build-or-fix/reference
-[run]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/run-discipline.md
-[design]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/design-check.md
-[prov]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/gate-provenance.md
-[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/industry-survey.md
-[complex]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/complex-track.md
-[meta]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
+[bof]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/SKILL.md
+[ref]: https://github.com/D0n9X1n/feature-crew/tree/main/skills/fc-build-or-fix/reference
+[run]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/run-discipline.md
+[design]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/design-check.md
+[prov]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/gate-provenance.md
+[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/industry-survey.md
+[complex]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/complex-track.md
+[meta]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/meta-work-cap.md
 [pm]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-pm.md
 [agents]: https://github.com/D0n9X1n/feature-crew/tree/main/agents
 [dev]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-developer.md
 [qacode]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-qa-code.md
-[research]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-research/SKILL.md
-[grill]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-grill-me/SKILL.md
-[brain]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-brainstorm/SKILL.md
-[second]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-second-opinion/SKILL.md
-[debug]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-debug/SKILL.md
-[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
-[review]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-review/SKILL.md
-[explain]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-explain/SKILL.md
-[update]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-update/SKILL.md
+[research]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-research/SKILL.md
+[grill]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-grill-me/SKILL.md
+[brain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-brainstorm/SKILL.md
+[second]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-second-opinion/SKILL.md
+[debug]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-debug/SKILL.md
+[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md
+[review]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-review/SKILL.md
+[explain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-explain/SKILL.md
+[update]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-update/SKILL.md
 [sh]: https://github.com/D0n9X1n/feature-crew/blob/main/install.sh
 [ps1]: https://github.com/D0n9X1n/feature-crew/blob/main/install.ps1
 [pub]: https://github.com/D0n9X1n/feature-crew/blob/main/published.sha256

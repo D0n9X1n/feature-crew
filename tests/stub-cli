@@ -1,0 +1,62 @@
+#!/bin/bash
+PATH=/usr/bin:/bin
+cli=$(basename "$0"); st="$FC_STUB_STATE"; mkdir -p "$st"
+printf '%s %s\n' "$cli" "$*" >> "$st/calls"
+pwd >> "$st/cwds"  # a project's settings change what a CLI lists, so the installers call from /
+case " $FC_STUB_FAIL " in *" $cli $1 $2 "*) echo "stub: $cli $1 $2 failed" >&2; exit 1 ;; esac
+mp="$st/$cli.marketplace"; pl="$st/$cli.plugin"; off="$st/$cli.disabled"; extra="$st/$cli.extra"
+# $user marks a marketplace declared in user settings; $raw replaces the plugin's own row.
+user="$st/$cli.user"; raw="$st/$cli.raw"
+case " $* " in *" --scope user "*) scoped=1 ;; *) scoped=0 ;; esac
+case "$1 $2" in
+  "plugin list")
+    # Like real Copilot, a registered marketplace lists its plugin disabled
+    # until `plugin install` enables it. $extra adds other plugins' entries.
+    en=false; if [ -f "$pl" ] && [ ! -f "$off" ]; then en=true; fi
+    printf '[\n'
+    if [ -f "$raw" ]; then cat "$raw"
+    elif [ "$cli" = claude ]; then
+      [ -f "$pl" ] && printf '  {\n    "id": "feature-crew@feature-crew",\n    "version": "6.0.0",\n    "scope": "user",\n    "enabled": %s\n  },\n' "$en"
+    elif [ -f "$pl" ] || [ -f "$mp" ]; then
+      printf '  {\n    "name": "feature-crew",\n    "marketplace": "feature-crew",\n    "version": "6.0.0",\n    "enabled": %s\n  },\n' "$en"
+    fi
+    [ -f "$extra" ] && cat "$extra"
+    printf '  {\n    "name": "builtin"\n  }\n]\n' ;;
+  "plugin marketplace")
+    case "$3" in
+      list)
+        printf '[\n'
+        if [ -f "$mp" ]; then
+          if [ "$cli" = claude ]; then printf '  {\n    "name": "feature-crew",\n    "source": "github",\n    "repo": "%s"\n  },\n' "$(cat "$mp")"
+          else
+            src=$(cat "$mp")
+            case "$src" in http://*|https://*|git@*) label=URL ;; /*) label=Local ;; *) label=GitHub ;; esac
+            printf '  {\n    "name": "feature-crew",\n    "source": "%s: %s"\n  },\n' "$label" "$src"
+          fi
+        fi
+        printf '  {\n    "name": "builtin-market"\n  }\n]\n' ;;
+      add) printf '%s' "$4" > "$mp"; [ "$scoped" = 0 ] || : > "$user"; echo "stub: marketplace added" ;;
+      update) echo "stub: marketplace updated" ;;
+      remove)
+        # Like real Claude Code, a scoped remove leaves other scopes and fails
+        # when the marketplace is not declared in that scope.
+        if [ "$scoped" = 1 ]; then
+          if [ ! -f "$user" ]; then
+            echo '{"command":"marketplace-remove","outcome":"failed","failureCode":"not_configured"}'; exit 1
+          fi
+          rm -f "$user" "$mp"; echo '{"command":"marketplace-remove","outcome":"ok"}'
+        else rm -f "$mp" "$pl" "$off" "$user"; echo "stub: marketplace removed"; fi ;;
+    esac ;;
+  "plugin install")
+    # FC_STUB_GHOST names a CLI whose install reports success but enables nothing.
+    if [ "${FC_STUB_GHOST:-}" != "$cli" ]; then : > "$pl"; rm -f "$off"; fi
+    # FC_STUB_LOCK names a folder made unremovable after the installer's checks passed.
+    [ -z "${FC_STUB_LOCK:-}" ] || chmod 555 "$FC_STUB_LOCK"
+    # FC_STUB_HIDE names a folder made unreadable the same way.
+    [ -z "${FC_STUB_HIDE:-}" ] || chmod 000 "$FC_STUB_HIDE"
+    echo "stub: plugin installed" ;;
+  "plugin enable") rm -f "$off"; echo "stub: plugin enabled" ;;
+  "plugin update") echo "stub: plugin updated" ;;
+  "plugin uninstall") rm -f "$pl" "$off"; echo "stub: plugin uninstalled" ;;
+  *) echo "stub: unexpected $*" >&2; exit 9 ;;
+esac

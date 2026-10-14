@@ -40,11 +40,11 @@ flowchart TB
 **Walkthrough**
 
 1. **Pull request.** Each work item has an issue in the version's milestone. The PR is assigned to the milestone and closes its issues with `Closes #N` lines.
-2. **test.yml** runs on every pull request and every push to `main`. `framework` runs on Ubuntu: the strict suite with pwsh, the wiki publisher and checker test, and a clean-prefix install and uninstall. `powershell` and `powershell-delegation` run on Windows: the PowerShell installer under PowerShell 7 and Windows PowerShell 5.1, and its hand-off to Git Bash.
+2. **test.yml** runs on every pull request and every push to `main`. `framework` runs on Ubuntu: the strict suite with pwsh, the wiki publisher and checker test, and `claude plugin validate . --strict` on a pinned Claude Code. `powershell` and `powershell-delegation` run on Windows: a migration test with stub CLIs for the PowerShell installer under PowerShell 7 and Windows PowerShell 5.1, and for its hand-off to Git Bash.
 3. **Ruleset.** The repository ruleset "Require test workflow on main" requires all three checks before a merge.
 4. **Merge.** `/fc-ship` squash-merges with `--match-head-commit` and no admin bypass, then confirms the PR shows MERGED and that the merged tree equals the head tree.
 5. **Wiki.** `publish-wiki.yml` runs after each push to `main`. It checks out `main` as it is at run time, so re-running an older run cannot publish stale pages. It clones the wiki repository with the job's short-lived token, rebuilds the top-level pages from `wiki/` with `scripts/publish-wiki.sh`, and pushes to the wiki's `master` only when a page changed. Runs are serialized, and only this job may write.
-6. **Release.** A maintainer tags `main` as `vMAJOR.MINOR.PATCH` and pushes the tag last (`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`). `release.yml` reruns `test.yml`, refuses a tag that is not on `main`, and publishes a release body built from the commits since the previous tag. That body is the only changelog.
+6. **Release.** A maintainer tags `main` as `vMAJOR.MINOR.PATCH` and pushes the tag last (`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`). Bump the version in `.claude-plugin/plugin.json` in the release PR first. `release.yml` reruns `test.yml`, refuses a tag that is not on `main` or does not equal `v` plus that version, and publishes a release body built from the commits since the previous tag. That body is the only changelog.
 
 | Component | Job | Key files | Evidence |
 |---|---|---|---|
@@ -67,13 +67,14 @@ FC_STRICT=1 bash tests/framework_test.sh
 
 ```text
 feature-crew/
-├── .claude/skills/fc-*/       # ten skills
+├── .claude-plugin/             # plugin manifest and its marketplace
+├── skills/fc-*/               # ten skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test
 ├── wiki/                      # this wiki: English pages and -zh-CN twins
 ├── tests/framework_test.sh
-├── CLAUDE.md                  # repository instructions
+├── .claude/CLAUDE.md          # repository instructions
 └── install.sh / install.ps1
 ```
 
@@ -93,11 +94,11 @@ Every page has an English file and a Chinese twin, `Page.md` and `Page-zh-CN.md`
 2. [publish-wiki.yml][pubwf], [publish-wiki.sh][pubsh], [test-wiki-publish.sh][pubtest], and [check-wiki.py][checkwiki]: the wiki pipeline.
 3. [release.yml][rel] and the *Release process* in [CLAUDE.md][claude].
 
-[claude]: https://github.com/D0n9X1n/feature-crew/blob/main/CLAUDE.md
+[claude]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/CLAUDE.md
 [test]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/test.yml
 [pubwf]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/publish-wiki.yml
 [pubsh]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/publish-wiki.sh
 [pubtest]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/test-wiki-publish.sh
 [checkwiki]: https://github.com/D0n9X1n/feature-crew/blob/main/scripts/check-wiki.py
 [rel]: https://github.com/D0n9X1n/feature-crew/blob/main/.github/workflows/release.yml
-[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
+[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md

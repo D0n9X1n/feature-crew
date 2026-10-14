@@ -16,6 +16,28 @@ Match `.toolUseId` in child `agent-<agentId>.meta.json` to the spawning `Agent` 
 
 `agent-<agentId>.meta.json` carries `.model`, the requested alias, not runtime evidence; `.agentType` names the agent type. Do not use either as a substitute for assistant entries. Save the record path, role, spawning call id and relevant turn boundaries in the audit envelope, alongside requested aliases and all observed ids. An unreadable record means unknown provenance; so does a missing/empty model, no assistant entries, or an incomplete record. This internal, undocumented format may change: fail closed rather than accepting an alias or a reviewer's self-report. `/tasks` and substitution warnings can help locate discrepancies, but do not replace the recorded evidence.
 
+## Copilot CLI record
+
+Copilot CLI records each session in `~/.copilot/session-state/<session>/events.jsonl`; resolve this session's file, never another's. Request the reviewer with the `task` tool's `model` argument. Its `tool.execution_start` event, `toolName` is `task`, carries the dispatch's `toolCallId`. List every model that answered that dispatch:
+
+```bash
+jq -r --arg call "$call" 'select(((.type=="subagent.started" or .type=="subagent.completed") and .data.toolCallId==$call) or (.type=="assistant.message" and .data.parentToolCallId==$call)) | .data.model // "UNKNOWN"' "$events" | sort -u
+```
+
+A `task` or `skill` call inside the dispatch is the canonical rule's Agent or Skill call; this must print nothing:
+
+```bash
+jq -r --arg call "$call" 'select(.type=="tool.execution_start" and .data.parentToolCallId==$call and (.data.toolName=="task" or .data.toolName=="skill")) | .data.toolName' "$events"
+```
+
+The dispatch must have completed; this must print its call id:
+
+```bash
+jq -r --arg call "$call" 'select(.type=="subagent.completed" and .data.toolCallId==$call) | .data.toolCallId' "$events"
+```
+
+A missing or unreadable file, no `subagent.completed` event for the dispatch, or an `UNKNOWN` model leaves provenance unknown: GATE UNSATISFIED. For cost telemetry, use `subagent.completed` `totalTokens`.
+
 ## Map model ids to families
 
 - Opus, Sonnet, Haiku, and GPT are four separate families; any two are cross-family. `claude-sonnet-*` → Sonnet; `claude-opus-*` → Opus; `claude-haiku-*` → Haiku. Version or context suffixes do not create a new family.

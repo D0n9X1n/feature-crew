@@ -4,66 +4,66 @@
 # uses the PowerShell implementation. Unrelated bash commands are never used.
 #
 # Usage:
-#   .\install.ps1                           # install for Claude Code globally (~/.claude)
-#   .\install.ps1 --force                   # or -Force: overwrite existing files
-#   .\install.ps1 --dry-run                 # or -DryRun: print actions, change nothing
-#   .\install.ps1 --uninstall               # or -Uninstall: remove installed files
-#   .\install.ps1 --check                   # or -Check: read-only, report whether an update is needed
-#   .\install.ps1 --verify                  # or -Verify: read-only, verify the install against this clone
-#   .\install.ps1 --prefix DIR              # or -Prefix DIR: override ~/.claude
-#   .\install.ps1 --help                    # or -Help / -h: show usage
-# --check/--verify exit 0 when current/verified, 1 on any mismatch, 2 on an error.
-
-[CmdletBinding(PositionalBinding=$false)]
-param(
-  [switch]$Force,
-  [switch]$DryRun,
-  [switch]$Uninstall,
-  [switch]$Check,
-  [switch]$Verify,
-  [Alias('h')][switch]$Help,
-  [string]$Prefix = (Join-Path $HOME ".claude"),
-  [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest = @()
-)
+#   .\install.ps1                  # or no flags: install or update the plugin in each CLI on PATH, then remove the old install
+#   .\install.ps1 --dry-run        # or -DryRun: print every command and removal, change nothing
+#   .\install.ps1 --check          # or -Check: read-only, report plugin state and old files
+#   .\install.ps1 --uninstall      # or -Uninstall: remove the plugin from each CLI and the old install
+#   .\install.ps1 --prefix DIR     # or -Prefix DIR: old install location (default ~/.claude)
+#   .\install.ps1 --source SRC     # or -Source SRC: plugin marketplace source (default D0n9X1n/feature-crew)
+#   .\install.ps1 --help           # or -Help / -h: show usage
+# --check exits 0 when current, 1 when action is needed, 2 on an error.
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$DryRun = $false
+$Uninstall = $false
+$Check = $false
+$Prefix = Join-Path $HOME ".claude"
+$Source = "D0n9X1n/feature-crew"
 
-# Typed PowerShell calls and -File bind GNU-style options differently. Parse
-# any unbound tokens before dispatch so a switch can never become a prefix.
-for ($i = 0; $i -lt $Rest.Count; $i++) {
-  switch -CaseSensitive ($Rest[$i]) {
-    "--force"     { $Force = $true }
-    "--dry-run"   { $DryRun = $true }
-    "--uninstall" { $Uninstall = $true }
-    "--check"     { $Check = $true }
-    "--verify"    { $Verify = $true }
-    "--help"      { $Help = $true }
-    "--prefix" {
-      if ($i + 1 -ge $Rest.Count) {
-        [Console]::Error.WriteLine("Missing value for --prefix")
-        exit 2
-      }
+# No param block: PowerShell would bind --prefix/--source itself and fail a
+# missing value with exit 1 before this script runs. Parse every token here.
+# GNU-style flags are case-sensitive; PowerShell-style ones are not.
+$HelpText = @'
+Usage: install.sh / install.ps1 [--dry-run] [--check] [--uninstall] [--prefix DIR] [--source SRC]
+Installs or updates the Feature-Crew plugin in each of Claude Code and GitHub Copilot CLI found on
+PATH, then removes an old script install from the --prefix folder (default ~/.claude).
+  --dry-run     print every command and removal, change nothing
+  --check       read-only: report plugin state and old files; exit 0 current, 1 action needed, 2 error
+  --uninstall   remove the plugin from each CLI and the old install
+  --prefix DIR  old install location
+  --source SRC  plugin marketplace source (default D0n9X1n/feature-crew)
+install.ps1 also accepts -DryRun, -Check, -Uninstall, -Prefix DIR, -Source SRC, -Help.
+Old fc-* agents and skills are removed even when edited: they would run instead of the plugin.
+Older files are removed only when published.sha256 proves Feature-Crew wrote them.
+'@
+$argv = @($args)
+for ($i = 0; $i -lt $argv.Count; $i++) {
+  $t = [string]$argv[$i]
+  $k = if ($t.StartsWith("--")) { $t } else { $t.ToLowerInvariant() }
+  switch -CaseSensitive ($k) {
+    { $_ -in @("--dry-run", "-dryrun") }     { $DryRun = $true; break }
+    { $_ -in @("--uninstall", "-uninstall") } { $Uninstall = $true; break }
+    { $_ -in @("--check", "-check") }         { $Check = $true; break }
+    { $_ -in @("--help", "-help", "-h") }     { Write-Host $HelpText; exit 0 }
+    { $_ -in @("--prefix", "-prefix", "--source", "-source") } {
+      if ($i + 1 -ge $argv.Count) { [Console]::Error.WriteLine("Missing value for $t"); exit 2 }
       $i++
-      $Prefix = $Rest[$i]
+      if ($k -like "*prefix") { $Prefix = [string]$argv[$i] } else { $Source = [string]$argv[$i] }
+      break
     }
     default {
-      [Console]::Error.WriteLine("Unknown option: $($Rest[$i])")
+      [Console]::Error.WriteLine("Unknown option: $t")
       exit 2
     }
   }
 }
-if ($Help) {
-  Write-Host "Usage: .\install.ps1 [--force|-Force] [--dry-run|-DryRun] [--uninstall|-Uninstall]"
-  Write-Host "                     [--check|-Check] [--verify|-Verify]"
-  Write-Host "                     [--prefix DIR|-Prefix DIR] [--help|-Help|-h]"
-  Write-Host "--check/--verify are read-only; exit 0 when current/verified, 1 on any mismatch, 2 on an error."
-  exit 0
-}
-if (($Check -or $Verify) -and (($Check -and $Verify) -or $Force -or $DryRun -or $Uninstall)) {
-  [Console]::Error.WriteLine("--check and --verify cannot be combined with each other, --force, --uninstall, or --dry-run")
+if ($Check -and ($DryRun -or $Uninstall)) {
+  [Console]::Error.WriteLine("--check cannot be combined with --dry-run or --uninstall")
   exit 2
 }
+# A local -Source is registered as an absolute path, so a rerun from anywhere matches it.
+if (Test-Path -LiteralPath $Source -PathType Container) { $Source = (Resolve-Path -LiteralPath $Source).ProviderPath }
 
 function Find-GitBash {
   $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -81,12 +81,10 @@ function Find-GitBash {
 $gitBash = Find-GitBash
 if ($gitBash) {
   $bashArgs = @()
-  if ($Force)     { $bashArgs += "--force" }
   if ($DryRun)    { $bashArgs += "--dry-run" }
   if ($Uninstall) { $bashArgs += "--uninstall" }
   if ($Check)     { $bashArgs += "--check" }
-  if ($Verify)    { $bashArgs += "--verify" }
-  $bashArgs += @("--prefix", $Prefix)
+  $bashArgs += @("--prefix", $Prefix, "--source", $Source)
   $bashExitCode = 127
   try {
     # PowerShell 5.1 can turn redirected native stderr into a terminating error
@@ -107,79 +105,35 @@ if ($gitBash) {
 
 # --- Pure-PowerShell fallback (full feature parity with install.sh) ---
 
-$SrcAgents     = Join-Path $ScriptDir "agents"
-$SrcSkillsDir  = Join-Path $ScriptDir ".claude\skills"
-$DestAgents    = Join-Path $Prefix "agents"
-$DestSkillsDir = Join-Path $Prefix "skills"
-$Manifest = Join-Path $Prefix "feature-crew.sha256"
-$ManifestPresent = $false
-$ManifestValid = $true
-$ManifestEntries = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
-$NextEntries = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
-$RemovedRoots = New-Object 'System.Collections.Generic.List[string]'
-$EmDash = [char]0x2014
-$DryDirs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$PluginId = "feature-crew@feature-crew"
+$Marketplace = "feature-crew"
+
+# Every path an old script install wrote, from what tagged installers did
+# (T77 regenerates these from v3.1-v5.3.1). Keep in sync with install.sh.
+$LEGACY_FC_AGENTS = @("fc-architect", "fc-developer", "fc-pm", "fc-qa-code", "fc-qa-spec", "fc-tech-lead")
+$LEGACY_FC_SKILLS = @("fc-brainstorm", "fc-build-or-fix", "fc-debug", "fc-explain", "fc-grill-me", "fc-research", "fc-review", "fc-second-opinion", "fc-ship", "fc-update")
+$LEGACY_OLD_AGENTS = @("architect", "developer", "pm", "qa-code-reviewer", "qa-spec-reviewer", "tech-lead")
+$LEGACY_OLD_SKILLS = @("build-or-fix", "research")
+
 $PublishedHashes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $publishedTable = Join-Path $ScriptDir "published.sha256"
-$PublishedUnreadable = $false
-function Read-PublishedTable {
-  foreach ($line in [IO.File]::ReadAllLines($publishedTable)) {
-    [void]$PublishedHashes.Add($line)
-  }
-}
 if (Test-Path -LiteralPath $publishedTable -PathType Leaf) {
-  # -Check and -Verify report an unreadable table as an operational error
-  # (Invoke-InstallCheck); every other mode stops on the read error, as before.
-  if ($Check -or $Verify) {
-    try { Read-PublishedTable } catch { $PublishedUnreadable = $true }
-  } else {
-    Read-PublishedTable
-  }
+  foreach ($line in [IO.File]::ReadAllLines($publishedTable)) { [void]$PublishedHashes.Add($line) }
 }
 
-# Map agent filename -> description. The subagent NAME is the filename without
-# .md, so source and installed names cannot drift. Role frontmatter carries no
-# model key: hard-gate dispatchers select an explicit override from artifact
-# author provenance. Keep in sync with agent_meta() in install.sh.
-$AgentMeta = @{
-  "fc-pm.md"        = "Feature-Crew Product Manager role for the main session: selects Just Do It/Standard/Complex and runs /fc-build-or-fix. Never dispatch it as a subagent: it collects user approvals, and gate provenance is observed only one dispatch deep."
-  "fc-architect.md" = "Feature-Crew Architect: turns an approved spec into a bounded implementation plan (<=500 lines). Dispatched by /fc-build-or-fix with the spec inline; not for ad-hoc design questions."
-  "fc-developer.md" = "Feature-Crew Developer: implements one planned task TDD-style. Dispatched by /fc-build-or-fix with the task text inline; not for open-ended coding requests."
-  "fc-qa-spec.md"   = "Feature-Crew QA spec reviewer: checks an implementation against its approved spec (one-clue mode). Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review."
-  "fc-qa-code.md"   = "Feature-Crew QA code reviewer: reviews a diff in one-clue mode, spec and quality on Standard, quality only on Complex. Dispatched by /fc-build-or-fix at a hard gate; for ad-hoc review use /fc-review."
-  "fc-tech-lead.md" = "Feature-Crew Tech Lead: final cross-family review of Complex work before merge. Dispatched by /fc-build-or-fix; for ad-hoc review use /fc-review."
+$Clis = New-Object 'System.Collections.Generic.List[string]'
+$CliPath = @{}
+foreach ($c in @("claude", "copilot")) {
+  $cmd = Get-Command $c -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($cmd) { $Clis.Add($c); $CliPath[$c] = $cmd.Path }
 }
-
-function Ensure-Dir($p) {
-  if (Test-Path -LiteralPath $p -PathType Container) { return }
-  if ($DryRun) {
-    if ($DryDirs.Add($p)) { Write-Host "DRY-RUN: mkdir -p $p" }
-  } else {
-    [IO.Directory]::CreateDirectory((Resolve-AbsPath $p)) | Out-Null
-  }
-}
-
-# Sort slash-separated relative paths with an ordinal comparer, not the host's
-# culture. -Force includes hidden files just as find does in install.sh.
-function Get-SortedChildren($dir, [switch]$Recurse, [switch]$Directories, [string]$Filter = '*') {
-  $items = @(Get-ChildItem -LiteralPath $dir -Force -Recurse:$Recurse -Filter $Filter)
-  $paths = New-Object 'System.Collections.Generic.List[string]'
-  $byPath = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
-  $root = (Resolve-AbsPath $dir).TrimEnd('\','/')
-  foreach ($item in $items) {
-    if ($item.PSIsContainer -ne [bool]$Directories) { continue }
-    $rel = $item.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
-    $paths.Add($rel)
-    $byPath.Add($rel, $item)
-  }
-  $paths.Sort([StringComparer]::Ordinal)
-  foreach ($rel in $paths) { $byPath[$rel] }
+if ($Clis.Count -eq 0) {
+  [Console]::Error.WriteLine("feature-crew: neither claude nor copilot is on PATH; install Claude Code or GitHub Copilot CLI first.")
+  exit 2
 }
 
 # [IO.File] resolves relative paths against the *process* working directory,
-# which is not necessarily PowerShell's current location. Join that location
-# first, then collapse dot segments so roots match Get-ChildItem's FullName
-# before taking a relative-path substring. Printed paths keep the given prefix.
+# which is not necessarily PowerShell's current location.
 function Resolve-AbsPath($p) {
   if (-not [IO.Path]::IsPathRooted($p)) {
     $p = Join-Path (Get-Location).ProviderPath $p
@@ -187,134 +141,138 @@ function Resolve-AbsPath($p) {
   return [IO.Path]::GetFullPath($p)
 }
 
-# The single agent renderer, shared by install, ownership, and -Check/-Verify:
-# never decode agent bodies. Text readers discard BOMs and can silently use the
-# system ANSI code page in PowerShell 5.1.
-function Get-AgentBytes($src, $name, $desc) {
-  $body = [IO.File]::ReadAllBytes((Resolve-AbsPath $src))
-  # Match install.sh's first-line predicate exactly: three dashes, LF or EOF.
-  $hasFront = ($body.Length -ge 3 -and $body[0] -eq 45 -and $body[1] -eq 45 -and
-    $body[2] -eq 45 -and ($body.Length -eq 3 -or $body[3] -eq 10))
-  if ($hasFront) { return ,$body }
-  # Quote descriptions containing ": " and encode only the new frontmatter.
-  # Dispatched roles deny Agent and Skill; fc-pm runs as the main session.
-  # Keep in sync with agent_front() in install.sh.
-  $deny = if ($name -ceq 'fc-pm') { '' } else { "disallowedTools: Agent, Skill`n" }
-  $front = "---`nname: $name`ndescription: `"$desc`"`n${deny}---`n`n"
-  $utf8 = New-Object Text.UTF8Encoding($false)
-  return ,([byte[]]($utf8.GetBytes($front) + $body))
-}
+# The CLIs' own JSON listings are the only plugin state this script reads.
+# One object per entry, so a match never spans two entries; $null if the listing failed.
+# Every CLI call runs from the filesystem root, because a project's
+# .claude/settings.json changes what both CLIs list.
+$NeutralDir = [IO.Path]::GetPathRoot([IO.Path]::GetTempPath())
 
-function Test-BytesEqual([byte[]]$a, [byte[]]$b) {
-  if ($a.Length -ne $b.Length) { return $false }
-  for ($i = 0; $i -lt $a.Length; $i++) {
-    if ($a[$i] -ne $b[$i]) { return $false }
-  }
-  return $true
-}
-
-function Install-Agent($src, $dest, $name, $desc) {
-  if ((Test-Path -LiteralPath $dest) -and (-not $Force)) {
-    Write-Host "skip (exists): $dest  [use --force to overwrite]"; return
-  }
-  if ($DryRun) {
-    Write-Host "DRY-RUN: install $src -> $dest  (name: $name)"; return
-  }
-  [IO.File]::WriteAllBytes((Resolve-AbsPath $dest), (Get-AgentBytes $src $name $desc))
-  Write-Host "installed: $dest"
-}
-
-# Copy a directory tree, file-by-file, honoring -Force / -DryRun.
-function Copy-Tree($srcDir, $destDir) {
-  Ensure-Dir $destDir
-  if (-not (Test-Path -LiteralPath $srcDir -PathType Container)) { return }
-  $skill = Split-Path -Leaf $srcDir
-  Get-SortedChildren $srcDir -Recurse | ForEach-Object {
-    $rel = $_.FullName.Substring($srcDir.Length).TrimStart('\','/').Replace('\','/')
-    $d   = Join-Path $destDir $rel
-    $manifestRel = 'skills/' + $skill + '/' + $rel
-    if ((Test-Path -LiteralPath $d) -and (-not $Force)) {
-      Write-Host "skip (exists): $d  [use --force to overwrite]"
-      if (-not $DryRun -and $ManifestValid) {
-        if ($ManifestEntries.ContainsKey($manifestRel)) {
-          $NextEntries[$manifestRel] = $ManifestEntries[$manifestRel]
-        } elseif (Test-SkillFileIsOurs $_.FullName $d $manifestRel) {
-          $NextEntries[$manifestRel] = Get-Sha256Raw $d
-        }
-      }
-      return
-    }
-    Ensure-Dir (Split-Path -Parent $d)
-    if ($DryRun) {
-      Write-Host "DRY-RUN: cp $($_.FullName) $d"
+function Get-Listing($cli, $kind) {
+  $ErrorActionPreference = "Continue"
+  Push-Location -LiteralPath $NeutralDir
+  try {
+    if ($kind -eq "marketplace") {
+      $out = & $CliPath[$cli] plugin marketplace list --json 2>$null
     } else {
-      [IO.File]::Copy((Resolve-AbsPath $_.FullName), (Resolve-AbsPath $d), $true)
-      if ($ManifestValid) { $NextEntries[$manifestRel] = Get-Sha256Raw $d }
-      Write-Host "installed: $d"
+      $out = & $CliPath[$cli] plugin list --json 2>$null
     }
-  }
+    $rc = $LASTEXITCODE
+  } catch { return $null } finally { Pop-Location }
+  if ($rc -ne 0) { return $null }
+  return ,@((($out | Out-String) -replace "[`r`n]", "") -split '}')
 }
 
-function Install-ClaudeGlobal {
-  if (-not (Test-Path -LiteralPath $SrcAgents -PathType Container)) {
-    [Console]::Error.WriteLine("Cannot find agents/ next to install.ps1 ($SrcAgents)"); exit 1
+# absent, same (registered from exactly -Source), or other; $null if the listing failed.
+function Get-MarketplaceState($cli) {
+  $rows = Get-Listing $cli "marketplace"
+  if ($null -eq $rows) { return $null }
+  $row = @($rows | Where-Object { $_ -match '"name":\s*"feature-crew"' } | Select-Object -First 1)
+  if ($row.Count -eq 0) { return "absent" }
+  $norm = $row[0] -replace '":\s*"', '": "'
+  $src = $Source.Replace('\', '\\')
+  foreach ($want in @("""path"": ""$src""", """repo"": ""$src""", """url"": ""$src""",
+      """source"": ""Local: $src""", """source"": ""GitHub: $src""", """source"": ""URL: $src""")) {
+    if ($norm.Contains($want)) { return "same" }
   }
-  Write-Host "feature-crew: installing into $Prefix"
-  Ensure-Dir $DestAgents
-
-  $count = 0
-  Get-SortedChildren $SrcAgents -Filter '*.md' | ForEach-Object {
-    $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = "Feature-Crew agent." }
-    $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
-    # Flat under ~/.claude/agents/ so they don't collide with personal agents.
-    $destFile = Join-Path $DestAgents ($name + ".md")
-    $skipped = (Test-Path -LiteralPath $destFile) -and (-not $Force)
-    Install-Agent $_.FullName $destFile $name $meta
-    if (-not $DryRun -and $ManifestValid) {
-      $rel = 'agents/' + $name + '.md'
-      if ($skipped -and $ManifestEntries.ContainsKey($rel)) {
-        $NextEntries[$rel] = $ManifestEntries[$rel]
-      } elseif (-not $skipped -or (Test-InstalledIsOurs $_.FullName $destFile $name $meta)) {
-        $NextEntries[$rel] = Get-Sha256Raw $destFile
-      }
-    }
-    $count++
-  }
-
-  $skillCount = 0
-  if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
-    Get-SortedChildren $SrcSkillsDir -Directories | ForEach-Object {
-      # A directory without SKILL.md is not a skill -- skip scratch dirs
-      # rather than shipping them. Mirrored in install.sh.
-      if (-not (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf)) { return }
-      Copy-Tree $_.FullName (Join-Path $DestSkillsDir $_.Name)
-      $skillCount++
-    }
-  }
-  Write-InstallManifest
-  Remove-Legacy
-
-  Write-Host ""
-  Write-Host "Done. Installed $count agent file(s) and $skillCount skill(s)."
-  Write-Host "Agents:  $DestAgents"
-  Write-Host "Skills:  $DestSkillsDir"
-  Write-Host ""
-  Write-Host "Describe your need naturally in any project; slash commands are optional."
-  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-explain, /fc-grill-me, /fc-research,"
-  Write-Host "/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
+  return "other"
 }
 
-# Exact content identity, not a description prefix. Three prior attempts each
-# destroyed user data a different way: no check at all, a whole-file grep for
-# "feature-crew", then a description prefix. Prefix matching cannot answer
-# "did we write this file"; a hash can, but only for that file, not neighbours.
-# published.sha256 is regenerated from the tagged installers by T43. Missing
-# table means nothing is recognized; edited and unknown files stay untouched.
+# absent, disabled, or enabled: only feature-crew from the feature-crew marketplace,
+# and in Claude Code only the user-scope install. Only "enabled": true is enabled.
+function Get-PluginState($cli) {
+  $rows = Get-Listing $cli "plugin"
+  if ($null -eq $rows) { return $null }
+  if ($cli -eq "claude") {
+    $row = @($rows | Where-Object { ($_ -match '"id":\s*"feature-crew@feature-crew"') -and ($_ -match '"scope":\s*"user"') } | Select-Object -First 1)
+  } else {
+    $row = @($rows | Where-Object { ($_ -match '"name":\s*"feature-crew"') -and ($_ -match '"marketplace":\s*"feature-crew"') } | Select-Object -First 1)
+  }
+  if ($row.Count -eq 0) { return "absent" }
+  if ($row[0] -match '"enabled":\s*true(?![A-Za-z0-9_])') { return "enabled" }
+  return "disabled"
+}
 
+# Claude Code installs per scope; this installer manages the user scope only.
+function Get-ScopeArgs($cli) { if ($cli -eq "claude") { return @("--scope", "user") }; return @() }
+
+function Stop-Cli($cli) {
+  [Console]::Error.WriteLine("feature-crew: $cli step failed; old files left in place.")
+  exit 1
+}
+
+# Print, then run; under -DryRun only print.
+function Invoke-Step($cli, [string[]]$stepArgs) {
+  $line = "$cli " + ($stepArgs -join " ")
+  if ($DryRun) { Write-Host "would run: $line"; return $true }
+  Write-Host "run: $line"
+  $ErrorActionPreference = "Continue"
+  Push-Location -LiteralPath $NeutralDir
+  try {
+    & $CliPath[$cli] @stepArgs | ForEach-Object { Write-Host $_ }
+    $rc = $LASTEXITCODE
+  } catch { $rc = 1 } finally { Pop-Location }
+  return ($rc -eq 0)
+}
+
+# A marketplace from another source is replaced, never updated. Claude Code
+# replaces it in user settings, and its plugin follows; other scopes keep
+# theirs. The old install is removed only after the CLI lists the plugin enabled.
+function Install-Cli($cli) {
+  $mp = Get-MarketplaceState $cli
+  $pl = Get-PluginState $cli
+  if ($null -eq $mp -or $null -eq $pl) { Stop-Cli $cli }
+  $sc = @(Get-ScopeArgs $cli)
+  if ($mp -eq "same") {
+    if (-not (Invoke-Step $cli @("plugin", "marketplace", "update", $Marketplace))) { Stop-Cli $cli }
+  } else {
+    if ($mp -eq "other" -and $cli -ne "claude") {
+      if ($pl -ne "absent" -and -not (Invoke-Step $cli @("plugin", "uninstall", $PluginId))) { Stop-Cli $cli }
+      if (-not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
+    }
+    if (-not (Invoke-Step $cli (@("plugin", "marketplace", "add", $Source) + $sc))) { Stop-Cli $cli }
+    if ($DryRun) { $pl = "absent" } else { $pl = Get-PluginState $cli; if ($null -eq $pl) { Stop-Cli $cli } }
+  }
+  if ($pl -eq "enabled") { $steps = @(,(@("plugin", "update", $PluginId) + $sc)) }
+  elseif ($pl -eq "disabled" -and $cli -eq "claude") { $steps = @((@("plugin", "enable", $PluginId) + $sc), (@("plugin", "update", $PluginId) + $sc)) }
+  else { $steps = @(,(@("plugin", "install", $PluginId) + $sc)) }
+  foreach ($st in $steps) { if (-not (Invoke-Step $cli $st)) { Stop-Cli $cli } }
+  if (-not $DryRun -and (Get-PluginState $cli) -ne "enabled") { Stop-Cli $cli }
+}
+
+# Claude Code: remove the marketplace from user settings only. When only a
+# project declares it, the CLI says not_configured and it stays for that project.
+function Remove-UserMarketplace {
+  $line = "claude plugin marketplace remove $Marketplace --scope user --json"
+  if ($DryRun) { Write-Host "would run: $line"; return $true }
+  Write-Host "run: $line"
+  $ErrorActionPreference = "Continue"
+  Push-Location -LiteralPath $NeutralDir
+  try {
+    $out = (& $CliPath["claude"] plugin marketplace remove $Marketplace --scope user --json 2>&1 | Out-String)
+    $rc = $LASTEXITCODE
+  } catch { $out = "$_"; $rc = 1 } finally { Pop-Location }
+  if ($rc -eq 0) { Write-Host "claude: marketplace removed from user settings"; return $true }
+  if ($out -match '"failureCode":\s*"not_configured"') {
+    Write-Host "claude: marketplace not in user settings; left for other scopes"; return $true
+  }
+  [Console]::Error.WriteLine($out.TrimEnd())
+  return $false
+}
+
+function Uninstall-Cli($cli) {
+  $pl = Get-PluginState $cli
+  if ($null -eq $pl) { Stop-Cli $cli }
+  if ($pl -ne "absent" -and -not (Invoke-Step $cli (@("plugin", "uninstall", $PluginId) + @(Get-ScopeArgs $cli)))) { Stop-Cli $cli }
+  $mp = Get-MarketplaceState $cli
+  if ($null -eq $mp) { Stop-Cli $cli }
+  if ($mp -eq "absent") { return }
+  if ($cli -eq "claude") { if (-not (Remove-UserMarketplace)) { Stop-Cli $cli } }
+  elseif (-not (Invoke-Step $cli @("plugin", "marketplace", "remove", $Marketplace))) { Stop-Cli $cli }
+}
+
+# Hash with CR stripped, so a Windows checkout of a genuine legacy file still matches.
 function Get-Sha256Lf($path) {
   $bytes = [IO.File]::ReadAllBytes((Resolve-AbsPath $path))
-  # Strip CR so a Windows checkout of a genuine legacy skill still matches.
   $lf = [byte[]]@($bytes | Where-Object { $_ -ne 13 })
   $sha = [Security.Cryptography.SHA256]::Create()
   try {
@@ -322,419 +280,316 @@ function Get-Sha256Lf($path) {
   } finally { $sha.Dispose() }
 }
 
+# Like bash [ -e ] / -f / -d: false, never an error, when a parent cannot be read.
+function Test-Exists($path, $type = "Any") {
+  try { return [bool](Test-Path -LiteralPath $path -PathType $type -ErrorAction Stop) } catch { return $false }
+}
+
 function Test-PublishedFile($file, $relativePath) {
-  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $false }
-  return $PublishedHashes.Contains((Get-Sha256Lf $file) + '  ' + $relativePath)
+  if (-not (Test-Exists $file "Leaf")) { return $false }
+  try { return $PublishedHashes.Contains((Get-Sha256Lf $file) + "  " + $relativePath) } catch { return $false }
 }
 
-function Get-Sha256Raw($path) {
-  $stream = [IO.File]::OpenRead((Resolve-AbsPath $path))
-  $sha = [Security.Cryptography.SHA256]::Create()
+function Test-Link($path) {
+  $item = Get-Item -LiteralPath $path -Force
+  return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+$script:LegacyFound = $false
+$script:Validate = $false
+$script:NotRemoved = New-Object 'System.Collections.Generic.List[string]'
+$script:Kept = New-Object 'System.Collections.Generic.List[string]'
+$script:Planned = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$script:Emptied = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+# Removes a link itself, never its target.
+function Remove-Legacy($path) {
+  $script:LegacyFound = $true
+  [void]$script:Planned.Add($path)
+  if ($script:Validate) { Test-Removable $path; return }
+  if ($Check) { Write-Host "old file: $path"; return }
+  if ($DryRun) { Write-Host "would remove: $path"; return }
+  $it = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  if ($it -and -not ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not (Test-Readable $path ([bool]$it.PSIsContainer))) {
+    Stop-Cannot "read" $path; return
+  }
+  $abs = Resolve-AbsPath $path
   try {
-    ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString("x2") }) -join ""
-  } finally { $stream.Dispose(); $sha.Dispose() }
-}
-
-function Read-InstallManifest {
-  $script:ManifestPresent = Test-Path -LiteralPath $Manifest
-  if (-not $ManifestPresent) { return }
-  if (-not (Test-Path -LiteralPath $Manifest -PathType Leaf)) {
-    $script:ManifestValid = $false
-    return
-  }
-  $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Resolve-AbsPath $Manifest)))
-  if ($text.Length -eq 0) { return }
-  $lines = $text.Split([char]10)
-  for ($i = 0; $i -lt $lines.Length; $i++) {
-    $line = $lines[$i]
-    if ($i -eq $lines.Length - 1 -and $line.Length -eq 0) { break }
-    if ($line -cnotmatch '^[0-9a-f]{64}  (agents|skills)/.+$' -or
-        $line.Contains("`r") -or $line.Contains('\') -or $line -match '/\.\.(/|$)') {
-      $script:ManifestValid = $false
-      $ManifestEntries.Clear()
-      return
+    $item = Get-Item -LiteralPath $abs -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      if ($item.PSIsContainer) { [IO.Directory]::Delete($abs) } else { [IO.File]::Delete($abs) }
+    } elseif ($item.PSIsContainer) {
+      Remove-Item -LiteralPath $abs -Recurse -Force -ErrorAction Stop
+    } else {
+      Remove-Item -LiteralPath $abs -Force -ErrorAction Stop
     }
-    $ManifestEntries[$line.Substring(66)] = $line.Substring(0, 64)
+  } catch { }
+  if (Get-Item -LiteralPath $abs -Force -ErrorAction SilentlyContinue) { $script:NotRemoved.Add($path); return }
+  Write-Host "removed: $path"
+}
+
+# True when DIR, a folder between it and the prefix, or the prefix itself is a
+# link: nothing beneath it is removed, because that would reach outside the prefix.
+function Test-LinkedDir($dir) {
+  $d = $dir
+  while ($d) {
+    $item = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
+    if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $true }
+    if ($d -eq $Prefix) { break }
+    $i = $d.LastIndexOf('/')
+    if ($i -lt 1) { break }
+    $d = $d.Substring(0, $i)
   }
+  return $false
 }
 
-# A recorded mismatch is an edit, even if its bytes match an older release.
-function Test-HistoricalFileIsOurs($file, $relativePath) {
-  if ($ManifestEntries.ContainsKey($relativePath)) {
-    return ((Get-Sha256Raw $file) -ceq $ManifestEntries[$relativePath])
-  }
-  return (Test-PublishedFile $file $relativePath)
+# An fc-* path in a linked folder still shadows the plugin.
+function Write-LinkedOld($path) {
+  $script:LegacyFound = $true
+  if (-not $script:Validate) { Write-Host "kept (linked folder): $path" }
 }
 
-function Test-SkillFileIsOurs($src, $dest, $relativePath) {
-  if (-not (Test-Path -LiteralPath $src -PathType Leaf) -or
-      -not (Test-Path -LiteralPath $dest -PathType Leaf)) { return $false }
-  $expected = [IO.File]::ReadAllBytes((Resolve-AbsPath $src))
-  $actual = [IO.File]::ReadAllBytes((Resolve-AbsPath $dest))
-  if (Test-BytesEqual $expected $actual) { return $true }
-  return (Test-HistoricalFileIsOurs $dest $relativePath)
-}
-
-function Write-ManifestEntries {
+# A skill dir's regular files, as slash-separated relative paths in ordinal order.
+# Like find -type f: links are skipped and never followed, files or folders.
+function Get-OldSkillFiles($dir) {
+  $root = (Resolve-AbsPath $dir).TrimEnd('\', '/')
   $paths = New-Object 'System.Collections.Generic.List[string]'
-  foreach ($rel in $NextEntries.Keys) { $paths.Add($rel) }
+  $todo = New-Object 'System.Collections.Generic.Stack[string]'
+  $todo.Push($root)
+  while ($todo.Count -gt 0) {
+    # Like find, skip a folder that cannot be read; the caller reports it.
+    try { $items = @(Get-ChildItem -LiteralPath $todo.Pop() -Force -ErrorAction Stop) } catch { continue }
+    foreach ($item in $items) {
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+      if ($item.PSIsContainer) { $todo.Push($item.FullName); continue }
+      $paths.Add($item.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/'))
+    }
+  }
   $paths.Sort([StringComparer]::Ordinal)
-  $text = New-Object Text.StringBuilder
-  foreach ($rel in $paths) {
-    [void]$text.Append($NextEntries[$rel]).Append('  ').Append($rel).Append("`n")
-  }
-  $utf8 = New-Object Text.UTF8Encoding($false)
-  [IO.File]::WriteAllBytes((Resolve-AbsPath $Manifest), $utf8.GetBytes($text.ToString()))
+  return ,$paths
 }
 
-function Write-InstallManifest {
-  if (-not $ManifestValid) {
-    Write-Host "kept (not a Feature-Crew manifest): $Manifest"
-  } elseif ($DryRun) {
-    Write-Host "DRY-RUN: write $Manifest"
-  } else {
-    Write-ManifestEntries
-    Write-Host "installed: $Manifest"
+# Before any change (validate pass, -Check, -DryRun) exit 2; once a run has
+# changed something, list the path with the other leftovers instead (exit 1).
+function Stop-Cannot($verb, $path) {
+  if ($script:Validate -or $Check -or $DryRun) {
+    [Console]::Error.WriteLine("feature-crew: cannot $verb $path")
+    exit 2
   }
+  $script:NotRemoved.Add($path)
 }
 
-function Update-UninstallManifest {
-  if (-not $ManifestPresent) { return }
-  if (-not $ManifestValid) {
-    Write-Host "kept (not a Feature-Crew manifest): $Manifest"
-    return
-  }
-  $NextEntries.Clear()
-  foreach ($rel in $ManifestEntries.Keys) {
-    if (-not (Test-Path -LiteralPath (Join-Path $Prefix $rel) -PathType Leaf)) { continue }
-    $removed = $false
-    foreach ($root in $RemovedRoots) {
-      if ($rel -ceq $root -or $rel.StartsWith($root + '/', [StringComparison]::Ordinal)) {
-        $removed = $true
-        break
-      }
-    }
-    if (-not $removed) { $NextEntries[$rel] = $ManifestEntries[$rel] }
-  }
-  if ($NextEntries.Count -eq 0) {
-    if ($DryRun) {
-      Write-Host "DRY-RUN: would remove $Manifest"
-    } else {
-      Remove-Item -LiteralPath $Manifest -Force
-      Write-Host "removed: $Manifest"
-    }
-  } else {
-    if (-not $DryRun) { Write-ManifestEntries }
-    Write-Host "kept (records the files kept above): $Manifest"
-  }
-}
-
-function Keep-Legacy($path) {
-  Write-Host "kept (not ours $EmDash content does not match any published version): $path"
-  Write-Host "  if this was an older Feature-Crew you edited, remove it by hand: $path"
-}
-
-function Remove-Legacy {
-  foreach ($location in @('agents/feature-crew', 'skills/build-or-fix', 'skills/research')) {
-    $dir = Join-Path $Prefix $location
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
-    if ($location -ne 'agents/feature-crew') {
-      $skill = Join-Path $dir 'SKILL.md'
-      if (-not (Test-Path -LiteralPath $skill -PathType Leaf)) {
-        Write-Host "kept (not ours $EmDash no SKILL.md): $dir"; continue
-      }
-      if (-not (Test-PublishedFile $skill ($location + '/SKILL.md'))) {
-        Keep-Legacy $dir; continue
-      }
-    }
-    $root = (Resolve-AbsPath $dir).TrimEnd('\','/')
-    foreach ($file in @(Get-SortedChildren $dir -Recurse)) {
-      $rel = $file.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
-      $path = Join-Path $dir $rel
-      if (Test-PublishedFile $path ($location + '/' + $rel)) {
-        if ($DryRun) {
-          Write-Host "DRY-RUN: would remove (legacy): $path"
-        } else {
-          Remove-Item -LiteralPath $path -Force
-          Write-Host "removed (legacy): $path"
-        }
-      } else {
-        Keep-Legacy $path
-      }
-    }
-    if (-not $DryRun) {
-      # Descendants follow their parent in ordinal order. Reverse that order
-      # and remove only empty directories; never recurse over unknown files.
-      $dirs = @(Get-SortedChildren $dir -Directories -Recurse)
-      for ($i = $dirs.Count - 1; $i -ge 0; $i--) {
-        $path = $dirs[$i].FullName
-        if (@(Get-ChildItem -LiteralPath $path -Force).Count -eq 0) {
-          [IO.Directory]::Delete((Resolve-AbsPath $path))
-        }
-      }
-      if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) {
-        [IO.Directory]::Delete((Resolve-AbsPath $dir))
-      }
-    }
-  }
-}
-
-# Current generated bytes win; otherwise consult the recorded baseline first.
-function Test-InstalledIsOurs($src, $dest, $name, $desc) {
-  if (-not (Test-Path -LiteralPath $dest -PathType Leaf)) { return $false }
-  $expected = Get-AgentBytes $src $name $desc
-  $actual = [IO.File]::ReadAllBytes((Resolve-AbsPath $dest))
-  if (Test-BytesEqual $expected $actual) { return $true }
-  return (Test-HistoricalFileIsOurs $dest ('agents/' + $name + '.md'))
-}
-
-function Uninstall-ClaudeGlobal {
-  Write-Host "feature-crew: uninstalling from $Prefix"
-  Get-SortedChildren $SrcAgents -Filter '*.md' | ForEach-Object {
-    $meta = $AgentMeta[$_.Name]
-    if (-not $meta) { $meta = "Feature-Crew agent." }
-    $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
-    $d = Join-Path $DestAgents ($name + ".md")
-    if (-not (Test-Path -LiteralPath $d)) {
-      Write-Host "not present: $d"
-    } elseif (Test-InstalledIsOurs $_.FullName $d $name $meta) {
-      if ($DryRun) {
-        Write-Host "DRY-RUN: would remove $d"
-      } else {
-        Remove-Item -LiteralPath $d -Force
-        Write-Host "removed: $d"
-      }
-      $RemovedRoots.Add('agents/' + $name + '.md')
-    } else {
-      Write-Host "kept (yours $EmDash differs from what we install): $d"
-    }
-  }
-  if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
-    Get-SortedChildren $SrcSkillsDir -Directories | ForEach-Object {
-      # Only consider what we would have installed.
-      if (-not (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf)) { return }
-      $d = Join-Path $DestSkillsDir $_.Name
-      if (-not (Test-Path -LiteralPath $d -PathType Container)) { Write-Host "not present: $d"; return }
-      # Only files actually present matter; any unknown file protects the dir.
-      $root = (Resolve-AbsPath $d).TrimEnd('\','/')
-      $same = $true
-      foreach ($f in @(Get-SortedChildren $d -Recurse)) {
-        $rel = $f.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
-        $source = Join-Path $_.FullName $rel
-        $manifestRel = 'skills/' + $_.Name + '/' + $rel
-        if (-not (Test-SkillFileIsOurs $source $f.FullName $manifestRel)) {
-          $same = $false; break
-        }
-      }
-      if ($same) {
-        if ($DryRun) {
-          Write-Host "DRY-RUN: would remove $d"
-        } else {
-          Remove-Item -LiteralPath $d -Recurse -Force
-          Write-Host "removed: $d"
-        }
-        $RemovedRoots.Add('skills/' + $_.Name)
-      } else {
-        Write-Host "kept (yours $EmDash differs from what we install): $d"
-      }
-    }
-  }
-  Update-UninstallManifest
-  Remove-Legacy
-}
-
-# --- Read-only -Check / -Verify (mirrors check_install in install.sh) ---
-# Compare the prefix with what this clone would install, using the same
-# ownership order as install and uninstall: current bytes, then the recorded
-# baseline, then published hashes only when no baseline exists. Never create
-# the prefix, rewrite the manifest, or clean anything up.
-
-function Get-Sha256Bytes([byte[]]$bytes) {
-  $sha = [Security.Cryptography.SHA256]::Create()
+function Test-Readable($path, [bool]$dir) {
   try {
-    ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
-  } finally { $sha.Dispose() }
+    if ($dir) { [void](Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) }
+    else { (New-Object IO.FileStream((Resolve-AbsPath $path), [IO.FileMode]::Open, [IO.FileAccess]::Read)).Dispose() }
+    return $true
+  } catch { return $false }
 }
 
-# A model key in role-agent frontmatter would bypass the dispatch-time
-# selector. Only the leading --- block counts; body prose may say "model:".
-function Test-AgentHasModelKey($path) {
-  $lines = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Resolve-AbsPath $path))).Split([char]10)
-  for ($i = 0; $i -lt $lines.Length; $i++) {
-    $line = $lines[$i]
-    if ($line.Length -gt 0 -and $line[$line.Length - 1] -eq [char]13) { $line = $line.Substring(0, $line.Length - 1) }
-    if ($i -eq 0) {
-      if (-not $line.Equals('---')) { return $false }
-    } elseif ($line.Equals('---')) {
-      return $false
-    } elseif ($line.StartsWith('model:', [StringComparison]::Ordinal)) {
-      return $true
+# A folder whose entries can be removed, like `test -w DIR -a -x DIR`. Windows
+# has no such mode bits; there, a run that cannot remove an entry exits 1.
+# True when DIR cannot be reached rather than missing: any OS failure other
+# than "No such file" or "Not a directory" (a folder that cannot be entered, a
+# link loop). Probing DIR/. follows a link anywhere in the path, DIR included.
+function Test-UnreachableDir($dir) {
+  if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $false }
+  $ErrorActionPreference = "Continue"
+  foreach ($ls in '/bin/ls', '/usr/bin/ls') {
+    if (Test-Path -LiteralPath $ls -PathType Leaf) {
+      $old = $env:LC_ALL; $env:LC_ALL = 'C'
+      try { $msg = (& $ls -d -- "$dir/." 2>&1 | Out-String); $rc = $LASTEXITCODE } catch { $msg = "$_"; $rc = 1 } finally { $env:LC_ALL = $old }
+      if ($rc -eq 0) { return $false }
+      return -not ($msg -match 'No such file|Not a directory')
     }
   }
   return $false
 }
 
-# Classify one expected file: current, outdated, uncertain, or missing.
-function Get-CheckState($rel, $want) {
-  $file = Join-Path $Prefix $rel
-  if (-not (Test-Path -LiteralPath $file)) { return 'missing' }
-  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return 'uncertain' }
-  if ((Get-Sha256Raw $file) -ceq $want) { return 'current' }
-  if (Test-HistoricalFileIsOurs $file $rel) { return 'outdated' }
-  return 'uncertain'
-}
-
-# Name a source path relative to the installer directory with forward slashes,
-# as source_error does in install.sh, so both engines print the same line
-# however each resolved its own directory.
-function Get-SourceRelative($path) {
-  $p = [string]$path
-  $root = $ScriptDir + [IO.Path]::DirectorySeparatorChar
-  if ($p.StartsWith($root, [StringComparison]::Ordinal)) { $p = $p.Substring($root.Length) }
-  return $p.Replace([string][IO.Path]::DirectorySeparatorChar, '/')
-}
-
-# An unreadable source is an operational error, never a mismatch: report the
-# path that failed, exactly as source_error does in install.sh.
-function Read-Source($path, [scriptblock]$read) {
-  try { & $read } catch { throw "cannot read installer source ($(Get-SourceRelative $path))" }
-}
-
-# Get-ChildItem lists an unreadable directory as empty when it filters without
-# recursing, so probe with the .NET listing, which throws (source_list in install.sh).
-function Get-SourceChildren($root, [switch]$Directories, [string]$Filter = '*') {
-  Read-Source $root {
-    [void][IO.Directory]::GetFileSystemEntries((Resolve-AbsPath $root))
-    Get-SortedChildren $root -Directories:$Directories -Filter $Filter
-  }
-}
-
-# Sets $script:CheckExitCode instead of returning it, so no stream can leak
-# into the exit code: 0 current/verified, 1 mismatch, 2 error.
-function Invoke-InstallCheck {
-  if (-not (Test-Path -LiteralPath $SrcAgents -PathType Container)) {
-    [Console]::Error.WriteLine("ERROR: cannot find agents/ next to the installer ($SrcAgents)")
-    $script:CheckExitCode = 2
-    return
-  }
-  if (-not $ManifestValid) {
-    [Console]::Error.WriteLine("ERROR: not a Feature-Crew manifest (left untouched): $Manifest")
-    $script:CheckExitCode = 2
-    return
-  }
-  # The table was read at startup; the dispatch turns this into exit 2.
-  if ($PublishedUnreadable) { throw "cannot read installer source ($(Get-SourceRelative $publishedTable))" }
-  $found = @{}
-  foreach ($kind in @('missing', 'outdated', 'uncertain', 'stale', 'model key')) {
-    $found[$kind] = New-Object 'System.Collections.Generic.List[string]'
-  }
-  $expected = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
-  $agents = 0; $agentsOk = 0; $skills = 0; $skillsOk = 0
-  foreach ($src in @(Get-SourceChildren $SrcAgents -Filter '*.md')) {
-    $meta = $AgentMeta[$src.Name]
-    if (-not $meta) { $meta = "Feature-Crew agent." }
-    $name = [IO.Path]::GetFileNameWithoutExtension($src.Name)
-    $rel = 'agents/' + $name + '.md'
-    $want = Read-Source $src.FullName { Get-Sha256Bytes (Get-AgentBytes $src.FullName $name $meta) }
-    $expected[$rel] = $want
-    $state = Get-CheckState $rel $want
-    if ($state -ne 'current') { $found[$state].Add($rel) }
-    $agents++
-    $dest = Join-Path $Prefix $rel
-    if ($Verify -and (Test-Path -LiteralPath $dest -PathType Leaf) -and (Test-AgentHasModelKey $dest)) {
-      $found['model key'].Add($rel)
-    } elseif ($state -eq 'current') {
-      $agentsOk++
+function Test-Writable($dir) {
+  if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $true }
+  foreach ($t in '/usr/bin/test', '/bin/test') {
+    if (Test-Path -LiteralPath $t -PathType Leaf) {
+      & $t -w $dir; $w = ($LASTEXITCODE -eq 0)
+      & $t -x $dir; return ($w -and $LASTEXITCODE -eq 0)
     }
   }
-  if (Test-Path -LiteralPath $SrcSkillsDir -PathType Container) {
-    foreach ($dir in @(Get-SourceChildren $SrcSkillsDir -Directories)) {
-      # Walk before the SKILL.md test: an unreadable directory is an error, not a non-skill.
-      $files = @(Read-Source $dir.FullName { Get-SortedChildren $dir.FullName -Recurse })
-      if (-not (Test-Path -LiteralPath (Join-Path $dir.FullName "SKILL.md") -PathType Leaf)) { continue }
-      $skills++
-      $skillOk = $true
-      foreach ($file in $files) {
-        $rel = 'skills/' + $dir.Name + '/' + $file.FullName.Substring($dir.FullName.Length).TrimStart('\','/').Replace('\','/')
-        $want = Read-Source $file.FullName { Get-Sha256Raw $file.FullName }
-        $expected[$rel] = $want
-        $state = Get-CheckState $rel $want
-        if ($state -ne 'current') { $found[$state].Add($rel); $skillOk = $false }
+  return $true
+}
+
+# Every real folder under DIR, DIR first, never through a link; an unreadable one stops the run.
+function Get-ReadableDirs($dir) {
+  $dirs = New-Object 'System.Collections.Generic.List[string]'
+  $todo = New-Object 'System.Collections.Generic.Stack[string]'
+  $todo.Push($dir)
+  while ($todo.Count -gt 0) {
+    $d = $todo.Pop(); $dirs.Add($d)
+    try { $kids = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { Stop-Cannot "read" $d; continue }
+    foreach ($k in $kids) {
+      if (-not ($k.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $k.PSIsContainer) { $todo.Push("$d/$($k.Name)") }
+    }
+  }
+  return ,$dirs
+}
+
+# Under Validate: prove a path can be read and removed, changing nothing.
+function Test-Removable($path) {
+  $item = Get-Item -LiteralPath $path -Force
+  if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    if ($item.PSIsContainer) {
+      $dirs = Get-ReadableDirs $path
+      foreach ($rel in (Get-OldSkillFiles $path)) { if (-not (Test-Readable "$path/$rel" $false)) { Stop-Cannot "read" "$path/$rel" } }
+      foreach ($d in $dirs) { if (-not (Test-Writable $d)) { Stop-Cannot "remove" $d } }
+    } elseif (-not (Test-Readable $path $false)) { Stop-Cannot "read" $path }
+  }
+  if (-not (Test-Writable $path.Substring(0, $path.LastIndexOf('/')))) { Stop-Cannot "remove" $path }
+}
+
+# Resolve the prefix, so a trailing / or /. on a linked prefix cannot hide the
+# link from Test-LinkedDir.
+function Resolve-Prefix($p) {
+  if (Test-Exists $p "Container") {
+    if (-not (Test-Readable $p $true)) { Stop-Cannot "read" $p }
+    $p = [IO.Path]::GetFullPath((Resolve-AbsPath $p))
+  }
+  while ($p.Length -gt 1 -and $p -ne [IO.Path]::GetPathRoot($p) -and ($p.EndsWith('/.') -or $p.EndsWith('/') -or $p.EndsWith('\'))) {
+    if ($p.EndsWith('/.')) { $p = $p.Substring(0, $p.Length - 2) } else { $p = $p.Substring(0, $p.Length - 1) }
+  }
+  return $p
+}
+
+# Every folder from the path's parent up to root.
+function Add-Emptied($root, $path) {
+  $d = $path.Substring(0, $path.LastIndexOf('/'))
+  while ($true) {
+    [void]$script:Emptied.Add($d)
+    if ($d -eq $root) { break }
+    $d = $d.Substring(0, $d.LastIndexOf('/'))
+  }
+}
+
+# Remove only folders this run empties, deepest first; never one that was already empty.
+function Remove-Emptied {
+  $dirs = New-Object 'System.Collections.Generic.List[string]'
+  foreach ($d in $script:Emptied) { $dirs.Add($d) }
+  $dirs.Sort([Comparison[string]]{ param($a, $b)
+    $da = $a.Split('/').Count; $db = $b.Split('/').Count
+    if ($da -ne $db) { return $db - $da }
+    return [string]::CompareOrdinal($a, $b) })
+  foreach ($d in $dirs) {
+    if (-not (Test-Exists $d "Container") -or (Test-Link $d)) { continue }
+    $left = $false
+    try { $entries = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { $script:NotRemoved.Add($d); continue }
+    foreach ($e in $entries) {
+      if (-not $script:Planned.Contains("$d/$($e.Name)")) { $left = $true; break }
+    }
+    if ($left) { continue }
+    [void]$script:Planned.Add($d)
+    if ($script:Validate) {
+      if (-not (Test-Writable $d.Substring(0, $d.LastIndexOf('/')))) { Stop-Cannot "remove" $d }
+      continue
+    }
+    if ($DryRun) { Write-Host "would remove: $d" }
+    else {
+      try { Remove-Item -LiteralPath $d -Force -ErrorAction Stop; Write-Host "removed: $d" }
+      catch { $script:NotRemoved.Add($d) }
+    }
+  }
+}
+
+# Run twice: first under Validate, which proves every path this run removes is
+# readable and removable before any CLI or file changes (exit 2 otherwise).
+function Clear-Legacy {
+  $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
+  $bad = $null
+  foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
+    if ($bad -and $d.StartsWith("$bad/")) { continue }
+    if ((Test-UnreachableDir $d) -or ((Test-Exists $d "Container") -and -not (Test-Readable $d $true))) { Stop-Cannot "read" $d; $bad = $d }
+  }
+  foreach ($n in $LEGACY_FC_AGENTS) {
+    $p = "$Prefix/agents/$n.md"
+    if (Test-Exists $p) {
+      if (Test-LinkedDir "$Prefix/agents") { Write-LinkedOld $p } else { Remove-Legacy $p }
+    }
+  }
+  foreach ($n in $LEGACY_FC_SKILLS) {
+    $p = "$Prefix/skills/$n"
+    if (Test-Exists $p) {
+      if (Test-LinkedDir "$Prefix/skills") { Write-LinkedOld $p } else { Remove-Legacy $p }
+    }
+  }
+  $p = "$Prefix/feature-crew.sha256"
+  if (Test-Exists $p) {
+    if (Test-LinkedDir $Prefix) { Write-LinkedOld $p } else { Remove-Legacy $p }
+  }
+  foreach ($n in $LEGACY_OLD_AGENTS) {
+    $p = "$Prefix/agents/feature-crew/$n.md"
+    if ((Test-Exists $p "Leaf") -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
+      if (-not (Test-Readable $p $false)) { Stop-Cannot "read" $p; continue }
+      if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p; Add-Emptied "$Prefix/agents/feature-crew" $p } else { $script:Kept.Add($p) }
+    }
+  }
+  foreach ($n in $LEGACY_OLD_SKILLS) {
+    $p = "$Prefix/skills/$n"
+    if ((Test-Exists $p "Container") -and -not (Test-LinkedDir $p)) {
+      if (-not (Test-Readable $p $true)) { Stop-Cannot "read" $p; continue }
+      [void](Get-ReadableDirs $p)
+      foreach ($rel in (Get-OldSkillFiles $p)) {
+        if (-not (Test-Readable "$p/$rel" $false)) { Stop-Cannot "read" "$p/$rel"; continue }
+        if (Test-PublishedFile "$p/$rel" "skills/$n/$rel") { Remove-Legacy "$p/$rel"; Add-Emptied $p "$p/$rel" } else { $script:Kept.Add("$p/$rel") }
       }
-      if ($skillOk) { $skillsOk++ }
     }
   }
-  # fc-* entries this clone no longer ships linger; report them, never delete.
-  if (Test-Path -LiteralPath $DestAgents -PathType Container) {
-    foreach ($file in @(Get-SortedChildren $DestAgents)) {
-      if ($file.Name -clike 'fc-*.md' -and
-          -not (Test-Path -LiteralPath (Join-Path $SrcAgents $file.Name) -PathType Leaf)) {
-        $found['stale'].Add('agents/' + $file.Name)
-      }
-    }
+  if (-not $Check -or $script:Validate) { Remove-Emptied }
+  if (-not $script:Validate) { foreach ($p in $script:Kept) { Write-Host "kept (not ours): $p" } }
+  # The checks cannot foresee every refusal (an immutable file, a lock); list
+  # what is left and stop. Every step is safe to repeat, so a rerun finishes.
+  if ($script:NotRemoved.Count -gt 0) {
+    foreach ($p in $script:NotRemoved) { [Console]::Error.WriteLine("feature-crew: not removed: $p") }
+    [Console]::Error.WriteLine("feature-crew: fix these and run again; every other step is done.")
+    exit 1
   }
-  if (Test-Path -LiteralPath $DestSkillsDir -PathType Container) {
-    foreach ($dir in @(Get-SortedChildren $DestSkillsDir -Directories)) {
-      if ($dir.Name -clike 'fc-*' -and
-          -not (Test-Path -LiteralPath (Join-Path (Join-Path $SrcSkillsDir $dir.Name) "SKILL.md") -PathType Leaf)) {
-        $found['stale'].Add('skills/' + $dir.Name)
-      }
-    }
-  }
-  $paths = New-Object 'System.Collections.Generic.List[string]'
-  foreach ($rel in $expected.Keys) { $paths.Add($rel) }
-  $paths.Sort([StringComparer]::Ordinal)
-  $text = New-Object Text.StringBuilder
-  foreach ($rel in $paths) {
-    [void]$text.Append($expected[$rel]).Append('  ').Append($rel).Append("`n")
-  }
-  $utf8 = New-Object Text.UTF8Encoding($false)
-  $bytes = $utf8.GetBytes($text.ToString())
-  if (-not $ManifestPresent) {
-    $found['missing'].Add('feature-crew.sha256')
-  } elseif (-not (Test-BytesEqual $bytes ([IO.File]::ReadAllBytes((Resolve-AbsPath $Manifest))))) {
-    $found['outdated'].Add('feature-crew.sha256')
-  }
-
-  if ($Verify) { Write-Host "feature-crew: verifying $Prefix" } else { Write-Host "feature-crew: checking $Prefix" }
-  $bad = 0
-  foreach ($kind in @('missing', 'outdated', 'uncertain', 'stale', 'model key')) {
-    $list = $found[$kind]
-    $list.Sort([StringComparer]::Ordinal)
-    foreach ($rel in $list) { Write-Host "${kind}: $rel" }
-    if ($kind -ne 'stale') { $bad += $list.Count }
-  }
-  if ($Verify) {
-    Write-Host "agents: $agentsOk/$agents verified"
-    Write-Host "skills: $skillsOk/$skills verified"
-    if ($bad -eq 0) { Write-Host "verify: ok" } else { Write-Host "verify: failed" }
-  } elseif ($bad -eq 0) {
-    Write-Host "check: current"
-  } else {
-    Write-Host "check: update-needed"
-  }
-  $script:CheckExitCode = [int]($bad -ne 0)
 }
 
-# --- Main dispatch (mirrors install.sh) ---
+$Prefix = Resolve-Prefix $Prefix
 
-# Read-only modes: any operational failure exits 2, never 1.
-if ($Check -or $Verify) {
-  $CheckExitCode = 2
-  try {
-    Read-InstallManifest
-    Invoke-InstallCheck
-  } catch {
-    [Console]::Error.WriteLine("ERROR: $($_.Exception.Message)")
-    exit 2
-  }
-  exit $CheckExitCode
-}
-Read-InstallManifest
 if ($Uninstall) {
-  Uninstall-ClaudeGlobal
+  Write-Host "feature-crew: uninstalling; old install at $Prefix"
+} else {
+  Write-Host "feature-crew: plugin source $Source; old install at $Prefix"
+}
+
+$script:Validate = $true; Clear-Legacy; $script:Validate = $false; $script:LegacyFound = $false
+
+if ($Check) {
+  foreach ($c in $Clis) {
+    $st = Get-PluginState $c
+    if ($null -eq $st) { [Console]::Error.WriteLine("feature-crew: $c plugin list failed"); exit 2 }
+    $mp = Get-MarketplaceState $c
+    if ($null -eq $mp) { [Console]::Error.WriteLine("feature-crew: $c marketplace list failed"); exit 2 }
+    if ($st -eq "enabled" -and $mp -eq "same") { Write-Host "${c}: feature-crew installed" }
+    elseif ($st -eq "enabled") { Write-Host "${c}: feature-crew installed from another source"; $script:LegacyFound = $true }
+    elseif ($st -eq "disabled") { Write-Host "${c}: feature-crew disabled"; $script:LegacyFound = $true }
+    else { Write-Host "${c}: feature-crew missing"; $script:LegacyFound = $true }
+  }
+  Clear-Legacy
+  if ($script:LegacyFound) { Write-Host "check: action-needed"; exit 1 }
+  Write-Host "check: current"
   exit 0
 }
 
-Install-ClaudeGlobal
+foreach ($c in $Clis) {
+  if ($Uninstall) { Uninstall-Cli $c } else { Install-Cli $c }
+}
+Clear-Legacy
+
+if ($DryRun) {
+  Write-Host "Dry run: nothing changed."
+} elseif ($Uninstall) {
+  Write-Host "Done. Feature-Crew is uninstalled."
+} else {
+  Write-Host "Done. Start a new Claude Code or Copilot CLI session to load the plugin."
+  Write-Host "Describe your need naturally in any project; slash commands are optional."
+  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-explain, /fc-grill-me, /fc-research,"
+  Write-Host "/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
+}
 exit 0

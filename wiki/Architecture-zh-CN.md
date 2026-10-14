@@ -2,9 +2,9 @@
 
 [English](Architecture)
 
-Feature-Crew 是一组供 Claude Code 使用的 Markdown 提示词，不是一个运行中的服务。一个主流程技能 `fc-build-or-fix` 让主会话担任 PM（产品经理）。PM 把每个缺失要素交给一个辅助技能，派发角色子代理，并把每个硬性关卡产物交给另一模型家族的审查者，审查者的身份由会话记录证明。完成的工作交给 `fc-ship`。两个安装器把提示词复制到 `~/.claude`，一个 bash 测试套件和 CI 检查提示词的大小、规则文本，以及两个安装器是否一致。
+Feature-Crew 是一组供 Claude Code 使用的 Markdown 提示词，不是一个运行中的服务。一个主流程技能 `fc-build-or-fix` 让主会话担任 PM（产品经理）。PM 把每个缺失要素交给一个辅助技能，派发角色子代理，并把每个硬性关卡产物交给另一模型家族的审查者，审查者的身份由会话记录证明。完成的工作交给 `fc-ship`。提示词作为一个插件交付给 Claude Code 和 GitHub Copilot CLI；两个镜像的安装器安装它并删除旧的脚本安装，一个 bash 测试套件和 CI 检查提示词的大小、规则文本、插件包，以及两个安装器是否一致。
 
-范围：v5.2.1 时的整个仓库，聚焦于构建路径。图用 `/fc-explain` 绘制；每个节点和箭头都能追溯到图后表格中的文件。CI、发布和本 wiki 的发布方式见[开发与发布](Development-and-Release-zh-CN)。
+范围：`main` 上的整个仓库，聚焦于构建路径。图用 `/fc-explain` 绘制；每个节点和箭头都能追溯到图后表格中的文件。CI、发布和本 wiki 的发布方式见[开发与发布](Development-and-Release-zh-CN)。
 
 ## 构建模块
 
@@ -22,22 +22,22 @@ flowchart TB
         roles["角色提示词<br/>architect、developer、两个 QA、tech lead"]
         ship["fc-ship<br/>监视 CI、验证后合并、清理"]
     end
-    inst["安装器<br/>install.sh 与镜像的 install.ps1"]
-    home[("安装状态<br/>~/.claude 下的代理、技能、哈希清单")]
+    inst["安装器<br/>install.sh 与镜像的 install.ps1：<br/>安装插件、迁移"]
+    home[("已安装的插件<br/>各 CLI 插件缓存中的 feature-crew")]
     cc[["Claude Code<br/>加载技能，运行会话与子代理"]]
 
     ci -->|以严格模式运行| suite
-    ci -->|在 Linux 和 Windows 上安装到干净前缀| inst
+    ci -->|在 Linux 和 Windows 上用桩 CLI 运行迁移测试| inst
     suite -->|断言行数上限和规则文本| fw
     suite -->|运行两套引擎，检查一致性| inst
     other -->|把代码变更交给| bof
-    other -->|fc-update 运行 check、force、verify| inst
+    other -->|fc-update 更新插件，再运行 install.sh --check| inst
     bof -->|每个缺失要素调用一个技能| routed
     routed -->|把结果返回调用方| bof
     bof -->|以显式模型覆盖派发| roles
     bof -->|移交已授权的工作| ship
-    fw -->|由安装器复制| inst
-    inst -->|写入文件和哈希清单| home
+    fw -->|打包成一个插件，由安装器安装| inst
+    inst -->|添加市场并安装插件| home
     home -->|由 Claude Code 加载| cc
 ```
 
@@ -47,26 +47,26 @@ flowchart TB
 
 **逐步说明**
 
-1. **独立技能把代码变更交给枢纽。** `fc-update` 先拉取，再驱动安装器：`--check`、`--force`，然后 `--verify`。
+1. **独立技能把代码变更交给枢纽。** `fc-update` 通过每个 CLI 自己的插件命令更新插件，并报告残留的旧脚本安装。
 2. **枢纽一次路由一个缺失要素。** 单个事实直接查找。多处证据交给 `fc-research`，用户拥有的决定交给 `fc-grill-me`，未定的方案交给 `fc-brainstorm`，已选定的重大决定交给 `fc-second-opinion`，无法解释的故障交给 `fc-debug`。每个技能都把结果返回调用方。只有 `fc-grill-me` 可以在另一个技能内部被调用，同一个缺口从不被路由两次。
 3. **枢纽派发角色提示词**：任务文本内联粘贴，带显式模型覆盖，并以一行禁止进一步委派的话收尾。
 4. **已授权的工作交给 `fc-ship`。**
-5. **安装器把提示词复制到 `~/.claude`。** 它们为代理添加 `name` 和 `description` frontmatter，并为五个被派发的角色添加 `disallowedTools: Agent, Skill`，同时记录 `feature-crew.sha256`。`install.ps1` 能交给 Git Bash 时就交给它，否则运行它自己的、逻辑相同的 PowerShell 版本。
-6. **Claude Code 从 `~/.claude/agents` 和 `~/.claude/skills` 加载已安装的文件。** 它如何发现这些文件属于 Claude Code 的行为，不是本仓库的代码。
+5. **安装器安装插件。** 对 PATH 上的 `claude` 和 `copilot`，它们添加或更新市场（若市场来自其他来源则替换），安装、启用或更新 `feature-crew`（在 Claude Code 中只在用户作用域），并检查 CLI 列出它为 `"enabled": true`。之后才删除旧的脚本安装：每个旧的 `fc-*` 路径，以及哈希在 [published.sha256][pub] 中的更早文件，但从不经由链接删除，包括链接的前缀。`install.ps1` 能交给 Git Bash 时就交给它，否则运行它自己的、逻辑相同的 PowerShell 版本。
+6. **每个 CLI 从自己的插件缓存加载已安装的插件：** 技能用 `fc-*` 名称，代理为 `feature-crew:fc-*`。它如何加载属于 CLI 的行为，不是本仓库的代码。
 7. **测试套件和 CI 检查两半：** 行数上限、带删除变异的规则文本、安装器一致性以及 PowerShell 引擎，全部在 `FC_STRICT=1` 下运行。
 
 | 组件 | 职责 | 关键文件 | 证据 |
 |---|---|---|---|
 | fc-build-or-fix 主流程 | 让主会话担任 PM：对需求分类、选择轨道并执行、执行硬性关卡、选择审查者。进入时加载运行纪律（反馈检查、检查点、运行时证据）。`fc-pm.md` 只指向这里。 | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md：*Need classifier*、*Step 1*、*Hard gates*、*Cross-family audit at hard gates*；[run-discipline.md][run] |
 | 路由技能 | 各自解决一个缺失要素并把结果返回调用方；`fc-research` 还有一条针对单个有界问题的聚焦路径 | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md：*Need classifier*；fc-research：*Focused path* |
-| 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作。五个角色安装时都带 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
+| 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作。五个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
 | fc-ship | 分别请求每项批准，运行一个后台 CI 监视，只 squash 合并已验证的 head，可选发布，并总是清理 | [SKILL.md][ship] | fc-ship：第 1–7 节 |
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |
-| 安装器 | 复制代理（添加 frontmatter）和每个技能目录，记录哈希，只删除能证明属于自己的文件；`--check` 和 `--verify` 是只读的 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
-| 安装状态 | 代理、技能和安装清单 | `~/.claude/agents/fc-*.md`、`~/.claude/skills/fc-*/`、`~/.claude/feature-crew.sha256` | [使用说明](Usage-zh-CN)：*安装*；[install.sh][sh] 写明了清单文件名 |
+| 安装器 | 在 PATH 上的每个 CLI 中安装或更新插件，然后删除旧的脚本安装；`--dry-run` 预览，`--check` 只读 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
+| 已安装的插件 | 各 CLI 插件缓存中的 `feature-crew@feature-crew` | `.claude-plugin/`、`skills/`、`agents/` | [使用说明](Usage-zh-CN)：*安装* |
 | Claude Code | 加载技能（推断），运行会话和子代理，保存会话记录 | 不在本仓库中 | [gate-provenance.md][prov]：*Read the record* |
 | 自测套件 | 仅供开发的 bash 检查，任何失败都以非零状态退出；`FC_STRICT=1` 把跳过的检查变成失败 | [framework_test.sh][suite] | 套件的文件头 |
-| CI 工作流 | 运行测试套件和干净前缀安装，发布本 wiki，并发布版本 | [.github/workflows/][wf] | [开发与发布](Development-and-Release-zh-CN) |
+| CI 工作流 | 运行测试套件，验证插件，在 Windows 上测试迁移，发布本 wiki，并发布版本 | [.github/workflows/][wf] | [开发与发布](Development-and-Release-zh-CN) |
 
 ## 关键流程：一次 Standard 构建请求
 
@@ -186,7 +186,7 @@ sequenceDiagram
 **已在仓库中验证**
 
 - Claude Code 运行的一切都是 Markdown：十个技能、六个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
-- 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。安装器添加 `name` 和 `description`，并为五个被派发的角色添加 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
+- 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。代理的 frontmatter 已提交到仓库：`name`、`description`，五个被派发的角色还有 `tools:` 列表和 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
 - 关卡失败即关闭：来源未知会让关卡不满足，单独运行的 `/fc-review` 或 `/fc-second-opinion` 不能替代关卡。
 - `/fc-review` 无论差异大小，每次审查都至少派发一个由选择器选定模型的审查视角（lens）；主会话自己写的笔记标注为同会话，永远不算作独立审查。
 - 套件的规则文本检查只能证明规则存在，不能证明其含义；套件的文件头就是这么说的。
@@ -196,15 +196,15 @@ sequenceDiagram
 
 - 在本仓库之外，只有当 Claude Code 把某个平实语言请求匹配到主流程的描述时，请求才会到达主流程。仓库只能表明这一意图，无法强制。
 - 在 Standard 中，PM 会话自己编写代码：构建步骤没有指定 developer，2–3 次派发的预算正好对应第二设计者、可选的规格审计和 `fc-qa-code`。
-- Claude Code 会在 `~/.claude/agents` 和 `~/.claude/skills` 下发现文件。
+- Claude Code 和 Copilot CLI 从各自的插件缓存加载插件的 `skills/` 和 `agents/`。
 
 **未知**
 
 - 由哪种代理类型运行盲审第二设计者；`design-check.md` 没有指定。
 - 模型是否遵循这些提示词：套件检查的是提示词文本和安装器，不是真实运行。
 - 会话记录的字段是否一直准确；`gate-provenance.md` 称之为内部的、未公开的格式。
-- 如果 `fc-pm` 仍被作为子代理派发会怎样：安装器把它注册为代理，而它的描述和提示词说它只作为主会话运行。
-- Claude Code 是否执行 `disallowedTools`：一份仍未关闭的上游报告 [anthropics/claude-code#94202](https://github.com/anthropics/claude-code/issues/94202) 说列出的工具仍可能加载，所以每个关卡上的会话记录检查仍是真正起作用的控制。
+- 如果 `fc-pm` 仍被作为子代理派发会怎样：插件把它注册为 `feature-crew:fc-pm`，而它的描述和提示词说它只作为主会话运行。
+- Claude Code 是否执行 `disallowedTools`：一份仍未关闭的上游报告 [anthropics/claude-code#94202](https://github.com/anthropics/claude-code/issues/94202) 说列出的工具仍可能加载，而 Copilot CLI 会忽略这个字段；`tools:` 允许列表和每个关卡上的记录检查才是真正起作用的控制。
 
 ## 从哪里开始阅读
 
@@ -215,27 +215,27 @@ sequenceDiagram
 5. [fc-ship SKILL.md][ship]：合并路径。
 6. [install.sh][sh]，然后是 [framework_test.sh][suite] 的开头：提示词如何交付，以及通过的测试套件能证明和不能证明什么。
 
-[bof]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/SKILL.md
-[ref]: https://github.com/D0n9X1n/feature-crew/tree/main/.claude/skills/fc-build-or-fix/reference
-[run]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/run-discipline.md
-[design]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/design-check.md
-[prov]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/gate-provenance.md
-[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/industry-survey.md
-[complex]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/complex-track.md
-[meta]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-build-or-fix/reference/meta-work-cap.md
+[bof]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/SKILL.md
+[ref]: https://github.com/D0n9X1n/feature-crew/tree/main/skills/fc-build-or-fix/reference
+[run]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/run-discipline.md
+[design]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/design-check.md
+[prov]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/gate-provenance.md
+[survey]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/industry-survey.md
+[complex]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/complex-track.md
+[meta]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-build-or-fix/reference/meta-work-cap.md
 [pm]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-pm.md
 [agents]: https://github.com/D0n9X1n/feature-crew/tree/main/agents
 [dev]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-developer.md
 [qacode]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-qa-code.md
-[research]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-research/SKILL.md
-[grill]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-grill-me/SKILL.md
-[brain]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-brainstorm/SKILL.md
-[second]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-second-opinion/SKILL.md
-[debug]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-debug/SKILL.md
-[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-ship/SKILL.md
-[review]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-review/SKILL.md
-[explain]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-explain/SKILL.md
-[update]: https://github.com/D0n9X1n/feature-crew/blob/main/.claude/skills/fc-update/SKILL.md
+[research]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-research/SKILL.md
+[grill]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-grill-me/SKILL.md
+[brain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-brainstorm/SKILL.md
+[second]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-second-opinion/SKILL.md
+[debug]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-debug/SKILL.md
+[ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md
+[review]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-review/SKILL.md
+[explain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-explain/SKILL.md
+[update]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-update/SKILL.md
 [sh]: https://github.com/D0n9X1n/feature-crew/blob/main/install.sh
 [ps1]: https://github.com/D0n9X1n/feature-crew/blob/main/install.ps1
 [pub]: https://github.com/D0n9X1n/feature-crew/blob/main/published.sha256

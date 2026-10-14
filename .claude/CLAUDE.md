@@ -2,18 +2,18 @@
 
 > Single source of truth for **Claude Code** in this repository. There is no `AGENTS.md`.
 
-Users describe needs naturally; slash-command knowledge is not required. The canonical missing-ingredient classifier and bounded return-to-origin composition rule live in `.claude/skills/fc-build-or-fix/SKILL.md`. Use compact pointers elsewhere; do not duplicate that classifier.
+Users describe needs naturally; slash-command knowledge is not required. The canonical missing-ingredient classifier and bounded return-to-origin composition rule live in `skills/fc-build-or-fix/SKILL.md`. Use compact pointers elsewhere; do not duplicate that classifier.
 
 ## On every build/fix/change request
 
-1. Read `.claude/skills/fc-build-or-fix/SKILL.md` and classify the need.
+1. Read `skills/fc-build-or-fix/SKILL.md` and classify the need.
 2. Select **Just Do It / Standard / Complex** by complexity and risk.
 3. Auto-run eligible Just Do It work; Standard/Complex retain approval flow unless waived.
 4. Honor every hard gate. Dispatch role agents from `agents/fc-*.md` only where the flow calls for them.
 
 ## Models
 
-All six installed role agents and every skill carry no `model` key; the main agent runs whatever model the user chose. For every model-authored hard-gate review, apply the artifact-author-provenance selector, exact Agent override, audit envelope, and fail-closed behavior canonical in `.claude/skills/fc-build-or-fix/SKILL.md`. Do not restate it here.
+All six installed role agents and every skill carry no `model` key; the main agent runs whatever model the user chose. For every model-authored hard-gate review, apply the artifact-author-provenance selector, exact Agent override, audit envelope, and fail-closed behavior canonical in `skills/fc-build-or-fix/SKILL.md`. Do not restate it here.
 
 Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 
@@ -53,8 +53,9 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 
 | What | Where |
 |---|---|
-| Skills | `.claude/skills/fc-*/SKILL.md` |
-| Complex track, meta-work cap | `.claude/skills/fc-build-or-fix/reference/` |
+| Plugin manifest and marketplace | `.claude-plugin/` |
+| Skills | `skills/fc-*/SKILL.md` |
+| Complex track, meta-work cap | `skills/fc-build-or-fix/reference/` |
 | Role prompts | `agents/fc-*.md` |
 | Self-test | `tests/framework_test.sh` |
 | CI | `.github/workflows/` |
@@ -63,9 +64,4 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 
 ## Install
 
-```bash
-./install.sh         # macOS / Linux / Git Bash / WSL
-.\install.ps1        # native Windows PowerShell
-```
-
-Agents land at `~/.claude/agents/fc-*.md`; skills at `~/.claude/skills/fc-*/`.
+Feature-Crew is one plugin (`.claude-plugin/`) for Claude Code and GitHub Copilot CLI: `claude plugin install feature-crew@feature-crew` or `copilot plugin install feature-crew@feature-crew` after adding the `D0n9X1n/feature-crew` marketplace. `./install.sh` and `.\install.ps1` do both and remove an old script install. To develop here, run `claude --plugin-dir .` or `copilot --plugin-dir .`. A release tag must equal `v` plus the `plugin.json` version; bump it in the release PR.

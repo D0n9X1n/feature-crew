@@ -19,7 +19,7 @@
 ### 其他资料
 
 - [README](https://github.com/D0n9X1n/feature-crew/blob/main/README.md) — 简介、快速开始和功能。
-- [CLAUDE.md](https://github.com/D0n9X1n/feature-crew/blob/main/CLAUDE.md) — 代理在本仓库中遵循的规则。
+- [CLAUDE.md](https://github.com/D0n9X1n/feature-crew/blob/main/.claude/CLAUDE.md) — 代理在本仓库中遵循的规则。
 
 ### 致谢
 

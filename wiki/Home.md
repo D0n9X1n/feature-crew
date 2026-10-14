@@ -19,7 +19,7 @@ A need-based agent-team framework for Claude Code. Describe what you need natura
 ### Elsewhere
 
 - [README](https://github.com/D0n9X1n/feature-crew/blob/main/README.md) — the introduction, quick start, and features.
-- [CLAUDE.md](https://github.com/D0n9X1n/feature-crew/blob/main/CLAUDE.md) — the rules agents follow in this repository.
+- [CLAUDE.md](https://github.com/D0n9X1n/feature-crew/blob/main/.claude/CLAUDE.md) — the rules agents follow in this repository.
 
 ### Credits
 
