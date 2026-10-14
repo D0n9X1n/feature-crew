@@ -2937,31 +2937,35 @@ for engine in "${INSTALLERS[@]}"; do
     t76_run "$engine" both "$p"
     [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused-parent:rerun-did-not-finish(rc=$t76_rc)"
     # A folder above the prefix that cannot be entered makes the old install
-    # unreachable, not absent: exit 2 before any change, exit 1 after one.
-    t76_par="$t76_root/$engine/par"; t76_pp="$t76_par/old"
-    rm -rf "$t76_par"; mkdir -p "$t76_par"
-    t76_state="$t76_root/$engine/state-ancestor"; rm -rf "$t76_state"
-    t76_seed "$t76_pp"; t76_before=$(t76_tree "$t76_pp")
-    chmod 000 "$t76_par"
-    for t76_flags in '' --check --dry-run; do
-      t76_run "$engine" both "$t76_pp" $t76_flags
-      [ "$t76_rc" = 2 ] || case_err="$case_err ancestor-upfront[$t76_flags]:rc=$t76_rc"
-      case "$t76_err" in *"feature-crew: cannot read $t76_par"*) ;; *) case_err="$case_err ancestor-upfront[$t76_flags]:no-message" ;; esac
+    # unreachable, not absent: exit 2 before any change, exit 1 after one. The
+    # OS decides, so a path through a link behaves the same.
+    for t76_lay in direct alias; do
+      t76_par="$t76_root/$engine/par"; rm -rf "$t76_par" "$t76_root/$engine/alias"; mkdir -p "$t76_par/private"
+      if [ "$t76_lay" = direct ]; then t76_pp="$t76_par/old"
+      else ln -s "$t76_par/private" "$t76_root/$engine/alias"; t76_pp="$t76_root/$engine/alias/old"; fi
+      t76_state="$t76_root/$engine/state-ancestor"; rm -rf "$t76_state"
+      t76_seed "$t76_pp"; t76_before=$(t76_tree "$t76_pp")
+      chmod 000 "$t76_par"
+      for t76_flags in '' --check --dry-run; do
+        t76_run "$engine" both "$t76_pp" $t76_flags
+        [ "$t76_rc" = 2 ] || case_err="$case_err ancestor-$t76_lay[$t76_flags]:rc=$t76_rc"
+        case "$t76_err" in *'feature-crew: cannot read <P>'*) ;; *) case_err="$case_err ancestor-$t76_lay[$t76_flags]:no-message" ;; esac
+      done
+      chmod 755 "$t76_par"
+      printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err ancestor-$t76_lay:changed-cli-state"
+      [ "$(t76_tree "$t76_pp")" = "$t76_before" ] || case_err="$case_err ancestor-$t76_lay:changed-files"
+      t76_state="$t76_root/$engine/state-ancestor-late"; rm -rf "$t76_state"
+      t76_stub_hide="$t76_par"
+      t76_run "$engine" both "$t76_pp"
+      t76_stub_hide=''
+      chmod 755 "$t76_par"
+      [ "$t76_rc" = 1 ] || case_err="$case_err ancestor-$t76_lay-late:rc=$t76_rc"
+      case "$t76_err" in *'feature-crew: not removed: <P>'*'run again'*) ;; *) case_err="$case_err ancestor-$t76_lay-late:not-listed" ;; esac
+      case "$t76_out" in *'Done.'*) case_err="$case_err ancestor-$t76_lay-late:printed-done" ;; esac
+      t76_run "$engine" both "$t76_pp"
+      [ "$t76_rc" = 0 ] && [ "$(cd "$t76_pp" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err ancestor-$t76_lay-late:rerun-did-not-finish(rc=$t76_rc)"
+      rm -rf "$t76_par" "$t76_root/$engine/alias"
     done
-    chmod 755 "$t76_par"
-    printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err ancestor-upfront:changed-cli-state"
-    [ "$(t76_tree "$t76_pp")" = "$t76_before" ] || case_err="$case_err ancestor-upfront:changed-files"
-    t76_state="$t76_root/$engine/state-ancestor-late"; rm -rf "$t76_state"
-    t76_stub_hide="$t76_par"
-    t76_run "$engine" both "$t76_pp"
-    t76_stub_hide=''
-    chmod 755 "$t76_par"
-    [ "$t76_rc" = 1 ] || case_err="$case_err ancestor-late:rc=$t76_rc"
-    case "$t76_err" in *"feature-crew: not removed: $t76_par"*'run again'*) ;; *) case_err="$case_err ancestor-late:not-listed" ;; esac
-    case "$t76_out" in *'Done.'*) case_err="$case_err ancestor-late:printed-done" ;; esac
-    t76_run "$engine" both "$t76_pp"
-    [ "$t76_rc" = 0 ] && [ "$(cd "$t76_pp" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err ancestor-late:rerun-did-not-finish(rc=$t76_rc)"
-    rm -rf "$t76_par"
   fi
 
   # An install that reports success but leaves the plugin unlisted removes nothing.

@@ -296,17 +296,11 @@ check_removable() {
   { [ -w "${p%/*}" ] && [ -x "${p%/*}" ]; } || cannot remove "$p"
 }
 
-# The nearest existing folder above the prefix, when it cannot be entered: the
-# old install is then unreachable, not absent, and every check below it is false.
-unreachable_ancestor() {
-  local d
-  case "$PREFIX" in */*) d="${PREFIX%/*}" ;; *) return 1 ;; esac
-  while [ -n "$d" ] && [ ! -e "$d" ] && [ ! -L "$d" ]; do
-    [ "${d%/*}" != "$d" ] || return 1
-    d="${d%/*}"
-  done
-  [ -n "$d" ] || d=/
-  if [ -d "$d" ] && [ ! -x "$d" ]; then printf '%s\n' "$d"; return 0; fi
+# True when the prefix cannot be reached rather than missing. The OS tells the
+# two apart even through a link ("Permission denied" vs "No such file").
+prefix_unreachable() {
+  if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then return 1; fi
+  case "$(LC_ALL=C ls -d -- "$PREFIX" 2>&1 >/dev/null)" in *'ermission denied'*) return 0 ;; esac
   return 1
 }
 
@@ -324,7 +318,7 @@ old_skill_files() { # skill dir: its regular files, sorted
 clean_legacy() {
   local n p rel d
   KEPT=(); PLANNED=""; EMPTIED=""
-  if d="$(unreachable_ancestor)"; then cannot read "$d"; fi
+  if prefix_unreachable; then cannot read "$PREFIX"; fi
   for d in "$PREFIX" "$PREFIX/agents" "$PREFIX/skills" "$PREFIX/agents/feature-crew"; do
     if [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; then cannot read "$d"; fi
   done
