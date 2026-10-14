@@ -2607,10 +2607,10 @@ t76_run() { # engine, clis(both|claude|none), prefix, flags...
       claude) cp "$t76_root/stub/cli" "$bin/claude" ;; esac
   fi
   if [ "$engine" = sh ]; then
-    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" FC_STUB_LOCK="${t76_stub_lock:-}" \
+    env -i HOME="$installer_root/home" PATH="$bin:/usr/bin:/bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" FC_STUB_LOCK="${t76_stub_lock:-}" FC_STUB_HIDE="${t76_stub_hide:-}" \
       "$installer_bash" "$installer_repo/install.sh" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
   else
-    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" FC_STUB_LOCK="${t76_stub_lock:-}" \
+    env -i HOME="$installer_root/home" PATH="$bin" FC_STUB_STATE="$t76_state" FC_STUB_FAIL="${t76_fail:-}" FC_STUB_GHOST="${t76_ghost:-}" FC_STUB_LOCK="${t76_stub_lock:-}" FC_STUB_HIDE="${t76_stub_hide:-}" \
       POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off \
       "$PWSH_BIN" -NonInteractive -File "$installer_repo/install.ps1" --prefix "$prefix" "$@" > "$t76_root/out" 2> "$t76_root/err"
   fi
@@ -2910,6 +2910,19 @@ for engine in "${INSTALLERS[@]}"; do
     [ -d "$p/skills/fc-review" ] && [ ! -e "$p/agents/fc-pm.md" ] || case_err="$case_err refused:unexpected-tree"
     t76_run "$engine" both "$p"
     [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused:rerun-did-not-finish(rc=$t76_rc)"
+    # A read failure after the run changed something is listed too, with exit 1, never 2.
+    t76_state="$t76_root/$engine/state-refused-read"; rm -rf "$t76_state"
+    t76_seed "$p"
+    t76_stub_lock="$p/skills/fc-review"; t76_stub_hide="$p/skills/research"
+    t76_run "$engine" both "$p"
+    t76_stub_lock=''; t76_stub_hide=''
+    chmod 755 "$p/skills/fc-review" "$p/skills/research"
+    [ "$t76_rc" = 1 ] || case_err="$case_err refused-read:rc=$t76_rc"
+    case "$t76_err" in *'not removed: <P>/skills/fc-review'*) ;; *) case_err="$case_err refused-read:fc-review-not-listed" ;; esac
+    case "$t76_err" in *'not removed: <P>/skills/research'*'run again'*) ;; *) case_err="$case_err refused-read:research-not-listed" ;; esac
+    case "$t76_out" in *'Done.'*) case_err="$case_err refused-read:printed-done" ;; esac
+    t76_run "$engine" both "$p"
+    [ "$t76_rc" = 0 ] && [ "$(cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort)" = "$t76_left" ] || case_err="$case_err refused-read:rerun-did-not-finish(rc=$t76_rc)"
   fi
 
   # An install that reports success but leaves the plugin unlisted removes nothing.

@@ -271,9 +271,14 @@ linked_dir() {
   return 1
 }
 
+# Before any change (validate pass, --check, --dry-run) exit 2; once a run has
+# changed something, list the path with the other leftovers instead (exit 1).
 cannot() { # verb, path
-  echo "feature-crew: cannot $1 $2" >&2
-  exit 2
+  if [ "$VALIDATE" -eq 1 ] || [ "$CHECK" -eq 1 ] || [ "$DRY_RUN" -eq 1 ]; then
+    echo "feature-crew: cannot $1 $2" >&2
+    exit 2
+  fi
+  NOT_REMOVED+=("$2")
 }
 
 # Under VALIDATE: prove a path can be read and removed, changing nothing.
@@ -297,7 +302,7 @@ linked_old() { # path: an fc-* path in a linked folder still shadows the plugin
 }
 
 old_skill_files() { # skill dir: its regular files, sorted
-  (cd "$1" && find . -type f | sed 's#^\./##' | sort)
+  (cd "$1" && find . -type f 2>/dev/null | sed 's#^\./##' | sort)
 }
 
 # Run twice: first under VALIDATE, which proves every path this run removes is
@@ -327,18 +332,18 @@ clean_legacy() {
   for n in "${LEGACY_OLD_AGENTS[@]}"; do
     p="$PREFIX/agents/feature-crew/$n.md"
     if [ -f "$p" ] && [ ! -L "$p" ] && ! linked_dir "$PREFIX/agents/feature-crew"; then
-      [ -r "$p" ] || cannot read "$p"
+      if [ ! -r "$p" ]; then cannot read "$p"; continue; fi
       if published_file "$p" "agents/feature-crew/$n.md"; then legacy_remove "$p"; may_empty "$PREFIX/agents/feature-crew" "$p"; else KEPT+=("$p"); fi
     fi
   done
   for n in "${LEGACY_OLD_SKILLS[@]}"; do
     p="$PREFIX/skills/$n"
     if [ -d "$p" ] && ! linked_dir "$p"; then
-      { [ -r "$p" ] && [ -x "$p" ]; } || cannot read "$p"
+      if ! { [ -r "$p" ] && [ -x "$p" ]; }; then cannot read "$p"; continue; fi
       while IFS= read -r d; do { [ -r "$d" ] && [ -x "$d" ]; } || cannot read "$d"; done < <(find "$p" -type d 2>/dev/null)
       while IFS= read -r rel; do
         [ -n "$rel" ] || continue
-        [ -r "$p/$rel" ] || cannot read "$p/$rel"
+        if [ ! -r "$p/$rel" ]; then cannot read "$p/$rel"; continue; fi
         if published_file "$p/$rel" "skills/$n/$rel"; then legacy_remove "$p/$rel"; may_empty "$p" "$p/$rel"; else KEPT+=("$p/$rel"); fi
       done < <(old_skill_files "$p")
     fi

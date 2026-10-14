@@ -347,7 +347,9 @@ function Get-OldSkillFiles($dir) {
   $todo = New-Object 'System.Collections.Generic.Stack[string]'
   $todo.Push($root)
   while ($todo.Count -gt 0) {
-    foreach ($item in @(Get-ChildItem -LiteralPath $todo.Pop() -Force -ErrorAction Stop)) {
+    # Like find, skip a folder that cannot be read; the caller reports it.
+    try { $items = @(Get-ChildItem -LiteralPath $todo.Pop() -Force -ErrorAction Stop) } catch { continue }
+    foreach ($item in $items) {
       if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
       if ($item.PSIsContainer) { $todo.Push($item.FullName); continue }
       $paths.Add($item.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/'))
@@ -357,9 +359,14 @@ function Get-OldSkillFiles($dir) {
   return ,$paths
 }
 
+# Before any change (validate pass, -Check, -DryRun) exit 2; once a run has
+# changed something, list the path with the other leftovers instead (exit 1).
 function Stop-Cannot($verb, $path) {
-  [Console]::Error.WriteLine("feature-crew: cannot $verb $path")
-  exit 2
+  if ($script:Validate -or $Check -or $DryRun) {
+    [Console]::Error.WriteLine("feature-crew: cannot $verb $path")
+    exit 2
+  }
+  $script:NotRemoved.Add($path)
 }
 
 function Test-Readable($path, [bool]$dir) {
@@ -390,7 +397,7 @@ function Get-ReadableDirs($dir) {
   $todo.Push($dir)
   while ($todo.Count -gt 0) {
     $d = $todo.Pop(); $dirs.Add($d)
-    try { $kids = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { Stop-Cannot "read" $d }
+    try { $kids = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { Stop-Cannot "read" $d; continue }
     foreach ($k in $kids) {
       if (-not ($k.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $k.PSIsContainer) { $todo.Push("$d/$($k.Name)") }
     }
@@ -488,16 +495,17 @@ function Clear-Legacy {
   foreach ($n in $LEGACY_OLD_AGENTS) {
     $p = "$Prefix/agents/feature-crew/$n.md"
     if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
-      if (-not (Test-Readable $p $false)) { Stop-Cannot "read" $p }
+      if (-not (Test-Readable $p $false)) { Stop-Cannot "read" $p; continue }
       if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p; Add-Emptied "$Prefix/agents/feature-crew" $p } else { $script:Kept.Add($p) }
     }
   }
   foreach ($n in $LEGACY_OLD_SKILLS) {
     $p = "$Prefix/skills/$n"
     if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-LinkedDir $p)) {
+      if (-not (Test-Readable $p $true)) { Stop-Cannot "read" $p; continue }
       [void](Get-ReadableDirs $p)
       foreach ($rel in (Get-OldSkillFiles $p)) {
-        if (-not (Test-Readable "$p/$rel" $false)) { Stop-Cannot "read" "$p/$rel" }
+        if (-not (Test-Readable "$p/$rel" $false)) { Stop-Cannot "read" "$p/$rel"; continue }
         if (Test-PublishedFile "$p/$rel" "skills/$n/$rel") { Remove-Legacy "$p/$rel"; Add-Emptied $p "$p/$rel" } else { $script:Kept.Add("$p/$rel") }
       }
     }
