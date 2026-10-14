@@ -59,7 +59,17 @@ if [ "$CHECK" -eq 1 ] && [ $((DRY_RUN + UNINSTALL)) -gt 0 ]; then
 fi
 
 # A local --source is registered as an absolute path, so a rerun from anywhere matches it.
-if [ -d "$SOURCE" ]; then SOURCE="$(cd "$SOURCE" && pwd)"; fi
+if [ -d "$SOURCE" ]; then SOURCE="$(CDPATH= cd "$SOURCE" && pwd)"; fi
+# Resolve the prefix too, so a trailing / or /. on a linked prefix cannot hide
+# the link from linked_dir.
+if [ -d "$PREFIX" ]; then
+  resolved="$(CDPATH= cd "$PREFIX" 2>/dev/null && pwd)" || { echo "feature-crew: cannot read $PREFIX" >&2; exit 2; }
+  PREFIX="$resolved"
+else
+  while :; do
+    case "$PREFIX" in */.) PREFIX="${PREFIX%/.}" ;; ?*/) PREFIX="${PREFIX%/}" ;; *) break ;; esac
+  done
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PUBLISHED_HASHES="${SCRIPT_DIR}/published.sha256"
@@ -218,13 +228,16 @@ published_file() { # file, prefix-relative path
 }
 
 LEGACY_FOUND=0
+VALIDATE=0
 KEPT=()
 PLANNED=""
 EMPTIED=""
 legacy_remove() { # path; rm -rf removes a link itself, never its target
   LEGACY_FOUND=1
   PLANNED="$PLANNED$1"$'\n'
-  if [ "$CHECK" -eq 1 ]; then
+  if [ "$VALIDATE" -eq 1 ]; then
+    check_removable "$1"
+  elif [ "$CHECK" -eq 1 ]; then
     say "old file: $1"
   elif [ "$DRY_RUN" -eq 1 ]; then
     say "would remove: $1"
@@ -256,45 +269,43 @@ linked_dir() {
   return 1
 }
 
-fs_failed() {
-  echo "feature-crew: cannot read $1" >&2
+cannot() { # verb, path
+  echo "feature-crew: cannot $1 $2" >&2
   exit 2
 }
 
-# Read every old path this run may inspect before anything changes, so an
-# unreadable one stops the run (exit 2) with nothing installed or removed.
-prescan_legacy() {
-  local d n p rel
-  for d in "$PREFIX" "$PREFIX/agents" "$PREFIX/skills" "$PREFIX/agents/feature-crew"; do
-    if [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; then fs_failed "$d"; fi
-  done
-  for n in "${LEGACY_OLD_AGENTS[@]}"; do
-    p="$PREFIX/agents/feature-crew/$n.md"
-    if [ -f "$p" ] && [ ! -L "$p" ] && [ ! -r "$p" ]; then fs_failed "$p"; fi
-  done
-  for n in "${LEGACY_OLD_SKILLS[@]}"; do
-    p="$PREFIX/skills/$n"
-    if [ -d "$p" ] && ! linked_dir "$p"; then
-      (cd "$p" 2>/dev/null && find . >/dev/null 2>&1) || fs_failed "$p"
-      while IFS= read -r rel; do
-        [ -z "$rel" ] || [ -r "$p/$rel" ] || fs_failed "$p/$rel"
-      done < <(old_skill_files "$p")
-    fi
-  done
+# Under VALIDATE: prove a path can be read and removed, changing nothing.
+check_removable() {
+  local p="$1" d
+  if [ -d "$p" ] && [ ! -L "$p" ]; then
+    # find omits an unreadable start folder, but lists unreadable folders below it.
+    { [ -r "$p" ] && [ -x "$p" ]; } || cannot read "$p"
+    while IFS= read -r d; do { [ -r "$d" ] && [ -x "$d" ]; } || cannot read "$d"; done < <(find "$p" -type d 2>/dev/null)
+    while IFS= read -r d; do [ -r "$d" ] || cannot read "$d"; done < <(find "$p" -type f 2>/dev/null)
+    while IFS= read -r d; do [ -w "$d" ] || cannot remove "$d"; done < <(find "$p" -type d 2>/dev/null)
+  elif [ ! -L "$p" ] && [ ! -r "$p" ]; then
+    cannot read "$p"
+  fi
+  { [ -w "${p%/*}" ] && [ -x "${p%/*}" ]; } || cannot remove "$p"
 }
 
 linked_old() { # path: an fc-* path in a linked folder still shadows the plugin
   LEGACY_FOUND=1
-  say "kept (linked folder): $1"
+  [ "$VALIDATE" -eq 1 ] || say "kept (linked folder): $1"
 }
 
 old_skill_files() { # skill dir: its regular files, sorted
   (cd "$1" && find . -type f | sed 's#^\./##' | sort)
 }
 
+# Run twice: first under VALIDATE, which proves every path this run removes is
+# readable and removable before any CLI or file changes (exit 2 otherwise).
 clean_legacy() {
-  local n p rel
+  local n p rel d
   KEPT=(); PLANNED=""; EMPTIED=""
+  for d in "$PREFIX" "$PREFIX/agents" "$PREFIX/skills" "$PREFIX/agents/feature-crew"; do
+    if [ -d "$d" ] && { [ ! -r "$d" ] || [ ! -x "$d" ]; }; then cannot read "$d"; fi
+  done
   for n in "${LEGACY_FC_AGENTS[@]}"; do
     p="$PREFIX/agents/$n.md"
     if [ -e "$p" ] || [ -L "$p" ]; then
@@ -314,20 +325,24 @@ clean_legacy() {
   for n in "${LEGACY_OLD_AGENTS[@]}"; do
     p="$PREFIX/agents/feature-crew/$n.md"
     if [ -f "$p" ] && [ ! -L "$p" ] && ! linked_dir "$PREFIX/agents/feature-crew"; then
+      [ -r "$p" ] || cannot read "$p"
       if published_file "$p" "agents/feature-crew/$n.md"; then legacy_remove "$p"; may_empty "$PREFIX/agents/feature-crew" "$p"; else KEPT+=("$p"); fi
     fi
   done
   for n in "${LEGACY_OLD_SKILLS[@]}"; do
     p="$PREFIX/skills/$n"
     if [ -d "$p" ] && ! linked_dir "$p"; then
+      { [ -r "$p" ] && [ -x "$p" ]; } || cannot read "$p"
+      while IFS= read -r d; do { [ -r "$d" ] && [ -x "$d" ]; } || cannot read "$d"; done < <(find "$p" -type d 2>/dev/null)
       while IFS= read -r rel; do
         [ -n "$rel" ] || continue
+        [ -r "$p/$rel" ] || cannot read "$p/$rel"
         if published_file "$p/$rel" "skills/$n/$rel"; then legacy_remove "$p/$rel"; may_empty "$p" "$p/$rel"; else KEPT+=("$p/$rel"); fi
       done < <(old_skill_files "$p")
     fi
   done
-  if [ "$CHECK" -eq 0 ]; then remove_emptied; fi
-  if [ "${#KEPT[@]}" -gt 0 ]; then
+  if [ "$CHECK" -eq 0 ] || [ "$VALIDATE" -eq 1 ]; then remove_emptied; fi
+  if [ "${#KEPT[@]}" -gt 0 ] && [ "$VALIDATE" -eq 0 ]; then
     for p in "${KEPT[@]}"; do say "kept (not ours): $p"; done
   fi
 }
@@ -344,7 +359,9 @@ remove_emptied() {
     done < <(find "$d" -mindepth 1 -maxdepth 1 2>/dev/null)
     [ "$left" -eq 0 ] || continue
     PLANNED="$PLANNED$d"$'\n'
-    if [ "$DRY_RUN" -eq 1 ]; then
+    if [ "$VALIDATE" -eq 1 ]; then
+      { [ -w "${d%/*}" ] && [ -x "${d%/*}" ]; } || cannot remove "$d"
+    elif [ "$DRY_RUN" -eq 1 ]; then
       say "would remove: $d"
     else
       rmdir "$d" && say "removed: $d"
@@ -358,7 +375,7 @@ else
   say "feature-crew: plugin source $SOURCE; old install at $PREFIX"
 fi
 
-prescan_legacy
+VALIDATE=1; clean_legacy; VALIDATE=0; LEGACY_FOUND=0
 
 if [ "$CHECK" -eq 1 ]; then
   for c in "${CLIS[@]}"; do

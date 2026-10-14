@@ -2856,20 +2856,22 @@ for engine in "${INSTALLERS[@]}"; do
   t76_run "$engine" both "$p" --source https://example.invalid/feature-crew.git
   case "$t76_out" in *'run: copilot plugin marketplace update feature-crew'*) ;; *) case_err="$case_err url-source:rerun-not-update" ;; esac
 
-  # A linked prefix is never cleaned through either.
-  t76_state="$t76_root/$engine/state-linkprefix"; rm -rf "$t76_state" "$p" "$t76_root/$engine/outside-p"
-  t76_seed "$t76_root/$engine/outside-p"; ln -s "$t76_root/$engine/outside-p" "$p"
-  t76_outside=$(t76_tree "$t76_root/$engine/outside-p")
-  t76_run "$engine" both "$p"
-  [ "$t76_rc" = 0 ] || case_err="$case_err linkprefix:rc=$t76_rc"
-  [ "$(t76_tree "$t76_root/$engine/outside-p")" = "$t76_outside" ] || case_err="$case_err linkprefix:changed-files-outside-prefix"
-  printf '%s\n' "$t76_out" | grep -qE '^(removed|would remove): ' && case_err="$case_err linkprefix:removed-through-link"
-  case "$t76_out" in *'kept (linked folder): <P>/agents/fc-pm.md'*) ;; *) case_err="$case_err linkprefix:not-reported" ;; esac
-  rm -f "$p"
+  # A linked prefix is never cleaned through, however it is spelled.
+  for t76_spell in '' / /.; do
+    t76_state="$t76_root/$engine/state-linkprefix"; rm -rf "$t76_state" "$p" "$t76_root/$engine/outside-p"
+    t76_seed "$t76_root/$engine/outside-p"; ln -s "$t76_root/$engine/outside-p" "$p"
+    t76_outside=$(t76_tree "$t76_root/$engine/outside-p")
+    t76_run "$engine" both "$p$t76_spell"
+    [ "$t76_rc" = 0 ] || case_err="$case_err linkprefix[$t76_spell]:rc=$t76_rc"
+    [ "$(t76_tree "$t76_root/$engine/outside-p")" = "$t76_outside" ] || case_err="$case_err linkprefix[$t76_spell]:changed-files-outside-prefix"
+    printf '%s\n' "$t76_out" | grep -qE '^(removed|would remove): ' && case_err="$case_err linkprefix[$t76_spell]:removed-through-link"
+    case "$t76_out" in *'kept (linked folder): '*'fc-pm.md'*) ;; *) case_err="$case_err linkprefix[$t76_spell]:not-reported" ;; esac
+    rm -f "$p"
+  done
 
   # An unreadable old file or folder is an error (exit 2) before anything is removed.
   if [ "$(id -u)" != 0 ]; then
-    for t76_lock in skills/research skills/research/SKILL.md; do
+    for t76_lock in skills/research skills/research/SKILL.md skills/fc-review agents/fc-pm.md feature-crew.sha256; do
       t76_state="$t76_root/$engine/state-unreadable"; rm -rf "$t76_state"
       t76_seed "$p"; t76_before=$(t76_tree "$p")
       chmod 000 "$p/$t76_lock"
@@ -2879,7 +2881,18 @@ for engine in "${INSTALLERS[@]}"; do
       [ "$t76_check_rc" = 2 ] && [ "$t76_rc" = 2 ] || case_err="$case_err unreadable[$t76_lock]:rc=$t76_check_rc/$t76_rc"
       case "$t76_check_err$t76_err" in *"feature-crew: cannot read <P>/$t76_lock"*) ;; *) case_err="$case_err unreadable[$t76_lock]:no-message" ;; esac
       [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err unreadable[$t76_lock]:removed-files"
+      printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err unreadable[$t76_lock]:changed-cli-state"
     done
+    # A folder whose entries cannot be removed is an error too, before anything changes.
+    t76_state="$t76_root/$engine/state-unremovable"; rm -rf "$t76_state"
+    t76_seed "$p"; t76_before=$(t76_tree "$p")
+    chmod 555 "$p/skills/fc-review"
+    t76_run "$engine" both "$p"
+    chmod 755 "$p/skills/fc-review"
+    [ "$t76_rc" = 2 ] || case_err="$case_err unremovable:rc=$t76_rc"
+    case "$t76_err" in *'feature-crew: cannot remove <P>/skills/fc-review'*) ;; *) case_err="$case_err unremovable:no-message" ;; esac
+    [ "$(t76_tree "$p")" = "$t76_before" ] || case_err="$case_err unremovable:removed-files"
+    printf '%s\n' "$t76_calls" | grep -vE ' list --json$' | grep -q . && case_err="$case_err unremovable:changed-cli-state"
   fi
 
   # An install that reports success but leaves the plugin unlisted removes nothing.

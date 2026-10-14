@@ -291,6 +291,7 @@ function Test-Link($path) {
 }
 
 $script:LegacyFound = $false
+$script:Validate = $false
 $script:Kept = New-Object 'System.Collections.Generic.List[string]'
 $script:Planned = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
 $script:Emptied = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -298,6 +299,7 @@ $script:Emptied = New-Object 'System.Collections.Generic.HashSet[string]' ([Stri
 function Remove-Legacy($path) {
   $script:LegacyFound = $true
   [void]$script:Planned.Add($path)
+  if ($script:Validate) { Test-Removable $path; return }
   if ($Check) { Write-Host "old file: $path"; return }
   if ($DryRun) { Write-Host "would remove: $path"; return }
   $abs = Resolve-AbsPath $path
@@ -330,7 +332,7 @@ function Test-LinkedDir($dir) {
 # An fc-* path in a linked folder still shadows the plugin.
 function Write-LinkedOld($path) {
   $script:LegacyFound = $true
-  Write-Host "kept (linked folder): $path"
+  if (-not $script:Validate) { Write-Host "kept (linked folder): $path" }
 }
 
 # A skill dir's regular files, as slash-separated relative paths in ordinal order.
@@ -351,8 +353,8 @@ function Get-OldSkillFiles($dir) {
   return ,$paths
 }
 
-function Stop-Fs($path) {
-  [Console]::Error.WriteLine("feature-crew: cannot read $path")
+function Stop-Cannot($verb, $path) {
+  [Console]::Error.WriteLine("feature-crew: cannot $verb $path")
   exit 2
 }
 
@@ -364,23 +366,58 @@ function Test-Readable($path, [bool]$dir) {
   } catch { return $false }
 }
 
-# Read every old path this run may inspect before anything changes, so an
-# unreadable one stops the run (exit 2) with nothing installed or removed.
-function Invoke-Prescan {
-  foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
-    if ((Test-Path -LiteralPath $d -PathType Container) -and -not (Test-Readable $d $true)) { Stop-Fs $d }
-  }
-  foreach ($n in $LEGACY_OLD_AGENTS) {
-    $p = "$Prefix/agents/feature-crew/$n.md"
-    if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-Readable $p $false)) { Stop-Fs $p }
-  }
-  foreach ($n in $LEGACY_OLD_SKILLS) {
-    $p = "$Prefix/skills/$n"
-    if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-LinkedDir $p)) {
-      try { $files = Get-OldSkillFiles $p } catch { Stop-Fs $p }
-      foreach ($rel in $files) { if (-not (Test-Readable "$p/$rel" $false)) { Stop-Fs "$p/$rel" } }
+# A folder whose entries can be removed, like `test -w DIR -a -x DIR`. Windows
+# has no such mode bits; there, a run that cannot remove an entry exits 1.
+function Test-Writable($dir) {
+  if ([IO.Path]::DirectorySeparatorChar -eq '\') { return $true }
+  foreach ($t in '/usr/bin/test', '/bin/test') {
+    if (Test-Path -LiteralPath $t -PathType Leaf) {
+      & $t -w $dir; $w = ($LASTEXITCODE -eq 0)
+      & $t -x $dir; return ($w -and $LASTEXITCODE -eq 0)
     }
   }
+  return $true
+}
+
+# Every real folder under DIR, DIR first, never through a link; an unreadable one stops the run.
+function Get-ReadableDirs($dir) {
+  $dirs = New-Object 'System.Collections.Generic.List[string]'
+  $todo = New-Object 'System.Collections.Generic.Stack[string]'
+  $todo.Push($dir)
+  while ($todo.Count -gt 0) {
+    $d = $todo.Pop(); $dirs.Add($d)
+    try { $kids = @(Get-ChildItem -LiteralPath $d -Force -ErrorAction Stop) } catch { Stop-Cannot "read" $d }
+    foreach ($k in $kids) {
+      if (-not ($k.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $k.PSIsContainer) { $todo.Push("$d/$($k.Name)") }
+    }
+  }
+  return ,$dirs
+}
+
+# Under Validate: prove a path can be read and removed, changing nothing.
+function Test-Removable($path) {
+  $item = Get-Item -LiteralPath $path -Force
+  if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    if ($item.PSIsContainer) {
+      $dirs = Get-ReadableDirs $path
+      foreach ($rel in (Get-OldSkillFiles $path)) { if (-not (Test-Readable "$path/$rel" $false)) { Stop-Cannot "read" "$path/$rel" } }
+      foreach ($d in $dirs) { if (-not (Test-Writable $d)) { Stop-Cannot "remove" $d } }
+    } elseif (-not (Test-Readable $path $false)) { Stop-Cannot "read" $path }
+  }
+  if (-not (Test-Writable $path.Substring(0, $path.LastIndexOf('/')))) { Stop-Cannot "remove" $path }
+}
+
+# Resolve the prefix, so a trailing / or /. on a linked prefix cannot hide the
+# link from Test-LinkedDir.
+function Resolve-Prefix($p) {
+  if (Test-Path -LiteralPath $p -PathType Container) {
+    if (-not (Test-Readable $p $true)) { Stop-Cannot "read" $p }
+    $p = [IO.Path]::GetFullPath((Resolve-AbsPath $p))
+  }
+  while ($p.Length -gt 1 -and $p -ne [IO.Path]::GetPathRoot($p) -and ($p.EndsWith('/.') -or $p.EndsWith('/') -or $p.EndsWith('\'))) {
+    if ($p.EndsWith('/.')) { $p = $p.Substring(0, $p.Length - 2) } else { $p = $p.Substring(0, $p.Length - 1) }
+  }
+  return $p
 }
 
 # Every folder from the path's parent up to root.
@@ -409,13 +446,22 @@ function Remove-Emptied {
     }
     if ($left) { continue }
     [void]$script:Planned.Add($d)
+    if ($script:Validate) {
+      if (-not (Test-Writable $d.Substring(0, $d.LastIndexOf('/')))) { Stop-Cannot "remove" $d }
+      continue
+    }
     if ($DryRun) { Write-Host "would remove: $d" }
     else { Remove-Item -LiteralPath $d -Force; Write-Host "removed: $d" }
   }
 }
 
+# Run twice: first under Validate, which proves every path this run removes is
+# readable and removable before any CLI or file changes (exit 2 otherwise).
 function Clear-Legacy {
   $script:Kept.Clear(); $script:Planned.Clear(); $script:Emptied.Clear()
+  foreach ($d in @($Prefix, "$Prefix/agents", "$Prefix/skills", "$Prefix/agents/feature-crew")) {
+    if ((Test-Path -LiteralPath $d -PathType Container) -and -not (Test-Readable $d $true)) { Stop-Cannot "read" $d }
+  }
   foreach ($n in $LEGACY_FC_AGENTS) {
     $p = "$Prefix/agents/$n.md"
     if (Test-Path -LiteralPath $p) {
@@ -435,20 +481,25 @@ function Clear-Legacy {
   foreach ($n in $LEGACY_OLD_AGENTS) {
     $p = "$Prefix/agents/feature-crew/$n.md"
     if ((Test-Path -LiteralPath $p -PathType Leaf) -and -not (Test-Link $p) -and -not (Test-LinkedDir "$Prefix/agents/feature-crew")) {
+      if (-not (Test-Readable $p $false)) { Stop-Cannot "read" $p }
       if (Test-PublishedFile $p "agents/feature-crew/$n.md") { Remove-Legacy $p; Add-Emptied "$Prefix/agents/feature-crew" $p } else { $script:Kept.Add($p) }
     }
   }
   foreach ($n in $LEGACY_OLD_SKILLS) {
     $p = "$Prefix/skills/$n"
     if ((Test-Path -LiteralPath $p -PathType Container) -and -not (Test-LinkedDir $p)) {
+      [void](Get-ReadableDirs $p)
       foreach ($rel in (Get-OldSkillFiles $p)) {
+        if (-not (Test-Readable "$p/$rel" $false)) { Stop-Cannot "read" "$p/$rel" }
         if (Test-PublishedFile "$p/$rel" "skills/$n/$rel") { Remove-Legacy "$p/$rel"; Add-Emptied $p "$p/$rel" } else { $script:Kept.Add("$p/$rel") }
       }
     }
   }
-  if (-not $Check) { Remove-Emptied }
-  foreach ($p in $script:Kept) { Write-Host "kept (not ours): $p" }
+  if (-not $Check -or $script:Validate) { Remove-Emptied }
+  if (-not $script:Validate) { foreach ($p in $script:Kept) { Write-Host "kept (not ours): $p" } }
 }
+
+$Prefix = Resolve-Prefix $Prefix
 
 if ($Uninstall) {
   Write-Host "feature-crew: uninstalling; old install at $Prefix"
@@ -456,7 +507,7 @@ if ($Uninstall) {
   Write-Host "feature-crew: plugin source $Source; old install at $Prefix"
 }
 
-Invoke-Prescan
+$script:Validate = $true; Clear-Legacy; $script:Validate = $false; $script:LegacyFound = $false
 
 if ($Check) {
   foreach ($c in $Clis) {
