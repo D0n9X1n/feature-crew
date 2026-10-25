@@ -29,7 +29,11 @@ copilot plugin install feature-crew@feature-crew
 
 不需要了解斜杠命令。Feature-Crew 会区分可以直接查到的事实、需要多方来源的证据、由用户决定的事项、尚未解决的方案、对已选定重大决定的对抗性信心检查，以及无法解释的故障。第一种它直接查找，其余的交给相应的技能。一个子技能解决一类问题后返回发起它的流程，该流程继续执行，不会递归调用，也不会对未变化的缺口重复处理。
 
-精确的分类器只在 `skills/fc-build-or-fix/SKILL.md` 中写一次；本页不重复它。也可以直接使用这些命令：`/fc-research`、`/fc-grill-me`、`/fc-brainstorm`、`/fc-debug`、`/fc-explain`、`/fc-build-or-fix`、`/fc-ship`、`/fc-review`、`/fc-second-opinion` 和 `/fc-update`。
+精确的分类器只在 `skills/fc-build-or-fix/SKILL.md` 中写一次；本页不重复它。也可以直接使用这些命令：`/fc-research`、`/fc-grill-me`、`/fc-brainstorm`、`/fc-debug`、`/fc-explain`、`/fc-build-or-fix`、`/fc-ship`、`/fc-clean`、`/fc-review`、`/fc-second-opinion` 和 `/fc-update`。
+
+## 清理
+
+目标达成后，Feature-Crew 以 `/fc-clean` 收尾。只要 `/goal` 或 Copilot autopilot 的目标尚未达成，它就不会运行。它先归档成果：按授权提交、推送、合并，并向你报告。然后只删除任务能证明由自己创建的内容：临时根目录、worktree、已合并的分支、stash、后台进程和过期的远程跟踪引用，不做备份。未提交、未合并、正在使用或来源不明的内容都会保留，并在一个问题里列出。你也可以运行 `/fc-clean` 或说“清理一下”来手动启动它。
 
 ## 更新
 

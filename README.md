@@ -27,5 +27,6 @@ Then describe the change you want in plain words; Feature-Crew picks the skill a
 - **Two designs before building:** Standard and Complex designs are compared against an independent second design; only a super straightforward Standard design skips it.
 - **Researched designs:** Standard and Complex designs start from a cited industry survey; a better approach that needs a requirement relaxed is shown to you as a trade-off.
 - **Verified shipping:** `/fc-ship` watches CI in the background and merges only the verified head.
+- **Clean finish:** once the goal is achieved, `/fc-clean` removes only the leftovers the task can prove it created, with no backups, and asks once about the rest.
 - **Explained projects:** `/fc-explain` draws evidence-tied Mermaid diagrams.
 - **One plugin, two CLIs:** the same `feature-crew` plugin installs in Claude Code and GitHub Copilot CLI; `install.sh` and `install.ps1` migrate an old script install.

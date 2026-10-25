@@ -9,7 +9,7 @@ Ships authorized work: async CI with a callback, a verified merge, an optional r
 
 ## 1 — Authorize
 
-Commit, push, PR, merge, tag/publish, and cleanup are separate authorizations; none implies another. Ask for every missing approval in one question up front, then do only what is approved.
+Commit, push, PR, merge, and tag/publish are separate authorizations; none implies another. Ask for every missing approval in one question up front, then do only what is approved.
 
 ## 2 — Watch CI asynchronously
 
@@ -27,7 +27,7 @@ Fetch `gh run view <id> --log-failed`, taking the run id from the failed check l
 
 Right before the irreversible step, re-verify head, gates, and approval. Run `git fetch origin <base>` and require the PR head to contain the current base tip: `git merge-base --is-ancestor origin/<base> <head>`. If the base advanced: rebase and push only the feature branch with `git push --force-with-lease=<branch>:<old-head> origin <branch>` (fc-ship never pushes the base), rerun the full suite and CI on the new head, and compare with `git range-diff origin/<base> <old-head> <head>`. Parts changed by conflict resolution get a cross-family re-review (selector in `/fc-build-or-fix`).
 
-Then run `gh pr merge <pr> --squash --match-head-commit <sha>` with no bypass (`--admin`, `--auto`) and no `--delete-branch`. Confirm the merge through PR metadata (`state` is `MERGED`), fetch the base, and verify the merged tree equals the head tree: `git diff --quiet <head> <merge-commit>`. If it still differs: stop, report, and run only safe cleanup.
+Then run `gh pr merge <pr> --squash --match-head-commit <sha>` with no bypass (`--admin`, `--auto`) and no `--delete-branch`. Confirm the merge through PR metadata (`state` is `MERGED`), fetch the base, and verify the merged tree equals the head tree: `git diff --quiet <head> <merge-commit>`. If it still differs: stop and report; the goal is unfinished, so do not clean up.
 
 ## 6 — Release
 
@@ -35,4 +35,4 @@ Release only when approved: tag the verified base commit, push the tag last, wat
 
 ## 7 — Clean up
 
-Cleanup is mandatory when shipping ends. Check status, worktrees, sessions, and locks. Remove only clean, inactive worktrees and branches still at the merged PR head; after a squash merge `git branch -d` refuses, so use `-D` only once the PR is confirmed merged and the trees match. Prune stale refs and remove task-owned temp files and processes. Keep dirty or unmerged work, stashes, and anything uncertain. Return to the updated base and report the final status and anything kept.
+Cleanup is mandatory when shipping ends. Once the goal is achieved, finish with `/fc-clean`; until then, keep the receipts.

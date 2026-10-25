@@ -2,7 +2,7 @@
 
 [简体中文](Architecture-zh-CN)
 
-Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`. The prompts ship as one plugin for Claude Code and GitHub Copilot CLI; two mirrored installers install it and remove an old script install, and a bash suite plus CI check the prompts' size and rule text, the plugin package, and that the two installers match.
+Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`, and an achieved goal ends with `fc-clean`, which removes the task's leftovers. The prompts ship as one plugin for Claude Code and GitHub Copilot CLI; two mirrored installers install it and remove an old script install, and a bash suite plus CI check the prompts' size and rule text, the plugin package, and that the two installers match.
 
 Scope: the whole repository on `main`, focused on the build path. The diagrams were drawn with `/fc-explain`; each node and arrow traces to the files in the table after its diagram. CI, releases, and this wiki's publishing are on [Development and Release](Development-and-Release).
 
@@ -20,7 +20,8 @@ flowchart TB
         bof["fc-build-or-fix playbook<br/>classifier, tracks, gates, reviewer selector"]
         routed["Routed skills<br/>research, grill-me, brainstorm,<br/>second-opinion, debug"]
         roles["Role prompts<br/>architect, developer, two QA, tech lead"]
-        ship["fc-ship<br/>watch CI, verified merge, cleanup"]
+        ship["fc-ship<br/>watch CI, verified merge"]
+        clean["fc-clean<br/>removes an achieved goal's leftovers"]
     end
     inst["Installers<br/>install.sh and mirrored install.ps1:<br/>install the plugin, migrate"]
     home[("Installed plugin<br/>feature-crew in each CLI's plugin cache")]
@@ -36,6 +37,7 @@ flowchart TB
     routed -->|returns result to caller| bof
     bof -->|dispatches with explicit model override| roles
     bof -->|hands off authorized work| ship
+    ship -->|hands off once the goal is achieved| clean
     fw -->|packaged as one plugin, installed by| inst
     inst -->|adds the marketplace and installs the plugin| home
     home -->|loaded by| cc
@@ -43,14 +45,14 @@ flowchart TB
 
 **Legend:** a rectangle is a group of files in this repository, the cylinder is installed files on the user's disk, and the double-bordered box is an external system. Arrows show control or file flow; each label says what happens along it.
 
-**Takeaway:** everything Claude Code runs is Markdown, and `fc-build-or-fix` is the hub. Routed skills and role prompts feed it, and `fc-ship` takes over when it finishes. The installers, the suite, and CI ship and check the prompts; none of them runs while a request is handled.
+**Takeaway:** everything Claude Code runs is Markdown, and `fc-build-or-fix` is the hub. Routed skills and role prompts feed it, `fc-ship` takes over when it finishes, and `fc-clean` removes the leftovers once the goal is achieved. The installers, the suite, and CI ship and check the prompts; none of them runs while a request is handled.
 
 **Walkthrough**
 
 1. **Standalone skills send code changes to the hub.** `fc-update` updates the plugin through each CLI's own plugin commands and reports any old script install.
 2. **The hub routes one missing ingredient at a time.** A single fact is looked up directly. Evidence from several places goes to `fc-research`, a user-owned decision to `fc-grill-me`, an open approach to `fc-brainstorm`, a chosen consequential decision to `fc-second-opinion`, and an unexplained failure to `fc-debug`. Each returns its result to the caller. Only `fc-grill-me` may be called from inside another skill, and the same gap is never routed twice.
 3. **The hub dispatches role prompts** with the task text pasted inline, an explicit model override, and a closing line that forbids further delegation.
-4. **Authorized work goes to `fc-ship`.**
+4. **Authorized work goes to `fc-ship`; once the goal is achieved, `fc-clean` removes its leftovers.**
 5. **The installers install the plugin.** For each of `claude` and `copilot` on PATH they add or update the marketplace (replacing one registered from another source), install, enable, or update `feature-crew` (in Claude Code at user scope only), and check that the CLI lists it `"enabled": true`. Only then do they remove an old script install: every old `fc-*` path, and older files whose hash is in [published.sha256][pub], never through a link, including a linked prefix. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
 6. **Each CLI loads the installed plugin** from its plugin cache: skills by their `fc-*` names, agents as `feature-crew:fc-*`. How it does so is CLI behavior, not code in this repository.
 7. **The suite and CI check both halves:** line caps, rule text with removal mutations, installer parity, and the PowerShell engine, all under `FC_STRICT=1`.
@@ -60,7 +62,8 @@ flowchart TB
 | fc-build-or-fix playbook | Makes the main session the PM: classifies the need, picks a track, runs it, enforces the hard gates, and selects reviewers. Loads run discipline (feedback checks, a checkpoint, runtime proof) at entry. `fc-pm.md` only points here. | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md: *Need classifier*, *Step 1*, *Hard gates*, *Cross-family audit at hard gates*; [run-discipline.md][run] |
 | Routed skills | Each resolves one missing ingredient and returns it to the caller; `fc-research` also has a focused path for one bounded question | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md: *Need classifier*; fc-research: *Focused path* |
 | Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five carry a committed least-privilege `tools:` list and `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
-| fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and always cleans up | [SKILL.md][ship] | fc-ship: sections 1–7 |
+| fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and hands off to fc-clean | [SKILL.md][ship] | fc-ship: sections 1–7 |
+| fc-clean | Never runs while the goal is unfinished; removes only what a receipt proves the task created, with no backups; asks once about the rest | [SKILL.md][clean] | fc-clean: *Goal gate*, *Receipts*, *Remove*, *Keep, ask once, report* |
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
 | Installers | Install or update the plugin in each CLI on PATH, then remove an old script install; `--dry-run` previews and `--check` is read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
 | Installed plugin | `feature-crew@feature-crew` in each CLI's plugin cache | `.claude-plugin/`, `skills/`, `agents/` | [Usage](Usage): *Install* |
@@ -114,7 +117,7 @@ sequenceDiagram
     else cross-family reviewer verified
         PM->>PM: fix CRITICAL, fix or follow up IMPORTANT, max three cycles
     end
-    Note over PM,GH: fc-ship runs in the main session<br/>commit, push, PR, merge, release, cleanup are separate approvals
+    Note over PM,GH: fc-ship runs in the main session<br/>commit, push, PR, merge, release are separate approvals
     PM->>GH: push branch, open PR, one background checks watch
     GH-->>PM: watch exits, then real check states and PR head
     alt a required check failed
@@ -124,7 +127,7 @@ sequenceDiagram
         PM->>GH: squash merge pinned to the verified head
         GH-->>PM: state MERGED and the merge commit
     end
-    PM->>PM: mandatory cleanup, report anything kept
+    PM->>PM: goal achieved: fc-clean removes receipted leftovers, asks once, reports
 ```
 
 **Legend:** the stick figure is a person and the boxes are software participants. A solid arrow is a request or action; a dashed arrow is a reply. `opt`, `alt`, and `par` mark optional, alternative, and parallel steps. The numbers match the walkthrough.
@@ -138,7 +141,7 @@ sequenceDiagram
 - **6–12 Spec.** First the PM surveys industry practice through `fc-research` per [industry-survey.md][survey]: every claim cites a URL, publisher, and date, and a better approach that needs a stated requirement relaxed becomes a trade-off row the user decides. The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
 - **13 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
 - **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. Whether the reviewer's record satisfies the gate is decided only by the canonical rule in [SKILL.md][bof] (*Cross-family audit at hard gates*); there is no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
-- **20–26 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Cleanup always runs.
+- **20–26 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Once the goal is achieved, `fc-clean` removes what the task's receipts cover and asks once about the rest.
 
 | Participant | Job in this flow | Key files |
 |---|---|---|
@@ -185,7 +188,7 @@ Principles that hold on every track:
 
 **Verified in the repository**
 
-- Everything Claude Code runs is Markdown: ten skills, six reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
+- Everything Claude Code runs is Markdown: eleven skills, six reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
 - Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the five dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
@@ -233,6 +236,7 @@ Principles that hold on every track:
 [second]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-second-opinion/SKILL.md
 [debug]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-debug/SKILL.md
 [ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md
+[clean]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-clean/SKILL.md
 [review]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-review/SKILL.md
 [explain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-explain/SKILL.md
 [update]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-update/SKILL.md
