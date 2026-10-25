@@ -21,7 +21,7 @@ Leave tracked files as found (scratch reproductions, or a scratch copy for instr
 
 ## Report
 
-Return command/output evidence. State the root cause and your confidence in it. Cite `file:line` references. List rejected hypotheses. Give a regression-test recipe that the calling flow writes as its failing test.
+Return command/output evidence. Return receipts for any scratch you created. State the root cause and your confidence in it. Cite `file:line` references. List rejected hypotheses. Give a regression-test recipe that the calling flow writes as its failing test.
 
 ## Blocked
 

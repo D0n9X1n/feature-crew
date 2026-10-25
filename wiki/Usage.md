@@ -29,7 +29,11 @@ Skills keep their names, such as `/fc-build-or-fix`. Agents register as `feature
 
 Slash-command knowledge is optional. Feature-Crew distinguishes a directly discoverable fact, multi-source evidence, a user-owned decision, an unresolved approach, adversarial confidence in a chosen consequential decision, and an unexplained failure. It looks up the first and routes the others to the appropriate skill. A subskill resolves one category, returns to the originating flow, and that flow resumes without recursive invocation or repetition of an unchanged gap.
 
-The exact classifier is stated once in `skills/fc-build-or-fix/SKILL.md`; this page does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-explain`, `/fc-build-or-fix`, `/fc-ship`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
+The exact classifier is stated once in `skills/fc-build-or-fix/SKILL.md`; this page does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-explain`, `/fc-build-or-fix`, `/fc-ship`, `/fc-clean`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
+
+## Cleaning up
+
+Once a goal is achieved, Feature-Crew finishes with `/fc-clean`. It never runs while a `/goal` or Copilot autopilot objective is still unmet. It archives the outcome first: committed, pushed, merged as authorized, and reported. Then it removes only what the task can prove it created: temp roots, worktrees, merged branches, stashes, background processes, and stale remote-tracking refs, with no backups. Anything dirty, unmerged, in use, or of unknown origin is kept and listed in one question. Run `/fc-clean` or say "clean up" to start it yourself.
 
 ## Updating
 

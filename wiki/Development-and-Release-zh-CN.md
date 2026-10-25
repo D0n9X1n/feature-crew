@@ -68,7 +68,7 @@ FC_STRICT=1 bash tests/framework_test.sh
 ```text
 feature-crew/
 ├── .claude-plugin/             # plugin manifest and its marketplace
-├── skills/fc-*/               # ten skills
+├── skills/fc-*/               # eleven skills
 ├── agents/fc-*.md             # six unpinned role prompts
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test

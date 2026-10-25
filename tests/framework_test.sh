@@ -46,7 +46,7 @@ skip() {
   fi
 }
 
-SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-explain fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship)
+SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-explain fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship fc-clean)
 ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
 
 skill_files() { find skills -name 'SKILL.md' | sort; }
@@ -71,11 +71,14 @@ else
 fi
 
 # ---------------------------------------------------------------- T2
+# Baseline raised from 1223 to 1251 for /fc-clean by explicit user override
+# (framework-cap-override, 2026-10-24). It is the new total + 1: any growth
+# needs another override.
 total=$(framework_files | xargs wc -l | tail -1 | awk '{print $1}')
-if [ "${total:-99999}" -le 1500 ] && [ "${total:-99999}" -lt 1223 ]; then
-  ok "T2 framework total = ${total} (<=1500, and < 1223 baseline)"
+if [ "${total:-99999}" -le 1500 ] && [ "${total:-99999}" -lt 1251 ]; then
+  ok "T2 framework total = ${total} (<=1500, and < 1251 baseline)"
 else
-  bad "T2 framework total" "total=${total}; need <=1500 AND <1223 (baseline before this change)"
+  bad "T2 framework total" "total=${total}; need <=1500 AND <1251 (baseline before this change)"
 fi
 
 # ---------------------------------------------------------------- T3
@@ -1964,15 +1967,14 @@ t64_labels=(
   merge-reverify merge-base-tip merge-push-feature-only merge-rebase-rerun merge-conflict-rereview merge-pinned-squash
   merge-confirm-tree merge-mismatch-stops
   release-only-approved release-tag-last-watch
-  cleanup-mandatory cleanup-check-state cleanup-remove-only-merged cleanup-prune-temp
-  cleanup-keep-uncertain cleanup-return-report
+  cleanup-mandatory cleanup-handoff
   build-or-fix-hands-off readme-direct-command readme-skill-count banner-sh banner-ps1
 )
 t64_sections=(auth auth watch watch watch outcome outcome outcome outcome outcome
   failure failure failure merge merge merge merge merge merge merge merge release release
-  cleanup cleanup cleanup cleanup cleanup cleanup standard commands layout sh ps1)
+  cleanup cleanup standard commands layout sh ps1)
 t64_rules=(
-  'Commit, push, PR, merge, tag/publish, and cleanup are separate authorizations; none implies another.'
+  'Commit, push, PR, merge, and tag/publish are separate authorizations; none implies another.'
   'Ask for every missing approval in one question up front, then do only what is approved.'
   'After each push, record the head SHA.'
   'The main agent itself — never a subagent, because a background task notifies whoever started it — starts one background watch on the recorded head, `gh pr checks <pr> --watch --fail-fast --required --interval 30`, and keeps working meanwhile.'
@@ -1992,15 +1994,11 @@ t64_rules=(
   'Parts changed by conflict resolution get a cross-family re-review (selector in `/fc-build-or-fix`).'
   'Then run `gh pr merge <pr> --squash --match-head-commit <sha>` with no bypass (`--admin`, `--auto`) and no `--delete-branch`.'
   'Confirm the merge through PR metadata (`state` is `MERGED`), fetch the base, and verify the merged tree equals the head tree: `git diff --quiet <head> <merge-commit>`.'
-  'If it still differs: stop, report, and run only safe cleanup.'
+  'If it still differs: stop and report; the goal is unfinished, so do not clean up.'
   'Release only when approved:'
   'tag the verified base commit, push the tag last, watch the release run in the background (`gh run watch <id> --exit-status`), and verify the published body.'
   'Cleanup is mandatory when shipping ends.'
-  'Check status, worktrees, sessions, and locks.'
-  'Remove only clean, inactive worktrees and branches still at the merged PR head; after a squash merge `git branch -d` refuses, so use `-D` only once the PR is confirmed merged and the trees match.'
-  'Prune stale refs and remove task-owned temp files and processes.'
-  'Keep dirty or unmerged work, stashes, and anything uncertain.'
-  'Return to the updated base and report the final status and anything kept.'
+  'Once the goal is achieved, finish with `/fc-clean`; until then, keep the receipts.'
   '9. Commit only when authorized; use a feature branch, then continue with `/fc-ship`.'
   '`/fc-ship`'
   "# ${t64_count_word} skills"
@@ -2672,7 +2670,7 @@ t76_steps() { # mode: fresh|rerun|dry, clis...
     esac
   done
 }
-t76_banner=$'Done. Start a new Claude Code or Copilot CLI session to load the plugin.\nDescribe your need naturally in any project; slash commands are optional.\nAvailable: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-explain, /fc-grill-me, /fc-research,\n/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent.'
+t76_banner=$'Done. Start a new Claude Code or Copilot CLI session to load the plugin.\nDescribe your need naturally in any project; slash commands are optional.\nAvailable: /fc-build-or-fix, /fc-brainstorm, /fc-clean, /fc-debug, /fc-explain, /fc-grill-me,\n/fc-research, /fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent.'
 t76_head() { printf 'feature-crew: plugin source D0n9X1n/feature-crew; old install at <P>\n'; }
 t76_expect() { # label, want-rc, want-out
   [ "$t76_rc" = "$2" ] || case_err="$case_err $1:rc=$t76_rc(want-$2):$(printf '%s' "$t76_err" | tail -1)"
@@ -3105,6 +3103,215 @@ for t77_rel in $(LC_ALL=C sort -u "$installer_root/t77.files" | grep -vE '^(agen
   grep -qE "  $t77_rel\$" published.sha256 || case_err="$case_err unpublished:$t77_rel"
 done
 installer_result "T77 old-install lists equal what v3.1-v5.3.1 installed, in both engines; pre-fc files all have published hashes"
+
+# ---------------------------------------------------------------- T78
+# fc-clean removes a finished goal's leftovers: never while the goal is
+# unfinished, only what a receipt proves this task created, and it asks once
+# about the rest. Each clause is a literal sentence scoped to its own section;
+# the flows that finish with it must name it; the wiki Usage direct-command
+# list and both installer banners must name /fc-clean; and the skill stays
+# within its approved 31 lines, counted byte-exactly as in T66. As in T62, each
+# mutation must produce exactly its own diagnostic. The behavior checks then
+# run the skill's own prune, compare-and-delete, and ignored-file commands in a
+# fixture repository; each must catch the weaker command it replaces.
+t78_labels=(
+  no-backups
+  goal-never-unfinished goal-active-unmet goal-ended-unachieved goal-archive-first goal-autopilot-before-complete
+  receipt-identities receipt-recorded-returned receipt-names-not-proof
+  remove-check-state remove-only-receipted remove-worktree remove-branch remove-stale-refs
+  remove-stash remove-temp remove-process remove-checkpoint-last
+  keep-uncertain keep-ask-once keep-report
+  wire-bof-finish wire-classifier-receipts wire-discipline-receipt wire-debug-receipts
+  usage-direct-command banner-sh banner-ps1 line-budget
+)
+t78_sections=(intro goal goal goal goal goal receipts receipts receipts
+  remove remove remove remove remove remove remove remove remove keep keep keep
+  bof classifier discipline debug commands sh ps1 budget)
+t78_rules=(
+  'with no backups'
+  'Never clean while the goal is unfinished.'
+  'An active `/goal` or Copilot autopilot objective not yet shown met is unfinished'
+  'so is a goal that ended without being achieved, so ask instead.'
+  'Archive first: the outcome is committed, pushed, and merged as authorized, and reported to the user with its evidence.'
+  'In Copilot autopilot, clean before `task_complete`.'
+  'A receipt names what a task created: the absolute path and inode of a `mktemp -d` root, a worktree path, a branch and its OID, a stash OID, a harness task id, or a PID with its start time and command.'
+  'Flows record receipts in the checkpoint or their returned result; nested skills return them and never clean.'
+  'Names alone never prove ownership.'
+  'Check status, worktrees, sessions, and locks.'
+  'Remove automatically only what a receipt covers, plus stale references, and re-check each receipt right before removing its item.'
+  "**Worktree:** \`git worktree remove\`, never \`--force\`, only when it is unlocked, no session's working directory, its HEAD is in the base or among its merged PR's commits, and \`git status --porcelain --ignored --untracked-files=all\` lists nothing beyond its receipts."
+  "**Branch:** only when no worktree has it checked out and its head is in the base or among its merged PR's commits, via \`git update-ref -d refs/heads/<branch> <oid>\` so a moved branch is kept."
+  "**Stale references:** \`git worktree prune\` and \`git fetch --prune --no-prune-tags <remote> '+refs/heads/*:refs/remotes/<remote>/*'\`, which keep locked worktrees and local tags."
+  '**Stash:** only by its recorded OID, once its content has landed.'
+  '**Temp root:** only at its recorded path and inode; never empty, `/`, home, or a repository root, never through a link, never by glob.'
+  "**Process:** through the harness's task controls, or by a PID whose start time and command still match its receipt."
+  '**Checkpoint:** `$(git rev-parse --git-path fc-checkpoint.md)`, last.'
+  'Keep dirty or unmerged work, stashes without a receipt, and anything uncertain'
+  'list in one question everything kept that may be removable.'
+  'Return to the updated base and report the final status and anything kept.'
+  'Once the goal is achieved, finish with `/fc-clean`.'
+  'returns its result, with receipts for anything it created, to the originating flow'
+  'Record a receipt, as `/fc-clean` defines it, for each leftover you create, with temp files under one `mktemp -d` root.'
+  'Return receipts for any scratch you created.'
+  '`/fc-clean`'
+  '/fc-clean'
+  '/fc-clean'
+  31
+)
+t78_contract() { # fc-clean (byte-exact), build-or-fix, run-discipline, fc-debug, wiki Usage, install.sh, install.ps1
+  local intro goal receipts remove keep bof classifier discipline debug commands sh ps1 lines section i errors=""
+  intro=$(printf '%s\n' "$1" | sed -n '/^# fc-clean$/,/^## /p')
+  goal=$(printf '%s\n' "$1" | sed -n '/^## Goal gate$/,/^## /p')
+  receipts=$(printf '%s\n' "$1" | sed -n '/^## Receipts$/,/^## /p')
+  remove=$(printf '%s\n' "$1" | sed -n '/^## Remove$/,/^## /p')
+  keep=$(printf '%s\n' "$1" | sed -n '/^## Keep, ask once, report$/,/^## /p')
+  lines=$(printf '%s' "$1" | wc -l | tr -d ' ')
+  bof=$(printf '%s\n' "$2" | sed -n '/^# fc-build-or-fix$/,/^## /p')
+  classifier=$(printf '%s\n' "$2" | sed -n '/^## Need classifier/,/^## /p')
+  discipline=$(printf '%s\n' "$3" | sed -n '/^## Checkpoint/,/^## /p')
+  debug=$(printf '%s\n' "$4" | sed -n '/^## Report$/,/^## /p')
+  commands=$(printf '%s\n' "$5" | sed -n '/^## Describe the need/,/^## /p')
+  sh=$(printf '%s\n' "$6" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
+  ps1=$(printf '%s\n' "$7" | sed -n '/Available: \/fc-/,/delegate to an fc-/p')
+  for ((i=0; i<${#t78_rules[@]}; i++)); do
+    case "${t78_sections[$i]}" in
+      intro) section="$intro" ;;
+      goal) section="$goal" ;;
+      receipts) section="$receipts" ;;
+      remove) section="$remove" ;;
+      keep) section="$keep" ;;
+      bof) section="$bof" ;;
+      classifier) section="$classifier" ;;
+      discipline) section="$discipline" ;;
+      debug) section="$debug" ;;
+      commands) section="$commands" ;;
+      sh) section="$sh" ;;
+      ps1) section="$ps1" ;;
+      budget)
+        [ "$lines" -le "${t78_rules[$i]}" ] || errors="$errors ${t78_labels[$i]}"
+        continue ;;
+    esac
+    printf '%s\n' "$section" | grep -qF -- "${t78_rules[$i]}" \
+      || errors="$errors ${t78_labels[$i]}"
+  done
+  printf '%s\n' "$errors"
+}
+t66_load skills/fc-clean/SKILL.md
+t78_clean_text=$t66_loaded
+t78_bof_text=$(cat skills/fc-build-or-fix/SKILL.md 2>/dev/null)
+t78_discipline_text=$(cat skills/fc-build-or-fix/reference/run-discipline.md 2>/dev/null)
+t78_debug_text=$(cat skills/fc-debug/SKILL.md 2>/dev/null)
+t78_usage_text=$(cat wiki/Usage.md 2>/dev/null)
+t78_sh_text=$(cat install.sh 2>/dev/null)
+t78_ps1_text=$(cat install.ps1 2>/dev/null)
+t78_err=$(t78_contract "$t78_clean_text" "$t78_bof_text" "$t78_discipline_text" "$t78_debug_text" \
+  "$t78_usage_text" "$t78_sh_text" "$t78_ps1_text")
+if [ -z "$t78_err" ]; then
+  t78_root=$(mktemp -d)
+  CLEANUP_PATHS+=("$t78_root")
+  for ((t78_i=0; t78_i<${#t78_rules[@]}; t78_i++)); do
+    t78_rule="${t78_rules[$t78_i]}"
+    t78_kind=removal
+    t78_m1="$t78_clean_text"; t78_m2="$t78_bof_text"; t78_m3="$t78_discipline_text"; t78_m4="$t78_debug_text"
+    t78_m5="$t78_usage_text"; t78_m6="$t78_sh_text"; t78_m7="$t78_ps1_text"
+    case "${t78_sections[$t78_i]}" in
+      bof|classifier) t78_m2="${t78_m2/"$t78_rule"/}" ;;
+      discipline) t78_m3="${t78_m3/"$t78_rule"/}" ;;
+      debug) t78_m4="${t78_m4/"$t78_rule"/}" ;;
+      commands) t78_m5="${t78_m5/"$t78_rule"/}" ;;
+      sh) t78_m6="${t78_m6/"$t78_rule"/}" ;;
+      ps1) t78_m7="${t78_m7/"$t78_rule"/}" ;;
+      budget)
+        t78_kind="$((t78_rule + 1))-line copy"
+        printf '%s' "$t78_clean_text" > "$t78_root/SKILL.md"
+        t78_pad=$((t78_rule + 1 - $(wc -l < "$t78_root/SKILL.md")))
+        for ((t78_j=0; t78_j<t78_pad; t78_j++)); do printf '\n' >> "$t78_root/SKILL.md"; done
+        t66_load "$t78_root/SKILL.md"
+        t78_m1=$t66_loaded
+        ;;
+      *) t78_m1="${t78_m1/"$t78_rule"/}" ;;
+    esac
+    t78_mut_out=$(t78_contract "$t78_m1" "$t78_m2" "$t78_m3" "$t78_m4" "$t78_m5" "$t78_m6" "$t78_m7")
+    if [ "$t78_mut_out" = " ${t78_labels[$t78_i]}" ]; then
+      ok "T78 ${t78_kind} mutation: ${t78_labels[$t78_i]} rejected by its own check"
+    else
+      bad "T78 ${t78_kind} mutation: ${t78_labels[$t78_i]}" \
+        "got '${t78_mut_out:-<empty>}', want ' ${t78_labels[$t78_i]}'"
+    fi
+  done
+fi
+[ -z "$t78_err" ] && ok "T78 static contract alarm: fc-clean cleans only a finished goal's receipted leftovers and asks once; flows finish with it; Usage, banners, and 31-line budget pinned" \
+                   || bad "T78 fc-clean cleanup contract" "missing:$t78_err"
+
+# Behavior: the skill's own commands, run in fixture repositories isolated from
+# the user's git configuration.
+t78_env() {
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+}
+t78_prune_check() { # prune command -> diagnostics; a local tag must survive, a stale ref must go
+  local d err=""
+  t78_env; d=$(mktemp -d "$t78_root/prune.XXXXXX")
+  git init -q --bare "$d/o.git" && git init -q "$d/w" && cd "$d/w" || return
+  git remote add origin "$d/o.git"
+  git commit -q --allow-empty -m init && git push -q origin HEAD:refs/heads/main HEAD:refs/heads/gone 2>/dev/null
+  # Delete on the remote side only: a push deletion would also drop the local
+  # tracking ref and leave nothing stale to prune.
+  git fetch -q origin && git --git-dir="$d/o.git" update-ref -d refs/heads/gone
+  git config fetch.pruneTags true && git tag local-only
+  git rev-parse -q --verify refs/remotes/origin/gone >/dev/null || { printf ' fixture-without-stale-ref\n'; return; }
+  eval "${1//<remote>/origin}" >/dev/null 2>&1
+  git rev-parse -q --verify refs/tags/local-only >/dev/null || err="$err tag-deleted"
+  git rev-parse -q --verify refs/remotes/origin/gone >/dev/null && err="$err stale-ref-kept"
+  printf '%s\n' "$err"
+}
+t78_cas_check() { # delete command -> diagnostics; a moved branch must survive, the receipted one must go
+  local d old new cmd err=""
+  t78_env; d=$(mktemp -d "$t78_root/cas.XXXXXX")
+  git init -q "$d/w" && cd "$d/w" || return
+  git commit -q --allow-empty -m init && git branch feat
+  old=$(git rev-parse feat)
+  new=$(git commit-tree -p "$old" -m moved "$(git rev-parse "$old^{tree}")") && git update-ref refs/heads/feat "$new"
+  cmd=${1//<branch>/feat}
+  eval "${cmd//<oid>/$old}" >/dev/null 2>&1
+  git rev-parse -q --verify refs/heads/feat >/dev/null || err="$err moved-branch-deleted"
+  eval "${cmd//<oid>/$new}" >/dev/null 2>&1
+  git rev-parse -q --verify refs/heads/feat >/dev/null && err="$err receipted-branch-kept"
+  printf '%s\n' "$err"
+}
+t78_ignored_check() { # status command -> diagnostics; it must list a worktree's ignored and untracked files
+  local d out err=""
+  t78_env; d=$(mktemp -d "$t78_root/ignored.XXXXXX")
+  git init -q "$d/w" && cd "$d/w" || return
+  printf 'ign.db\n' > .gitignore && git add .gitignore && git commit -q -m gi
+  # Hides untracked (and so ignored) files from a bare `status --ignored`;
+  # plain `git worktree remove` then deletes them without a word.
+  git config status.showUntrackedFiles no
+  git worktree add -q "$d/wt" -b wtb 2>/dev/null && printf 'data\n' > "$d/wt/ign.db" && printf 'mine\n' > "$d/wt/user.txt" && cd "$d/wt" || return
+  out=$(eval "$1" 2>/dev/null)
+  printf '%s\n' "$out" | grep -q 'ign.db' || err="$err ignored-file-hidden"
+  printf '%s\n' "$out" | grep -q 'user.txt' || err="$err untracked-file-hidden"
+  printf '%s\n' "$err"
+}
+t78_behavior() { # label, check function, skill command, weaker command, its expected diagnostic
+  local got weak
+  if [ -z "$3" ]; then bad "T78 behavior: $1" "command missing from fc-clean"; return; fi
+  got=$("$2" "$3"); weak=$("$2" "$4")
+  [ -z "$got" ] && ok "T78 behavior: $1 holds with the skill's command" \
+                || bad "T78 behavior: $1" "skill command failed:$got"
+  [ "$weak" = " $5" ] && ok "T78 behavior mutation: \`$4\` caught as$weak" \
+                      || bad "T78 behavior mutation: $1" "got '${weak:-<empty>}', want ' $5'"
+}
+t78_root=${t78_root:-$(mktemp -d)}; CLEANUP_PATHS+=("$t78_root")
+t78_prune_cmd=$(printf '%s\n' "$t78_clean_text" | grep -o '`git fetch --prune[^`]*`' | head -1 | tr -d '`')
+t78_cas_cmd=$(printf '%s\n' "$t78_clean_text" | grep -o '`git update-ref -d [^`]*`' | head -1 | tr -d '`')
+t78_ignored_cmd=$(printf '%s\n' "$t78_clean_text" | grep -o '`git status --porcelain --ignored[^`]*`' | head -1 | tr -d '`')
+t78_behavior "stale-ref prune keeps local tags" t78_prune_check "$t78_prune_cmd" 'git fetch --prune <remote>' tag-deleted
+t78_behavior "stale-ref prune removes stale refs" t78_prune_check "$t78_prune_cmd" \
+  "git fetch --no-prune-tags <remote> '+refs/heads/*:refs/remotes/<remote>/*'" stale-ref-kept
+t78_behavior "branch delete keeps a moved branch" t78_cas_check "$t78_cas_cmd" 'git branch -D <branch>' moved-branch-deleted
+t78_behavior "worktree check sees ignored and untracked files" t78_ignored_check "$t78_ignored_cmd" \
+  'git status --porcelain --ignored' 'ignored-file-hidden untracked-file-hidden'
 
 # ---------------------------------------------------------------- T67
 # T67: the wiki publisher mirrors wiki/ exactly, and its test catches drift.

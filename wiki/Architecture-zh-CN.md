@@ -2,7 +2,7 @@
 
 [English](Architecture)
 
-Feature-Crew 是一组供 Claude Code 使用的 Markdown 提示词，不是一个运行中的服务。一个主流程技能 `fc-build-or-fix` 让主会话担任 PM（产品经理）。PM 把每个缺失要素交给一个辅助技能，派发角色子代理，并把每个硬性关卡产物交给另一模型家族的审查者，审查者的身份由会话记录证明。完成的工作交给 `fc-ship`。提示词作为一个插件交付给 Claude Code 和 GitHub Copilot CLI；两个镜像的安装器安装它并删除旧的脚本安装，一个 bash 测试套件和 CI 检查提示词的大小、规则文本、插件包，以及两个安装器是否一致。
+Feature-Crew 是一组供 Claude Code 使用的 Markdown 提示词，不是一个运行中的服务。一个主流程技能 `fc-build-or-fix` 让主会话担任 PM（产品经理）。PM 把每个缺失要素交给一个辅助技能，派发角色子代理，并把每个硬性关卡产物交给另一模型家族的审查者，审查者的身份由会话记录证明。完成的工作交给 `fc-ship`，目标达成后以 `fc-clean` 收尾，删除任务的残留。提示词作为一个插件交付给 Claude Code 和 GitHub Copilot CLI；两个镜像的安装器安装它并删除旧的脚本安装，一个 bash 测试套件和 CI 检查提示词的大小、规则文本、插件包，以及两个安装器是否一致。
 
 范围：`main` 上的整个仓库，聚焦于构建路径。图用 `/fc-explain` 绘制；每个节点和箭头都能追溯到图后表格中的文件。CI、发布和本 wiki 的发布方式见[开发与发布](Development-and-Release-zh-CN)。
 
@@ -20,7 +20,8 @@ flowchart TB
         bof["fc-build-or-fix 主流程<br/>分类器、轨道、关卡、审查者选择器"]
         routed["路由技能<br/>research、grill-me、brainstorm、<br/>second-opinion、debug"]
         roles["角色提示词<br/>architect、developer、两个 QA、tech lead"]
-        ship["fc-ship<br/>监视 CI、验证后合并、清理"]
+        ship["fc-ship<br/>监视 CI、验证后合并"]
+        clean["fc-clean<br/>删除已达成目标的残留"]
     end
     inst["安装器<br/>install.sh 与镜像的 install.ps1：<br/>安装插件、迁移"]
     home[("已安装的插件<br/>各 CLI 插件缓存中的 feature-crew")]
@@ -36,6 +37,7 @@ flowchart TB
     routed -->|把结果返回调用方| bof
     bof -->|以显式模型覆盖派发| roles
     bof -->|移交已授权的工作| ship
+    ship -->|目标达成后移交| clean
     fw -->|打包成一个插件，由安装器安装| inst
     inst -->|添加市场并安装插件| home
     home -->|由 Claude Code 加载| cc
@@ -43,14 +45,14 @@ flowchart TB
 
 **图例：** 矩形是本仓库中的一组文件，圆柱是用户磁盘上已安装的文件，双边框的方框是外部系统。箭头表示控制流或文件流；每个标签说明沿途发生的事。
 
-**要点：** Claude Code 运行的一切都是 Markdown，`fc-build-or-fix` 是枢纽。路由技能和角色提示词为它服务，它完成后由 `fc-ship` 接手。安装器、测试套件和 CI 负责交付和检查提示词；处理请求时它们都不运行。
+**要点：** Claude Code 运行的一切都是 Markdown，`fc-build-or-fix` 是枢纽。路由技能和角色提示词为它服务，它完成后由 `fc-ship` 接手，目标达成后由 `fc-clean` 删除残留。安装器、测试套件和 CI 负责交付和检查提示词；处理请求时它们都不运行。
 
 **逐步说明**
 
 1. **独立技能把代码变更交给枢纽。** `fc-update` 通过每个 CLI 自己的插件命令更新插件，并报告残留的旧脚本安装。
 2. **枢纽一次路由一个缺失要素。** 单个事实直接查找。多处证据交给 `fc-research`，用户拥有的决定交给 `fc-grill-me`，未定的方案交给 `fc-brainstorm`，已选定的重大决定交给 `fc-second-opinion`，无法解释的故障交给 `fc-debug`。每个技能都把结果返回调用方。只有 `fc-grill-me` 可以在另一个技能内部被调用，同一个缺口从不被路由两次。
 3. **枢纽派发角色提示词**：任务文本内联粘贴，带显式模型覆盖，并以一行禁止进一步委派的话收尾。
-4. **已授权的工作交给 `fc-ship`。**
+4. **已授权的工作交给 `fc-ship`；目标达成后，`fc-clean` 删除它的残留。**
 5. **安装器安装插件。** 对 PATH 上的 `claude` 和 `copilot`，它们添加或更新市场（若市场来自其他来源则替换），安装、启用或更新 `feature-crew`（在 Claude Code 中只在用户作用域），并检查 CLI 列出它为 `"enabled": true`。之后才删除旧的脚本安装：每个旧的 `fc-*` 路径，以及哈希在 [published.sha256][pub] 中的更早文件，但从不经由链接删除，包括链接的前缀。`install.ps1` 能交给 Git Bash 时就交给它，否则运行它自己的、逻辑相同的 PowerShell 版本。
 6. **每个 CLI 从自己的插件缓存加载已安装的插件：** 技能用 `fc-*` 名称，代理为 `feature-crew:fc-*`。它如何加载属于 CLI 的行为，不是本仓库的代码。
 7. **测试套件和 CI 检查两半：** 行数上限、带删除变异的规则文本、安装器一致性以及 PowerShell 引擎，全部在 `FC_STRICT=1` 下运行。
@@ -60,7 +62,8 @@ flowchart TB
 | fc-build-or-fix 主流程 | 让主会话担任 PM：对需求分类、选择轨道并执行、执行硬性关卡、选择审查者。进入时加载运行纪律（反馈检查、检查点、运行时证据）。`fc-pm.md` 只指向这里。 | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md：*Need classifier*、*Step 1*、*Hard gates*、*Cross-family audit at hard gates*；[run-discipline.md][run] |
 | 路由技能 | 各自解决一个缺失要素并把结果返回调用方；`fc-research` 还有一条针对单个有界问题的聚焦路径 | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md：*Need classifier*；fc-research：*Focused path* |
 | 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作。五个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
-| fc-ship | 分别请求每项批准，运行一个后台 CI 监视，只 squash 合并已验证的 head，可选发布，并总是清理 | [SKILL.md][ship] | fc-ship：第 1–7 节 |
+| fc-ship | 分别请求每项批准，运行一个后台 CI 监视，只 squash 合并已验证的 head，可选发布，并移交给 fc-clean | [SKILL.md][ship] | fc-ship：第 1–7 节 |
+| fc-clean | 目标未完成时绝不运行；只删除凭据证明由任务创建的内容，不做备份；其余内容询问一次 | [SKILL.md][clean] | fc-clean：*Goal gate*、*Receipts*、*Remove*、*Keep, ask once, report* |
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |
 | 安装器 | 在 PATH 上的每个 CLI 中安装或更新插件，然后删除旧的脚本安装；`--dry-run` 预览，`--check` 只读 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
 | 已安装的插件 | 各 CLI 插件缓存中的 `feature-crew@feature-crew` | `.claude-plugin/`、`skills/`、`agents/` | [使用说明](Usage-zh-CN)：*安装* |
@@ -114,7 +117,7 @@ sequenceDiagram
     else 已验证跨家族审查者
         PM->>PM: 修复 CRITICAL，修复或跟进 IMPORTANT，最多三轮
     end
-    Note over PM,GH: fc-ship 在主会话中运行<br/>提交、推送、PR、合并、发布、清理分别需要批准
+    Note over PM,GH: fc-ship 在主会话中运行<br/>提交、推送、PR、合并、发布分别需要批准
     PM->>GH: 推送分支，打开 PR，一个后台检查监视
     GH-->>PM: 监视退出，然后读取真实检查状态和 PR head
     alt 必需检查失败
@@ -124,7 +127,7 @@ sequenceDiagram
         PM->>GH: squash 合并，锁定已验证的 head
         GH-->>PM: 状态 MERGED 和合并提交
     end
-    PM->>PM: 必做清理，报告保留的内容
+    PM->>PM: 目标达成：fc-clean 删除有凭据的残留，询问一次，报告
 ```
 
 **图例：** 小人是一个人，方框是软件参与者。实线箭头是请求或动作；虚线箭头是回复。`opt`、`alt` 和 `par` 标记可选、分支和并行步骤。编号与逐步说明对应。
@@ -138,7 +141,7 @@ sequenceDiagram
 - **6–12 规格。** PM 先按 [industry-survey.md][survey] 通过 `fc-research` 调研业界做法：每条结论都注明 URL、发布者和日期；若更好的方案需要放宽某条既定需求，就写成一行取舍，由用户决定。要点式规格列出目的、文件、组件图、3–8 条行为、必须通过的测试命令和非目标。盲审第二设计者拿到同一份简报但不含第一份设计，最多返回 300 词，规格记录同意、分歧、选择对照表；只有“极其简单直接”的设计才跳过它。触及升级清单的规格在用户批准前由另一家族的审查者审计。
 - **13 构建。** 写失败的测试，观察失败，写最少的代码，观察通过，重构；然后运行全量测试并粘贴输出，用户可见的变更还要附运行时证据。
 - **14–19 关卡。** 作者的家族来自会话记录中记录的模型，而不是请求的别名。`fc-qa-code` 以 one-clue 模式审查规格符合性和代码。审查者的记录是否满足关卡，只由 [SKILL.md][bof] 中的规范规则（*Cross-family audit at hard gates*）决定；没有回退。CRITICAL 必须修复；IMPORTANT 修复或跟进；最多三轮修复。
-- **20–26 交付。** `fc-ship` 在一个问题里请求所有缺失的批准，推送，并运行一个后台 `gh pr checks --watch`。失败交给 `fc-debug`，并在构建关卡下修复。合并前它重新检查 head 并确认其包含 base；用 `--match-head-commit` 合并，然后确认状态为 MERGED 且合并后的树等于 head 的树。清理总会执行。
+- **20–26 交付。** `fc-ship` 在一个问题里请求所有缺失的批准，推送，并运行一个后台 `gh pr checks --watch`。失败交给 `fc-debug`，并在构建关卡下修复。合并前它重新检查 head 并确认其包含 base；用 `--match-head-commit` 合并，然后确认状态为 MERGED 且合并后的树等于 head 的树。目标达成后，`fc-clean` 删除任务凭据覆盖的内容，并对其余内容询问一次。
 
 | 参与者 | 在此流程中的职责 | 关键文件 |
 |---|---|---|
@@ -185,7 +188,7 @@ sequenceDiagram
 
 **已在仓库中验证**
 
-- Claude Code 运行的一切都是 Markdown：十个技能、六个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
+- Claude Code 运行的一切都是 Markdown：十一个技能、六个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
 - 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。代理的 frontmatter 已提交到仓库：`name`、`description`，五个被派发的角色还有 `tools:` 列表和 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
 - 关卡失败即关闭：来源未知会让关卡不满足，单独运行的 `/fc-review` 或 `/fc-second-opinion` 不能替代关卡。
 - `/fc-review` 无论差异大小，每次审查都至少派发一个由选择器选定模型的审查视角（lens）；主会话自己写的笔记标注为同会话，永远不算作独立审查。
@@ -233,6 +236,7 @@ sequenceDiagram
 [second]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-second-opinion/SKILL.md
 [debug]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-debug/SKILL.md
 [ship]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-ship/SKILL.md
+[clean]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-clean/SKILL.md
 [review]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-review/SKILL.md
 [explain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-explain/SKILL.md
 [update]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-update/SKILL.md

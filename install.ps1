@@ -589,7 +589,7 @@ if ($DryRun) {
 } else {
   Write-Host "Done. Start a new Claude Code or Copilot CLI session to load the plugin."
   Write-Host "Describe your need naturally in any project; slash commands are optional."
-  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-explain, /fc-grill-me, /fc-research,"
-  Write-Host "/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
+  Write-Host "Available: /fc-build-or-fix, /fc-brainstorm, /fc-clean, /fc-debug, /fc-explain, /fc-grill-me,"
+  Write-Host "/fc-research, /fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
 }
 exit 0

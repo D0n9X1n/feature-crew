@@ -435,6 +435,6 @@ elif [ "$UNINSTALL" -eq 1 ]; then
 else
   say "Done. Start a new Claude Code or Copilot CLI session to load the plugin."
   say "Describe your need naturally in any project; slash commands are optional."
-  say "Available: /fc-build-or-fix, /fc-brainstorm, /fc-debug, /fc-explain, /fc-grill-me, /fc-research,"
-  say "/fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
+  say "Available: /fc-build-or-fix, /fc-brainstorm, /fc-clean, /fc-debug, /fc-explain, /fc-grill-me,"
+  say "/fc-research, /fc-review, /fc-second-opinion, /fc-ship, /fc-update - or delegate to an fc-* subagent."
 fi
