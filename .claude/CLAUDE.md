@@ -2,14 +2,7 @@
 
 > Single source of truth for **Claude Code** in this repository. There is no `AGENTS.md`.
 
-Users describe needs naturally; slash-command knowledge is not required. The canonical missing-ingredient classifier and bounded return-to-origin composition rule live in `skills/fc-build-or-fix/SKILL.md`. Use compact pointers elsewhere; do not duplicate that classifier.
-
-## On every build/fix/change request
-
-1. Read `skills/fc-build-or-fix/SKILL.md` and classify the need.
-2. Select **Just Do It / Standard / Complex** by complexity and risk.
-3. Auto-run eligible Just Do It work; Standard/Complex retain approval flow unless waived.
-4. Honor every hard gate. Dispatch role agents from `agents/fc-*.md` only where the flow calls for them.
+Users describe needs naturally; slash-command knowledge is not required. The canonical missing-ingredient classifier and bounded return-to-origin composition rule live in `skills/fc-build-or-fix/SKILL.md`. Use compact pointers elsewhere; do not duplicate that classifier. On every build, fix, or change request, read that skill, classify the need, pick Just Do It / Standard / Complex by complexity and risk, auto-run eligible Just Do It work while Standard/Complex keep their approvals unless waived, honor every hard gate, and dispatch `agents/fc-*.md` roles only where the flow calls for them. The plugin's SessionStart hook (`hooks/`) puts the same pointer into every session.
 
 ## Models
 
@@ -57,6 +50,7 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 | Skills | `skills/fc-*/SKILL.md` |
 | Complex track, meta-work cap | `skills/fc-build-or-fix/reference/` |
 | Role prompts | `agents/fc-*.md` |
+| Session routing hook and its payload | `hooks/` |
 | Self-test | `tests/framework_test.sh` |
 | CI | `.github/workflows/` |
 | Wiki pages (English entry points) | `wiki/Home.md`, `wiki/Usage.md`, `wiki/Architecture.md`, `wiki/Development-and-Release.md` |

@@ -31,6 +31,14 @@ Slash-command knowledge is optional. Feature-Crew distinguishes a directly disco
 
 The exact classifier is stated once in `skills/fc-build-or-fix/SKILL.md`; this page does not duplicate it. Direct commands remain available for `/fc-research`, `/fc-grill-me`, `/fc-brainstorm`, `/fc-debug`, `/fc-explain`, `/fc-build-or-fix`, `/fc-ship`, `/fc-clean`, `/fc-review`, `/fc-second-opinion`, and `/fc-update`.
 
+## Session routing
+
+Skills run only when the model chooses them, so a code change can skip `/fc-build-or-fix`, especially when a small first request grows into a new repository, a refactor, or a release. The plugin's SessionStart hook puts a short routing contract into the session: in Claude Code at startup, resume, `/clear`, and compaction; in GitHub Copilot CLI at session start and resume. It prints [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json), which points code changes at `/fc-build-or-fix`, re-routes scope that grows mid-task, and names `/fc-ship` for pushing, merging, releasing, and cleanup and `/fc-review` for work that skipped the pipeline. Questions that change no code are left alone. The text is a pointer, not enforcement: it makes routing far more likely, not certain. To turn it off, disable the plugin with `claude plugin disable feature-crew@feature-crew` or `copilot plugin disable feature-crew@feature-crew`.
+
+**Known limits.**
+- Copilot CLI has no hook source after compaction, so a compacted Copilot session relies on the skill descriptions alone ([copilot-cli#5225](https://github.com/github/copilot-cli/issues/5225)). Whether Copilot's interactive `/clear` re-injects the text is untested; only session start and resume are verified.
+- Claude Code on native Windows needs Git for Windows for this hook. Without Git Bash, Claude Code runs hooks in PowerShell, where the hook cannot read its install path; it fails without blocking the session.
+
 ## Cleaning up
 
 Once a goal is achieved, Feature-Crew finishes with `/fc-clean`. It never runs while a `/goal` or Copilot autopilot objective is still unmet. It archives the outcome first: committed, pushed, merged as authorized, and reported. Then it removes only what the task can prove it created: temp roots, worktrees, merged branches, stashes, background processes, and stale remote-tracking refs, with no backups. Anything dirty, unmerged, in use, or of unknown origin is kept and listed in one question. Run `/fc-clean` or say "clean up" to start it yourself.

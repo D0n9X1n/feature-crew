@@ -2,7 +2,7 @@
 
 [简体中文](Architecture-zh-CN)
 
-Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`, and an achieved goal ends with `fc-clean`, which removes the task's leftovers. The prompts ship as one plugin for Claude Code and GitHub Copilot CLI; two mirrored installers install it and remove an old script install, and a bash suite plus CI check the prompts' size and rule text, the plugin package, and that the two installers match.
+Feature-Crew is a set of Markdown prompts for Claude Code, not a running service. One playbook skill, `fc-build-or-fix`, makes the main session the PM (product manager). The PM routes each missing ingredient to one helper skill, dispatches role subagents, and sends every hard-gate artifact to a reviewer from another model family, proven from the session transcript. Finished work goes to `fc-ship`, and an achieved goal ends with `fc-clean`, which removes the task's leftovers. The prompts ship as one plugin for Claude Code and GitHub Copilot CLI; two mirrored installers install it and remove an old script install, and a bash suite plus CI check the prompts' size and rule text, the plugin package, and that the two installers match. One SessionStart hook in the plugin puts a short routing pointer into every session.
 
 Scope: the whole repository on `main`, focused on the build path. The diagrams were drawn with `/fc-explain`; each node and arrow traces to the files in the table after its diagram. CI, releases, and this wiki's publishing are on [Development and Release](Development-and-Release).
 
@@ -25,6 +25,7 @@ flowchart TB
     end
     inst["Installers<br/>install.sh and mirrored install.ps1:<br/>install the plugin, migrate"]
     home[("Installed plugin<br/>feature-crew in each CLI's plugin cache")]
+    hook["Session routing hook<br/>hooks/: prints the routing pointer at session start"]
     cc[["Claude Code<br/>loads skills, runs sessions and subagents"]]
 
     ci -->|runs in strict mode| suite
@@ -41,11 +42,13 @@ flowchart TB
     fw -->|packaged as one plugin, installed by| inst
     inst -->|adds the marketplace and installs the plugin| home
     home -->|loaded by| cc
+    home -->|runs at session start| hook
+    hook -->|injects: code changes go to fc-build-or-fix| cc
 ```
 
 **Legend:** a rectangle is a group of files in this repository, the cylinder is installed files on the user's disk, and the double-bordered box is an external system. Arrows show control or file flow; each label says what happens along it.
 
-**Takeaway:** everything Claude Code runs is Markdown, and `fc-build-or-fix` is the hub. Routed skills and role prompts feed it, `fc-ship` takes over when it finishes, and `fc-clean` removes the leftovers once the goal is achieved. The installers, the suite, and CI ship and check the prompts; none of them runs while a request is handled.
+**Takeaway:** everything Claude Code runs is Markdown, except one session hook that prints a static routing pointer, and `fc-build-or-fix` is the hub. Routed skills and role prompts feed it, `fc-ship` takes over when it finishes, and `fc-clean` removes the leftovers once the goal is achieved. The installers, the suite, and CI ship and check the prompts; none of them runs while a request is handled.
 
 **Walkthrough**
 
@@ -55,7 +58,8 @@ flowchart TB
 4. **Authorized work goes to `fc-ship`; once the goal is achieved, `fc-clean` removes its leftovers.**
 5. **The installers install the plugin.** For each of `claude` and `copilot` on PATH they add or update the marketplace (replacing one registered from another source), install, enable, or update `feature-crew` (in Claude Code at user scope only), and check that the CLI lists it `"enabled": true`. Only then do they remove an old script install: every old `fc-*` path, and older files whose hash is in [published.sha256][pub], never through a link, including a linked prefix. `install.ps1` hands off to Git Bash when it can and otherwise runs its own PowerShell copy of the same logic.
 6. **Each CLI loads the installed plugin** from its plugin cache: skills by their `fc-*` names, agents as `feature-crew:fc-*`. How it does so is CLI behavior, not code in this repository.
-7. **The suite and CI check both halves:** line caps, rule text with removal mutations, installer parity, and the PowerShell engine, all under `FC_STRICT=1`.
+7. **The session routing hook points each session at the hub.** At startup, resume, `/clear`, and compaction in Claude Code, and at session start and resume in Copilot CLI, it prints [routing.json][routing]: code changes go to `fc-build-or-fix`, grown scope is re-routed, and delivery goes to `fc-ship`.
+8. **The suite and CI check both halves:** line caps, rule text with removal mutations, installer parity, and the PowerShell engine, all under `FC_STRICT=1`.
 
 | Component | Job | Key files | Evidence |
 |---|---|---|---|
@@ -67,6 +71,7 @@ flowchart TB
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
 | Installers | Install or update the plugin in each CLI on PATH, then remove an old script install; `--dry-run` previews and `--check` is read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
 | Installed plugin | `feature-crew@feature-crew` in each CLI's plugin cache | `.claude-plugin/`, `skills/`, `agents/` | [Usage](Usage): *Install* |
+| Session routing hook | Prints one static routing pointer at session start, the same text under each host's output key | [hooks.json][hooks], [routing.json][routing] | [Usage](Usage): *Session routing*; suite T79 |
 | Claude Code | Loads the skills (inferred), runs the session and subagents, and records transcripts | not in this repository | [gate-provenance.md][prov]: *Read the record* |
 | Self-test suite | Dev-only bash checks that exit nonzero on any failure; `FC_STRICT=1` turns skipped checks into failures | [framework_test.sh][suite] | the suite's header |
 | CI workflows | Run the suite, validate the plugin, test migration on Windows, publish this wiki, and cut releases | [.github/workflows/][wf] | [Development and Release](Development-and-Release) |
@@ -136,7 +141,7 @@ sequenceDiagram
 
 **Walkthrough**
 
-- **1–3 Entry.** `CLAUDE.md` makes the playbook the first step for any build, fix, or change. The PM looks up single facts itself and sends any other gap to exactly one skill.
+- **1–3 Entry.** The plugin's session hook, and `CLAUDE.md` in this repository, make the playbook the first step for any build, fix, or change. The PM looks up single facts itself and sends any other gap to exactly one skill.
 - **4–5 Track.** Standard fits one coherent feature. Just Do It is ruled out when the change touches the escalation list: runtime behavior, config, auth, secrets, persistence, public API, or deploy behavior.
 - **6–12 Spec.** First the PM surveys industry practice through `fc-research` per [industry-survey.md][survey]: every claim cites a URL, publisher, and date, and a better approach that needs a stated requirement relaxed becomes a trade-off row the user decides. The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
 - **13 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
@@ -188,7 +193,7 @@ Principles that hold on every track:
 
 **Verified in the repository**
 
-- Everything Claude Code runs is Markdown: eleven skills, six reference files, and six role prompts. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
+- Everything Claude Code runs is Markdown: eleven skills, six reference files, and six role prompts, plus one session hook that prints a static JSON file. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
 - Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the five dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
@@ -245,3 +250,5 @@ Principles that hold on every track:
 [pub]: https://github.com/D0n9X1n/feature-crew/blob/main/published.sha256
 [suite]: https://github.com/D0n9X1n/feature-crew/blob/main/tests/framework_test.sh
 [wf]: https://github.com/D0n9X1n/feature-crew/tree/main/.github/workflows
+[hooks]: https://github.com/D0n9X1n/feature-crew/blob/main/hooks/hooks.json
+[routing]: https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json

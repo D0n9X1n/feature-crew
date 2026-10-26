@@ -6,7 +6,7 @@ A need-based agent-team framework for Claude Code. Describe what you need natura
 
 ### Get started
 
-- [Usage](Usage) — install, flags, describing the need, commands, and updating.
+- [Usage](Usage) — install, flags, describing the need, commands, session routing, and updating.
 
 ### How Feature-Crew works
 

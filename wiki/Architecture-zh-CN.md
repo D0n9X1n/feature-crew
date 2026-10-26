@@ -2,7 +2,7 @@
 
 [English](Architecture)
 
-Feature-Crew 是一组供 Claude Code 使用的 Markdown 提示词，不是一个运行中的服务。一个主流程技能 `fc-build-or-fix` 让主会话担任 PM（产品经理）。PM 把每个缺失要素交给一个辅助技能，派发角色子代理，并把每个硬性关卡产物交给另一模型家族的审查者，审查者的身份由会话记录证明。完成的工作交给 `fc-ship`，目标达成后以 `fc-clean` 收尾，删除任务的残留。提示词作为一个插件交付给 Claude Code 和 GitHub Copilot CLI；两个镜像的安装器安装它并删除旧的脚本安装，一个 bash 测试套件和 CI 检查提示词的大小、规则文本、插件包，以及两个安装器是否一致。
+Feature-Crew 是一组供 Claude Code 使用的 Markdown 提示词，不是一个运行中的服务。一个主流程技能 `fc-build-or-fix` 让主会话担任 PM（产品经理）。PM 把每个缺失要素交给一个辅助技能，派发角色子代理，并把每个硬性关卡产物交给另一模型家族的审查者，审查者的身份由会话记录证明。完成的工作交给 `fc-ship`，目标达成后以 `fc-clean` 收尾，删除任务的残留。提示词作为一个插件交付给 Claude Code 和 GitHub Copilot CLI；两个镜像的安装器安装它并删除旧的脚本安装，一个 bash 测试套件和 CI 检查提示词的大小、规则文本、插件包，以及两个安装器是否一致。插件中的一个 SessionStart 钩子会把一段简短的路由指引放进每个会话。
 
 范围：`main` 上的整个仓库，聚焦于构建路径。图用 `/fc-explain` 绘制；每个节点和箭头都能追溯到图后表格中的文件。CI、发布和本 wiki 的发布方式见[开发与发布](Development-and-Release-zh-CN)。
 
@@ -25,6 +25,7 @@ flowchart TB
     end
     inst["安装器<br/>install.sh 与镜像的 install.ps1：<br/>安装插件、迁移"]
     home[("已安装的插件<br/>各 CLI 插件缓存中的 feature-crew")]
+    hook["会话路由钩子<br/>hooks/：会话开始时输出路由指引"]
     cc[["Claude Code<br/>加载技能，运行会话与子代理"]]
 
     ci -->|以严格模式运行| suite
@@ -41,11 +42,13 @@ flowchart TB
     fw -->|打包成一个插件，由安装器安装| inst
     inst -->|添加市场并安装插件| home
     home -->|由 Claude Code 加载| cc
+    home -->|会话开始时运行| hook
+    hook -->|注入：代码变更交给 fc-build-or-fix| cc
 ```
 
 **图例：** 矩形是本仓库中的一组文件，圆柱是用户磁盘上已安装的文件，双边框的方框是外部系统。箭头表示控制流或文件流；每个标签说明沿途发生的事。
 
-**要点：** Claude Code 运行的一切都是 Markdown，`fc-build-or-fix` 是枢纽。路由技能和角色提示词为它服务，它完成后由 `fc-ship` 接手，目标达成后由 `fc-clean` 删除残留。安装器、测试套件和 CI 负责交付和检查提示词；处理请求时它们都不运行。
+**要点：** 除了一个输出静态路由指引的会话钩子，Claude Code 运行的一切都是 Markdown，`fc-build-or-fix` 是枢纽。路由技能和角色提示词为它服务，它完成后由 `fc-ship` 接手，目标达成后由 `fc-clean` 删除残留。安装器、测试套件和 CI 负责交付和检查提示词；处理请求时它们都不运行。
 
 **逐步说明**
 
@@ -55,7 +58,8 @@ flowchart TB
 4. **已授权的工作交给 `fc-ship`；目标达成后，`fc-clean` 删除它的残留。**
 5. **安装器安装插件。** 对 PATH 上的 `claude` 和 `copilot`，它们添加或更新市场（若市场来自其他来源则替换），安装、启用或更新 `feature-crew`（在 Claude Code 中只在用户作用域），并检查 CLI 列出它为 `"enabled": true`。之后才删除旧的脚本安装：每个旧的 `fc-*` 路径，以及哈希在 [published.sha256][pub] 中的更早文件，但从不经由链接删除，包括链接的前缀。`install.ps1` 能交给 Git Bash 时就交给它，否则运行它自己的、逻辑相同的 PowerShell 版本。
 6. **每个 CLI 从自己的插件缓存加载已安装的插件：** 技能用 `fc-*` 名称，代理为 `feature-crew:fc-*`。它如何加载属于 CLI 的行为，不是本仓库的代码。
-7. **测试套件和 CI 检查两半：** 行数上限、带删除变异的规则文本、安装器一致性以及 PowerShell 引擎，全部在 `FC_STRICT=1` 下运行。
+7. **会话路由钩子把每个会话指向枢纽。** 在 Claude Code 的启动、恢复、`/clear` 和压缩时，以及 Copilot CLI 的会话开始和恢复时，它输出 [routing.json][routing]：代码变更交给 `fc-build-or-fix`，扩大的范围重新路由，交付交给 `fc-ship`。
+8. **测试套件和 CI 检查两半：** 行数上限、带删除变异的规则文本、安装器一致性以及 PowerShell 引擎，全部在 `FC_STRICT=1` 下运行。
 
 | 组件 | 职责 | 关键文件 | 证据 |
 |---|---|---|---|
@@ -67,6 +71,7 @@ flowchart TB
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |
 | 安装器 | 在 PATH 上的每个 CLI 中安装或更新插件，然后删除旧的脚本安装；`--dry-run` 预览，`--check` 只读 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
 | 已安装的插件 | 各 CLI 插件缓存中的 `feature-crew@feature-crew` | `.claude-plugin/`、`skills/`、`agents/` | [使用说明](Usage-zh-CN)：*安装* |
+| 会话路由钩子 | 会话开始时输出一段静态路由指引，每个宿主的输出键下是同一段文字 | [hooks.json][hooks]、[routing.json][routing] | [使用说明](Usage-zh-CN)：*会话路由*；测试套件 T79 |
 | Claude Code | 加载技能（推断），运行会话和子代理，保存会话记录 | 不在本仓库中 | [gate-provenance.md][prov]：*Read the record* |
 | 自测套件 | 仅供开发的 bash 检查，任何失败都以非零状态退出；`FC_STRICT=1` 把跳过的检查变成失败 | [framework_test.sh][suite] | 套件的文件头 |
 | CI 工作流 | 运行测试套件，验证插件，在 Windows 上测试迁移，发布本 wiki，并发布版本 | [.github/workflows/][wf] | [开发与发布](Development-and-Release-zh-CN) |
@@ -136,7 +141,7 @@ sequenceDiagram
 
 **逐步说明**
 
-- **1–3 进入。** `CLAUDE.md` 让主流程成为任何构建、修复或变更的第一步。PM 自己查找单个事实，把其他任何缺口交给恰好一个技能。
+- **1–3 进入。** 插件的会话钩子，以及本仓库中的 `CLAUDE.md`，让主流程成为任何构建、修复或变更的第一步。PM 自己查找单个事实，把其他任何缺口交给恰好一个技能。
 - **4–5 轨道。** Standard 适合一个连贯的功能。变更触及升级清单时排除 Just Do It：运行时行为、配置、认证、密钥、持久化、公共 API 或部署行为。
 - **6–12 规格。** PM 先按 [industry-survey.md][survey] 通过 `fc-research` 调研业界做法：每条结论都注明 URL、发布者和日期；若更好的方案需要放宽某条既定需求，就写成一行取舍，由用户决定。要点式规格列出目的、文件、组件图、3–8 条行为、必须通过的测试命令和非目标。盲审第二设计者拿到同一份简报但不含第一份设计，最多返回 300 词，规格记录同意、分歧、选择对照表；只有“极其简单直接”的设计才跳过它。触及升级清单的规格在用户批准前由另一家族的审查者审计。
 - **13 构建。** 写失败的测试，观察失败，写最少的代码，观察通过，重构；然后运行全量测试并粘贴输出，用户可见的变更还要附运行时证据。
@@ -188,7 +193,7 @@ sequenceDiagram
 
 **已在仓库中验证**
 
-- Claude Code 运行的一切都是 Markdown：十一个技能、六个参考文件和六个角色提示词。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
+- Claude Code 运行的一切都是 Markdown：十一个技能、六个参考文件和六个角色提示词，外加一个输出静态 JSON 文件的会话钩子。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
 - 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。代理的 frontmatter 已提交到仓库：`name`、`description`，五个被派发的角色还有 `tools:` 列表和 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
 - 关卡失败即关闭：来源未知会让关卡不满足，单独运行的 `/fc-review` 或 `/fc-second-opinion` 不能替代关卡。
 - `/fc-review` 无论差异大小，每次审查都至少派发一个由选择器选定模型的审查视角（lens）；主会话自己写的笔记标注为同会话，永远不算作独立审查。
@@ -245,3 +250,5 @@ sequenceDiagram
 [pub]: https://github.com/D0n9X1n/feature-crew/blob/main/published.sha256
 [suite]: https://github.com/D0n9X1n/feature-crew/blob/main/tests/framework_test.sh
 [wf]: https://github.com/D0n9X1n/feature-crew/tree/main/.github/workflows
+[hooks]: https://github.com/D0n9X1n/feature-crew/blob/main/hooks/hooks.json
+[routing]: https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json

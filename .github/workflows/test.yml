@@ -136,6 +136,40 @@ env:
     # GitHub appends exit $LASTEXITCODE; the expected exit-2 run must not fail CI.
     exit 0
 
+  # The plugin's SessionStart hook, run as each Windows host runs it: Claude Code
+  # runs `command` in Git Bash, Copilot CLI runs `powershell`. The root holds a
+  # space and brackets, and each check has a mutation that must fail: an
+  # unquoted root word-splits, and -Path treats the brackets as a wildcard.
+  TEST_HOOK_SH: |
+    set -euo pipefail
+    root="$(cygpath -u "$RUNNER_TEMP")/fc hook [root]"
+    mkdir -p "$root/hooks"
+    cp hooks/hooks.json hooks/routing.json "$root/hooks/"
+    cmd=$(python -c 'import json; print(json.load(open("hooks/hooks.json"))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' | tr -d '\r')
+    run_hook() { (cd "$RUNNER_TEMP" && CLAUDE_PLUGIN_ROOT="$(cygpath -w "$root")" bash -c "$1"); }
+    same() { python -c 'import json,sys; sys.exit(0 if json.loads(sys.stdin.read() or "null") == json.load(open("hooks/routing.json")) else 1)'; }
+    run_hook "$cmd" | same || { echo "::error::Git Bash: the hook command did not print routing.json"; exit 1; }
+    if (run_hook "${cmd//\"/}" 2>/dev/null || true) | same; then echo "::error::mutation survived: unquoted root"; exit 1; fi
+    echo "Git Bash: hook command prints routing.json; the unquoted-root mutation fails"
+  TEST_HOOK_PS: |
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+    $root = Join-Path $env:RUNNER_TEMP "fc hook [root] $($PSVersionTable.PSVersion.Major)"
+    [IO.Directory]::CreateDirectory((Join-Path $root 'hooks')) | Out-Null
+    foreach ($f in 'hooks.json', 'routing.json') { [IO.File]::Copy((Join-Path (Get-Location) "hooks/$f"), (Join-Path $root "hooks/$f"), $true) }
+    $expected = Get-Content -Raw -LiteralPath 'hooks/routing.json' | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 5
+    $command = (Get-Content -Raw -LiteralPath 'hooks/hooks.json' | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].powershell
+    function Test-Hook([string]$cmd) {
+      $env:COPILOT_PLUGIN_ROOT = $root
+      Push-Location -LiteralPath $env:RUNNER_TEMP
+      try { $out = & ([scriptblock]::Create($cmd)) | Out-String; ($out | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 5) -eq $expected }
+      catch { $false }
+      finally { Pop-Location }
+    }
+    if (-not (Test-Hook $command)) { throw "PowerShell $($PSVersionTable.PSVersion): the hook command did not print routing.json" }
+    if (Test-Hook $command.Replace('-LiteralPath', '-Path')) { throw "mutation survived: -Path instead of -LiteralPath" }
+    Write-Host "PowerShell $($PSVersionTable.PSVersion): hook command prints routing.json; the -Path mutation fails"
+
 jobs:
   framework:
     runs-on: ubuntu-latest
@@ -207,6 +241,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Run the session hook's command in Git Bash
+        shell: bash
+        run: eval "$TEST_HOOK_SH"
+
+      - name: Run the session hook's PowerShell command (pwsh)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: Invoke-Expression $env:TEST_HOOK_PS
+
+      - name: Run the session hook's PowerShell command (Windows PowerShell 5.1)
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: Invoke-Expression $env:TEST_HOOK_PS
 
       - name: Seed an old script install
         shell: bash
