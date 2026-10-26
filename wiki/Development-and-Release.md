@@ -70,6 +70,7 @@ feature-crew/
 ├── .claude-plugin/             # plugin manifest and its marketplace
 ├── skills/fc-*/               # eleven skills
 ├── agents/fc-*.md             # six unpinned role prompts
+├── hooks/                     # SessionStart routing hook and its payload
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test
 ├── wiki/                      # this wiki: English pages and -zh-CN twins

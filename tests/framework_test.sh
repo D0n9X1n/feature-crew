@@ -54,7 +54,7 @@ skill_files() { find skills -name 'SKILL.md' | sort; }
 framework_files() {
   find agents -name '*.md'
   find skills -name '*.md'
-  printf '%s\n' README.md .claude/CLAUDE.md
+  printf '%s\n' README.md .claude/CLAUDE.md hooks/routing.json
 }
 
 echo "== Feature-Crew framework tests =="
@@ -3486,6 +3486,95 @@ for t71_engine in "${t71_engines[@]}"; do
                                  || bad "T71 replay ($t71_engine): $t71_label" "got $t71_got, want $t71_want"
   done
 done
+
+# ---------------------------------------------------------------- T79
+# The plugin's SessionStart hook puts the routing contract into every session
+# on both hosts. Claude Code reads only hookSpecificOutput.additionalContext
+# and Copilot CLI only the top-level additionalContext, so routing.json holds
+# the same text under both; keeping it in a file keeps JSON off the command
+# line, where Windows argv quoting into PowerShell strips double quotes. The
+# check runs the configured commands themselves, from a root with a space in
+# its path, from a working directory outside it: `command` under bash, and
+# `powershell` under pwsh when available (FC_STRICT fails a missing pwsh).
+t79_check() { # $1 = plugin root, $2 = pwsh path or empty; prints issues
+  python3 - "$1" "$2" <<'PY'
+import json, os, pathlib, subprocess, sys
+root, pwsh = pathlib.Path(sys.argv[1]), sys.argv[2]
+errs = []
+def load(p):
+    try:
+        return json.loads((root / p).read_text())
+    except Exception:
+        errs.append(f"{p}:unreadable"); return {}
+hooks, routing = load("hooks/hooks.json"), load("hooks/routing.json")
+events = hooks.get("hooks") or {}
+if list(events) != ["SessionStart"]: errs.append("events-not-only-SessionStart")
+groups = events.get("SessionStart") or [{}]
+if len(groups) != 1 or "matcher" in groups[0]: errs.append("one-group-without-matcher")
+entries = groups[0].get("hooks") or [{}]
+entry = entries[0]
+if len(entries) != 1 or entry.get("type") != "command": errs.append("one-command-hook")
+hso = routing.get("hookSpecificOutput") or {}
+text = hso.get("additionalContext", "")
+if set(routing) != {"additionalContext", "hookSpecificOutput"}: errs.append("routing-keys")
+if hso != {"hookEventName": "SessionStart", "additionalContext": text}: errs.append("hook-specific-output-shape")
+if routing.get("additionalContext") != text: errs.append("host-texts-differ")
+if not text.isascii() or not 0 < len(text) <= 900: errs.append("text-not-ascii-or-over-900")
+for need in ("/fc-build-or-fix", "/fc-ship", "/fc-review"):
+    if need not in text: errs.append(f"text-missing:{need}")
+if "| One discoverable fact |" in text: errs.append("text-duplicates-classifier")
+def run(argv, var):
+    env = dict(os.environ); env.pop("CLAUDE_PLUGIN_ROOT", None); env.pop("COPILOT_PLUGIN_ROOT", None)
+    env[var] = str(root)
+    try:
+        out = subprocess.run(argv, env=env, cwd="/", capture_output=True, text=True, timeout=60).stdout
+        return json.loads(out) == routing
+    except Exception:
+        return False
+if not run(["bash", "-c", entry.get("command", "")], "CLAUDE_PLUGIN_ROOT"): errs.append("bash-command-output")
+if pwsh and not run([pwsh, "-NoProfile", "-Command", entry.get("powershell", "")], "COPILOT_PLUGIN_ROOT"):
+    errs.append("powershell-command-output")
+print(" ".join(errs))
+PY
+}
+t79_mutate() { # $1 = plugin root, $2 = mutation
+  python3 - "$1" "$2" <<'PY'
+import json, pathlib, sys
+root, m = pathlib.Path(sys.argv[1]), sys.argv[2]
+hp, rp = root / "hooks/hooks.json", root / "hooks/routing.json"
+h, r = json.loads(hp.read_text()), json.loads(rp.read_text())
+e = h["hooks"]["SessionStart"][0]["hooks"][0]
+if m == "texts-differ": r["additionalContext"] += " x"
+elif m == "single-quoted-root": e["command"] = e["command"].replace('"', "'")
+elif m == "unquoted-root": e["command"] = e["command"].replace('"', "")
+elif m == "no-literal-path": e["powershell"] = e["powershell"].replace("-LiteralPath", "-Path")
+elif m == "matcher": h["hooks"]["SessionStart"][0]["matcher"] = "startup"
+elif m == "over-cap": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = "/fc-build-or-fix /fc-ship /fc-review " + "x" * 900
+elif m == "no-ship": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace("/fc-ship", "shipping")
+elif m == "event-name": r["hookSpecificOutput"]["hookEventName"] = "UserPromptSubmit"
+hp.write_text(json.dumps(h)); rp.write_text(json.dumps(r))
+PY
+}
+if ! command -v python3 >/dev/null 2>&1; then
+  skip "T79 session routing hook (python3 unavailable)"
+else
+  t79_dir=$(mktemp -d); CLEANUP_PATHS+=("$t79_dir")
+  t79_root="$t79_dir/plugin [root]"
+  mkdir -p "$t79_root"
+  cp -R hooks "$t79_root/" 2>/dev/null
+  t79_out=$(t79_check "$t79_root" "${PWSH_BIN:-}")
+  [ -z "$t79_out" ] && ok "T79 SessionStart hook prints the routing contract for both hosts (bash${PWSH_BIN:+ and pwsh})" \
+                    || bad "T79 session routing hook" "issues:${t79_out:-python-failed}"
+  [ -n "${PWSH_BIN:-}" ] || skip "T79 PowerShell hook command (pwsh unavailable; set PWSH)"
+  # A mutation counts only against a clean baseline; otherwise every mutation
+  # "fails" for the baseline's reason and the check proves nothing.
+  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name unquoted-root ${PWSH_BIN:+no-literal-path}; do
+    rm -rf "$t79_root/hooks"; cp -R hooks "$t79_root/"
+    t79_mutate "$t79_root" "$t79_m"
+    [ -n "$(t79_check "$t79_root" "${PWSH_BIN:-}")" ] && ok "T79 mutation caught: $t79_m" \
+                                                       || bad "T79 mutation survived" "$t79_m"
+  done
+fi
 
 echo
 if [ "$SKIP" -gt 0 ]; then

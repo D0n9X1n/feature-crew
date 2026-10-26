@@ -31,6 +31,14 @@ copilot plugin install feature-crew@feature-crew
 
 精确的分类器只在 `skills/fc-build-or-fix/SKILL.md` 中写一次；本页不重复它。也可以直接使用这些命令：`/fc-research`、`/fc-grill-me`、`/fc-brainstorm`、`/fc-debug`、`/fc-explain`、`/fc-build-or-fix`、`/fc-ship`、`/fc-clean`、`/fc-review`、`/fc-second-opinion` 和 `/fc-update`。
 
+## 会话路由
+
+技能只有在模型选择时才会运行，所以代码变更可能跳过 `/fc-build-or-fix`，尤其是一个小请求逐渐扩大成新仓库、重构或发布时。插件的 SessionStart 钩子会把一段简短的路由约定放进会话：在 Claude Code 中是启动、恢复、`/clear` 和压缩时；在 GitHub Copilot CLI 中是会话开始和恢复时。它输出 [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json)：把代码变更指向 `/fc-build-or-fix`，任务中途范围扩大时重新路由，推送、合并、发布和清理用 `/fc-ship`，跳过流程的工作在推送前用 `/fc-review`。不改代码的问题不受影响。这段文字只是指引，不是强制：它让路由更可能发生，但不能保证。要关闭它，用 `claude plugin disable feature-crew@feature-crew` 或 `copilot plugin disable feature-crew@feature-crew` 停用插件。
+
+**已知限制。**
+- Copilot CLI 在压缩后没有可用的钩子来源，所以压缩后的 Copilot 会话只依靠技能描述（[copilot-cli#5225](https://github.com/github/copilot-cli/issues/5225)）。
+- 原生 Windows 上的 Claude Code 需要 Git for Windows 才能运行这个钩子。没有 Git Bash 时，Claude Code 在 PowerShell 中运行钩子，钩子读不到自己的安装路径；它会失败，但不会阻塞会话。
+
 ## 清理
 
 目标达成后，Feature-Crew 以 `/fc-clean` 收尾。只要 `/goal` 或 Copilot autopilot 的目标尚未达成，它就不会运行。它先归档成果：按授权提交、推送、合并，并向你报告。然后只删除任务能证明由自己创建的内容：临时根目录、worktree、已合并的分支、stash、后台进程和过期的远程跟踪引用，不做备份。未提交、未合并、正在使用或来源不明的内容都会保留，并在一个问题里列出。你也可以运行 `/fc-clean` 或说“清理一下”来手动启动它。

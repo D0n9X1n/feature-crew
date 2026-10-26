@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat \"${CLAUDE_PLUGIN_ROOT}/hooks/routing.json\"",
+            "powershell": "Get-Content -Raw -LiteralPath \"$env:COPILOT_PLUGIN_ROOT/hooks/routing.json\""
+          }
+        ]
+      }
+    ]
+  }
+}
