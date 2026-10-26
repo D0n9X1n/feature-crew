@@ -3520,7 +3520,10 @@ if set(routing) != {"additionalContext", "hookSpecificOutput"}: errs.append("rou
 if hso != {"hookEventName": "SessionStart", "additionalContext": text}: errs.append("hook-specific-output-shape")
 if routing.get("additionalContext") != text: errs.append("host-texts-differ")
 if not text.isascii() or not 0 < len(text) <= 900: errs.append("text-not-ascii-or-over-900")
-for need in ("/fc-build-or-fix", "/fc-ship", "/fc-review"):
+# The contract's clauses: what triggers routing, re-routing grown scope, the
+# delivery and review pointers, and leaving non-code questions alone.
+for need in ("build, fix, change, refactor, implement, add, or extend code", "invoke /fc-build-or-fix before editing",
+             "grows mid-way", "route the new scope through /fc-build-or-fix", "/fc-ship", "/fc-review", "change no code"):
     if need not in text: errs.append(f"text-missing:{need}")
 if "| One discoverable fact |" in text: errs.append("text-duplicates-classifier")
 def run(argv, var):
@@ -3552,6 +3555,12 @@ elif m == "matcher": h["hooks"]["SessionStart"][0]["matcher"] = "startup"
 elif m == "over-cap": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = "/fc-build-or-fix /fc-ship /fc-review " + "x" * 900
 elif m == "no-ship": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace("/fc-ship", "shipping")
 elif m == "event-name": r["hookSpecificOutput"]["hookEventName"] = "UserPromptSubmit"
+elif m in ("no-trigger", "no-reroute", "no-exemption"):
+    cut = {"no-trigger": "When a request asks to build, fix, change, refactor, implement, add, or extend code, ",
+           "no-reroute": "If a task grows mid-way, such as a new repository, a refactor, or a release, pause and route the new scope through /fc-build-or-fix instead of continuing inline. ",
+           "no-exemption": " Questions that change no code need none of this."}[m]
+    assert cut in r["additionalContext"], m
+    r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace(cut, "")
 hp.write_text(json.dumps(h)); rp.write_text(json.dumps(r))
 PY
 }
@@ -3568,7 +3577,7 @@ else
   [ -n "${PWSH_BIN:-}" ] || skip "T79 PowerShell hook command (pwsh unavailable; set PWSH)"
   # A mutation counts only against a clean baseline; otherwise every mutation
   # "fails" for the baseline's reason and the check proves nothing.
-  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name unquoted-root ${PWSH_BIN:+no-literal-path}; do
+  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name no-trigger no-reroute no-exemption unquoted-root ${PWSH_BIN:+no-literal-path}; do
     rm -rf "$t79_root/hooks"; cp -R hooks "$t79_root/"
     t79_mutate "$t79_root" "$t79_m"
     [ -n "$(t79_check "$t79_root" "${PWSH_BIN:-}")" ] && ok "T79 mutation caught: $t79_m" \
