@@ -3644,6 +3644,7 @@ t80_rules=(
   'complex-spec-skip|complex|^## Flow|^## |write it inline without them only after an explicit skip.'
   'complex-spec-waiver|complex|^## Flow|^## |Under autonomy, the recorded waiver (*Think first* in `/fc-build-or-fix`) is the evidence.'
   'complex-plan-waiver|complex|^## Flow|^## |7. **User approves the plan.** Hard gate. Under autonomy, the recorded waiver is the evidence.'
+  "brainstorm-flow-no-grill|brainstorm|^## 1 — Frame|^## |If another flow invoked this skill, do not grill: list the missing requirement in your result for that flow's grill."
   'brainstorm-pipeline|brainstorm|^## 5 — Spec|^## |If another flow invoked this skill, return the approaches and your recommendation to it now, without writing or approving a spec'
   'brainstorm-confirm-round|brainstorm|^## 5 — Spec|^## |or for one question confirming the plan when none remain'
   'brainstorm-no-bof|brainstorm|^## 5 — Spec|^## |Never invoke `/fc-build-or-fix` from inside a flow.'
@@ -3660,6 +3661,7 @@ t80_stale=(
   'bof-old-complex-entry|bof|Entry requires an approved spec from `/fc-brainstorm` or one written inline'
   'complex-old-spec-source|complex|From `/fc-brainstorm`, or write one inline.'
   'brainstorm-old-handoff|brainstorm|return the approved spec and approval evidence to the originator'
+  'brainstorm-old-frame-grill|brainstorm|If a user-owned requirement is missing, use the canonical need classifier'
   'brainstorm-old-grill-scope|brainstorm|invoke `/fc-grill-me` only for remaining user-owned decisions'
   'survey-old-exemption|survey|Survey before the first design unless the design is super straightforward'
   'readme-two-designs|readme|Two designs before building'

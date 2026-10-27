@@ -13,7 +13,7 @@ Restate the problem in one sentence and name the constraint that matters most. L
 
 Then survey industry practice per [industry-survey.md](../fc-build-or-fix/reference/industry-survey.md): reuse a survey the caller passed in; when the user invoked this skill directly without one, dispatch one search author with an explicit `model` override from the authoring rule in `/fc-build-or-fix`, then one validator chosen by its selector, in the `/fc-research` focused-path format. When another flow invoked it without a survey, return to that flow to survey first. Each survey prompt ends with: "Do not call `Agent`, `Skill`, `Workflow`, or delegate any part of the task."
 
-If a user-owned requirement is missing, use the canonical need classifier in `/fc-build-or-fix`: its leaf exception lets this flow call `/fc-grill-me`, which resolves that category and returns here before the panel runs.
+If another flow invoked this skill, do not grill: list the missing requirement in your result for that flow's grill. Invoked directly, if a user-owned requirement is missing, use the canonical need classifier in `/fc-build-or-fix`: its leaf exception lets this flow call `/fc-grill-me`, which resolves that category and returns here before the panel runs.
 
 ## 2 — Panel
 
