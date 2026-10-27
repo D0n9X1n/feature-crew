@@ -415,7 +415,8 @@ fi
 echo
 # ---------------------------------------------------------------- T61
 # Every Standard/Complex design checks both directions and component fitness,
-# carries a component map, and compares a blind second design unless it is
+# carries a component map, and gets a second opinion: the /fc-brainstorm panel
+# when the think-first pass ran, otherwise a blind second design unless it is
 # super straightforward. Section-scoped like T55: each clause counts only in
 # its own section, and after the unmodified documents pass, removing one clause
 # must produce exactly its own diagnostic. Handoff rules include their links,
@@ -475,7 +476,7 @@ t61_rules=(
   'approval waivers do not waive this step.'
   'Exception: the blind second design runs alongside the first ([reference/design-check.md](reference/design-check.md)).'
   'files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets'
-  'Run [reference/design-check.md](reference/design-check.md), including its blind second opinion unless the design is super straightforward.'
+  'Run [reference/design-check.md](reference/design-check.md); the `/fc-brainstorm` panel is its second opinion, and after an explicit skip its blind second opinion applies unless the design is super straightforward.'
   'In parallel, dispatch the blind second designer per [design-check.md](design-check.md)'
   'then resume the architect with its sketch to compare and reconcile in the plan.'
   'components that duplicate existing code or fail the fitness check'
@@ -604,7 +605,7 @@ t72_sections=(
 )
 t72_rules=(
   'research informs the design, never the requirements.'
-  'Survey before the first design unless the design is super straightforward'
+  'Survey before every Standard and Complex design unless the user explicitly skipped research for that change'
   'Just Do It never surveys.'
   'Reuse a survey for an unchanged problem; never repeat it.'
   'Route it through `/fc-research`: the focused path for one bounded question, the full pipeline for a broad one.'
@@ -623,7 +624,7 @@ t72_rules=(
   '`requirement | alternative + evidence | gain | sacrifice | reversibility | compliant fallback`'
   'keep the compliant design until the user decides.'
   'The user decides each row; approval waivers do not decide it.'
-  'Survey per [reference/industry-survey.md](reference/industry-survey.md), then write a bullet spec'
+  'research through `/fc-research` per [reference/industry-survey.md](reference/industry-survey.md)'
   'prior-art table and any trade-off rows'
   'Survey first per [industry-survey.md](industry-survey.md); its evidence goes into the spec and, unchanged, to the architect and the blind second designer.'
   'A better design that needs a stated requirement relaxed follows the trade-off rule in [industry-survey.md](industry-survey.md).'
@@ -971,8 +972,12 @@ bs_spec=$(sed -n '/^## 5 — Spec/,/^## /p' "$brainstorm")
 bs_caps=$(sed -n '/^## Caps/,/^## /p' "$brainstorm")
 echo "$bs_panel" | grep -qE '^> .*Do not call `Agent`, `Skill`, `Workflow`, or delegate' \
   || t33_err="$t33_err brainstorm-panel-delegation-not-forbidden"
-echo "$bs_spec" | grep -qiE 'another flow invoked.*return.*approved spec.*originator' \
-  || t33_err="$t33_err brainstorm-does-not-return-approved-spec"
+echo "$bs_spec" | grep -qiE 'another flow invoked.*return the approaches.*recommendation.*without writing or approving a spec' \
+  || t33_err="$t33_err brainstorm-pipeline-not-approaches-only"
+echo "$bs_spec" | grep -qiE 'invoked directly: once the user picks a direction, invoke `/fc-grill-me`' \
+  || t33_err="$t33_err brainstorm-direct-flow-missing"
+echo "$bs_spec" | grep -qiF 'return the approved spec and approval evidence' \
+  && t33_err="$t33_err brainstorm-stale-approved-spec-handoff"
 echo "$bs_spec" | grep -qF 'Hand off to `/fc-build-or-fix`' \
   && t33_err="$t33_err brainstorm-unconditional-build-handoff"
 echo "$bs_spec" | grep -qiE 'only if the user invoked.*directly.*offer.*fc-build-or-fix' \
@@ -3520,10 +3525,14 @@ if set(routing) != {"additionalContext", "hookSpecificOutput"}: errs.append("rou
 if hso != {"hookEventName": "SessionStart", "additionalContext": text}: errs.append("hook-specific-output-shape")
 if routing.get("additionalContext") != text: errs.append("host-texts-differ")
 if not text.isascii() or not 0 < len(text) <= 900: errs.append("text-not-ascii-or-over-900")
-# The contract's clauses: what triggers routing, re-routing grown scope, the
-# delivery and review pointers, and leaving non-code questions alone.
+# The contract's clauses: what triggers routing, the think-first pass, re-routing
+# grown scope, delivery and review, routing plain questions, and autonomy.
 for need in ("build, fix, change, refactor, implement, add, or extend code", "invoke /fc-build-or-fix before editing",
-             "grows mid-way", "route the new scope through /fc-build-or-fix", "/fc-ship", "/fc-review", "change no code"):
+             "researches, brainstorms, and asks the user before building",
+             "grows mid-way", "route the new scope through /fc-build-or-fix", "/fc-ship", "/fc-review",
+             "evidence from several places goes to /fc-research", "a choice between approaches to /fc-brainstorm",
+             "an unexplained failure to /fc-debug", "answer simple questions directly",
+             "In a /goal or Copilot autopilot session", "'you handle all', ask the user nothing"):
     if need not in text: errs.append(f"text-missing:{need}")
 if "| One discoverable fact |" in text: errs.append("text-duplicates-classifier")
 def run(argv, var):
@@ -3555,10 +3564,12 @@ elif m == "matcher": h["hooks"]["SessionStart"][0]["matcher"] = "startup"
 elif m == "over-cap": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = "/fc-build-or-fix /fc-ship /fc-review " + "x" * 900
 elif m == "no-ship": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace("/fc-ship", "shipping")
 elif m == "event-name": r["hookSpecificOutput"]["hookEventName"] = "UserPromptSubmit"
-elif m in ("no-trigger", "no-reroute", "no-exemption"):
+elif m in ("no-trigger", "no-reroute", "no-think-first", "no-question-routing", "no-autonomy"):
     cut = {"no-trigger": "When a request asks to build, fix, change, refactor, implement, add, or extend code, ",
            "no-reroute": "If a task grows mid-way, such as a new repository, a refactor, or a release, pause and route the new scope through /fc-build-or-fix instead of continuing inline. ",
-           "no-exemption": " Questions that change no code need none of this."}[m]
+           "no-think-first": ", and other work researches, brainstorms, and asks the user before building",
+           "no-question-routing": "A question that needs evidence from several places goes to /fc-research, a choice between approaches to /fc-brainstorm, and an unexplained failure to /fc-debug; answer simple questions directly. ",
+           "no-autonomy": " In a /goal or Copilot autopilot session, or after the user says 'you handle all', ask the user nothing; /fc-build-or-fix says how to decide alone."}[m]
     assert cut in r["additionalContext"], m
     r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace(cut, "")
 hp.write_text(json.dumps(h)); rp.write_text(json.dumps(r))
@@ -3577,13 +3588,124 @@ else
   [ -n "${PWSH_BIN:-}" ] || skip "T79 PowerShell hook command (pwsh unavailable; set PWSH)"
   # A mutation counts only against a clean baseline; otherwise every mutation
   # "fails" for the baseline's reason and the check proves nothing.
-  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name no-trigger no-reroute no-exemption unquoted-root ${PWSH_BIN:+no-literal-path}; do
+  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name no-trigger no-reroute no-think-first no-question-routing no-autonomy unquoted-root ${PWSH_BIN:+no-literal-path}; do
     rm -rf "$t79_root/hooks"; cp -R hooks "$t79_root/"
     t79_mutate "$t79_root" "$t79_m"
     [ -n "$(t79_check "$t79_root" "${PWSH_BIN:-}")" ] && ok "T79 mutation caught: $t79_m" \
                                                        || bad "T79 mutation survived" "$t79_m"
   done
 fi
+
+
+# ---------------------------------------------------------------- T80
+# v6.3.0 think first: Standard and Complex run research, brainstorm, and grill
+# before the spec; only an explicit skip removes that pass; an autonomous
+# session (/goal, Copilot autopilot, "you handle all") asks the user nothing,
+# waives only user-owned approvals, and takes the safe default on one-way
+# doors. One canonical paragraph in fc-build-or-fix; every place that asks the
+# user points to it. Section-scoped like T70: each clause counts only in its own
+# section, replaced wording stays gone, and removing one clause must produce
+# exactly its own diagnostic.
+t80_err=""
+t80_doc_bof=skills/fc-build-or-fix/SKILL.md
+t80_doc_pm=agents/fc-pm.md
+t80_doc_complex=skills/fc-build-or-fix/reference/complex-track.md
+t80_doc_brainstorm=skills/fc-brainstorm/SKILL.md
+t80_doc_grill=skills/fc-grill-me/SKILL.md
+t80_doc_ship=skills/fc-ship/SKILL.md
+t80_doc_clean=skills/fc-clean/SKILL.md
+t80_doc_survey=skills/fc-build-or-fix/reference/industry-survey.md
+t80_doc_design=skills/fc-build-or-fix/reference/design-check.md
+t80_doc_readme=README.md
+t80_docs=(bof pm complex brainstorm grill ship clean survey design readme)
+# label|doc|section start|section end|clause
+t80_rules=(
+  'tf-sequence|bof|^## Step 1|^## |Standard and Complex run `/fc-research`, then `/fc-brainstorm`, then `/fc-grill-me` before the spec'
+  'tf-return-to-pm|bof|^## Step 1|^## |each returning to the PM before the next starts'
+  'tf-chosen-approach|bof|^## Step 1|^## |an approach the user already chose enters the panel as one stance.'
+  'tf-one-round|bof|^## Step 1|^## |The grill always asks at least one round: the open decisions, or one question confirming the plan, never invented ones.'
+  'tf-explicit-skip|bof|^## Step 1|^## |Only an explicit request such as "skip the research" or "no questions, just build it" skips all three, for that change only'
+  'tf-skip-note|bof|^## Step 1|^## |say in one line what was skipped.'
+  'tf-go-for-it|bof|^## Step 1|^## |A plain approval such as "go for it" skips nothing.'
+  'tf-autonomy-modes|bof|^## Step 1|^## |Autonomy means a Claude Code `/goal` or Copilot autopilot session, or the user saying "you handle all"'
+  "tf-autonomy-lifetime|bof|^## Step 1|^## |it lasts through that goal's cleanup and final report, then clears."
+  'tf-auto-mode|bof|^## Step 1|^## |Auto mode alone is not autonomy.'
+  'tf-checkpoint|bof|^## Step 1|^## |Record a skip or autonomy in the checkpoint.'
+  'tf-ask-nothing|bof|^## Step 1|^## |Under autonomy, ask the user nothing: research and brainstorm still run, and an autopilot continuation does not cancel them'
+  "tf-own-call|bof|^## Step 1|^## |answer every user question and waive every user-owned approval with your recommendation, record each as your call, never the user's"
+  'tf-gate-boundary|bof|^## Step 1|^## |Autonomy never stands in for a cross-family review, Tech Lead approval, verification evidence, spec compliance, or host permissions, and never passes an unsatisfied gate.'
+  'tf-one-way-door|bof|^## Step 1|^## |On a one-way door take the safe default: keep the stated requirement, stay under every line and dispatch cap, keep uncertain leftovers, and merge or release only when the goal or instruction covers delivery.'
+  'classifier-pass-not-routing|bof|^## Need classifier|^## |The *Think first* pass below is not routing: it is a fixed top-level sequence whose skills each return to the PM before the next starts, with no nesting and no cycles.'
+  'standard-think-first|bof|^### Standard|^### |take the approaches and recommendation from `/fc-brainstorm`, settle the direction and decisions with `/fc-grill-me`, then write a bullet spec in chat'
+  'complex-entry|bof|^### Complex|^## |Entry requires an approved spec written after the *Think first* pass, or inline after an explicit skip'
+  'gates-autonomy|bof|^## Hard gates|^## |Autonomy (*Think first*) waives only gates 1–3.'
+  'pm-autonomy|pm|^## User override|^## |Under autonomy (*Think first* in `/fc-build-or-fix`) the agent waives these approvals itself and records each as its call.'
+  'complex-spec-pass|complex|^## Flow|^## |Then take the approaches from `/fc-brainstorm`, settle decisions with `/fc-grill-me`, and write the spec'
+  'complex-spec-skip|complex|^## Flow|^## |write it inline without them only after an explicit skip.'
+  'complex-spec-waiver|complex|^## Flow|^## |Under autonomy, the recorded waiver (*Think first* in `/fc-build-or-fix`) is the evidence.'
+  'complex-plan-waiver|complex|^## Flow|^## |7. **User approves the plan.** Hard gate. Under autonomy, the recorded waiver is the evidence.'
+  "brainstorm-flow-no-grill|brainstorm|^## 1 — Frame|^## |If another flow invoked this skill, do not grill: list the missing requirement in your result for that flow's grill."
+  'brainstorm-pipeline|brainstorm|^## 5 — Spec|^## |If another flow invoked this skill, return the approaches and your recommendation to it now, without writing or approving a spec'
+  'brainstorm-confirm-round|brainstorm|^## 5 — Spec|^## |or for one question confirming the plan when none remain'
+  'brainstorm-no-bof|brainstorm|^## 5 — Spec|^## |Never invoke `/fc-build-or-fix` from inside a flow.'
+  'grill-autonomy|grill|^Four rules:|^## |In an autonomous session (*Think first* in `/fc-build-or-fix`), ask nothing: answer each question with your recommendation, record it as your call, and report it.'
+  'ship-autonomy|ship|^## 1 — Authorize|^## |ask nothing: the goal or instruction is the approval, and merge or release only when it covers delivery.'
+  'clean-autonomy|clean|^## Keep, ask once, report|^## |In an autonomous session (*Think first* in `/fc-build-or-fix`), keep them and report instead of asking.'
+  'survey-when|survey|^## When|^## |Survey before every Standard and Complex design unless the user explicitly skipped research for that change'
+  'survey-autonomy|survey|^## Requirement trade-offs|^## |In an autonomous session the compliant design stands and the row is reported.'
+  'design-panel|design|^## Second opinion|^## |A Standard design whose `/fc-brainstorm` panel ran already has its second opinion, so this applies to Complex plans and to Standard work after an explicit skip.'
+  'readme-think-first|readme|^## Features|^## |- **Think first:** Standard and Complex changes research, compare three approaches, and ask you before the spec'
+)
+# label|doc|replaced wording that must stay absent from the whole document
+t80_stale=(
+  'bof-old-complex-entry|bof|Entry requires an approved spec from `/fc-brainstorm` or one written inline'
+  'complex-old-spec-source|complex|From `/fc-brainstorm`, or write one inline.'
+  'brainstorm-old-handoff|brainstorm|return the approved spec and approval evidence to the originator'
+  'brainstorm-old-frame-grill|brainstorm|If a user-owned requirement is missing, use the canonical need classifier'
+  'brainstorm-old-grill-scope|brainstorm|invoke `/fc-grill-me` only for remaining user-owned decisions'
+  'survey-old-exemption|survey|Survey before the first design unless the design is super straightforward'
+  'readme-two-designs|readme|Two designs before building'
+)
+t80_contract() { # root holding the t80_doc_* paths
+  local entry label doc from to text path section errors=""
+  for entry in "${t80_rules[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t80_doc_$doc"
+    section=$(sed -n "/$from/,/$to/p" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] || errors="$errors $label"
+  done
+  for entry in "${t80_stale[@]}"; do
+    IFS='|' read -r label doc text <<< "$entry"
+    path="t80_doc_$doc"
+    grep -qF -- "$text" "$1/${!path}" 2>/dev/null && errors="$errors stale:$label"
+  done
+  printf '%s\n' "$errors"
+}
+t80_out=$(t80_contract .)
+t80_err="$t80_err$t80_out"
+if [ -z "$t80_err" ]; then
+  t80_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t80_mut")
+  for t80_doc in "${t80_docs[@]}"; do
+    t80_path="t80_doc_$t80_doc"
+    mkdir -p "$t80_mut/$(dirname "${!t80_path}")" && cp "${!t80_path}" "$t80_mut/${!t80_path}"
+  done
+  for t80_entry in "${t80_rules[@]}"; do
+    IFS='|' read -r t80_label t80_doc t80_from t80_to t80_text <<< "$t80_entry"
+    t80_path="t80_doc_$t80_doc"
+    t80_orig=$(cat "${!t80_path}")
+    printf '%s\n' "${t80_orig/"$t80_text"/}" > "$t80_mut/${!t80_path}"
+    t80_mut_out=$(t80_contract "$t80_mut")
+    cp "${!t80_path}" "$t80_mut/${!t80_path}"
+    if [ "$t80_mut_out" = " $t80_label" ]; then
+      ok "T80 removal mutation: $t80_label rejected by its own check"
+    else
+      bad "T80 removal mutation: $t80_label" "got '${t80_mut_out:-<empty>}', want ' $t80_label'"
+    fi
+  done
+fi
+[ -z "$t80_err" ] && ok "T80 static contract alarm: think-first pass, explicit skip, and autonomy pinned with their pointers" \
+                   || bad "T80 think-first contract" "missing:$t80_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then

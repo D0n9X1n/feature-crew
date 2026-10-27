@@ -12,7 +12,7 @@ Four rules:
 1. **One question at a time.** Wait for the answer before asking the next. Several questions at once is bewildering.
 2. **Every question ships with your recommended answer** and a one-line reason. The user confirms or overrides — they should never have to compose an answer from scratch.
 3. **Facts you look up; decisions you ask.** If something is discoverable in the environment — filesystem, git history, dependencies, test commands, existing patterns — go find it. Never ask the user something you could have read. The decisions are theirs.
-4. **Do not act until the user confirms shared understanding.** No code, no files, no implementation. This skill only produces agreement.
+4. **Do not act until the user confirms shared understanding.** No code, no files, no implementation. This skill only produces agreement. In an autonomous session (*Think first* in `/fc-build-or-fix`), ask nothing: answer each question with your recommendation, record it as your call, and report it.
 
 Order questions by dependency: resolve what constrains other choices first. When a decision is reversible, say so — it deserves less deliberation than a one-way door.
 

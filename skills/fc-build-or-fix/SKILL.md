@@ -20,14 +20,14 @@ Users describe the need naturally; slash-command knowledge is not required. At e
 | A chosen consequential decision needing adversarial confidence | Invoke `/fc-second-opinion`. |
 | An unexplained failure or unproven cause | Invoke `/fc-debug`. A known cause goes straight to its track. |
 
-Do not grill for facts, research preferences, brainstorm an already chosen approach, or use second-opinion to make the initial choice. A subskill resolves one category and returns its result, with receipts for anything it created, to the originating flow; the originator may reclassify a distinct remaining gap, invoke one next appropriate skill, then resume. A subskill must not self-invoke or recursively invoke another skill; the sole nested-call exception is `/fc-grill-me`, a leaf any flow may call for user-owned decisions. The leaf returns to its caller and cannot invoke skills. Do not repeat the same skill for an unchanged gap: no cycles.
+Do not grill for facts, research preferences, brainstorm an already chosen approach, or use second-opinion to make the initial choice. A subskill resolves one category and returns its result, with receipts for anything it created, to the originating flow; the originator may reclassify a distinct remaining gap, invoke one next appropriate skill, then resume. A subskill must not self-invoke or recursively invoke another skill; the sole nested-call exception is `/fc-grill-me`, a leaf any flow may call for user-owned decisions. The leaf returns to its caller and cannot invoke skills. Do not repeat the same skill for an unchanged gap: no cycles. The *Think first* pass below is not routing: it is a fixed top-level sequence whose skills each return to the PM before the next starts, with no nesting and no cycles.
 
 ## Step 1 — pick a track
 
 | Track | When | Spec | Dispatches |
 |---|---|---|---|
 | **Just Do It** | Straightforward and bounded; obvious solution; no unresolved design; low regression risk; reversible | none | 0 |
-| **Standard** | One coherent feature, modest coupling, no new architecture | bullet list in chat | 2–3 |
+| **Standard** | One coherent feature, modest coupling, no new architecture | bullet list in chat | 7+, or 2–3 after a skip |
 | **Complex** | Multi-module, new subsystem, security or data-integrity central, public API change | doc, ≤1000 words | 6+ |
 
 File count is an optional warning signal, never an eligibility rule: a mirrored low-risk content change across several files can qualify, while a one-line high-risk change cannot. **Just Do It never applies** when the change touches the canonical **escalation list**: runtime behavior, config, auth, secrets, persistence, public API contract, or deploy behavior. This list is stated only here; it controls both the track floor and Standard spec audit.
@@ -35,6 +35,8 @@ File count is an optional warning signal, never an eligibility rule: a mirrored 
 For Standard or Complex, ask: "Proposing **<track>** because <reason>. OK?" User approval remains required unless waived. The PM auto-selects Just Do It from natural language and proceeds without track approval.
 
 Explore before production edits. If exploration reveals ambiguity, coupling, risk, unresolved decisions, or escalation-list scope, stop before production edits and escalate to Standard. Framework-internal changes are Standard maximum; see [reference/meta-work-cap.md](reference/meta-work-cap.md).
+
+**Think first.** Standard and Complex run `/fc-research`, then `/fc-brainstorm`, then `/fc-grill-me` before the spec, each returning to the PM before the next starts; an approach the user already chose enters the panel as one stance. The grill always asks at least one round: the open decisions, or one question confirming the plan, never invented ones. Only an explicit request such as "skip the research" or "no questions, just build it" skips all three, for that change only; say in one line what was skipped. A plain approval such as "go for it" skips nothing. Autonomy means a Claude Code `/goal` or Copilot autopilot session, or the user saying "you handle all"; it lasts through that goal's cleanup and final report, then clears. Auto mode alone is not autonomy. Record a skip or autonomy in the checkpoint. Under autonomy, ask the user nothing: research and brainstorm still run, and an autopilot continuation does not cancel them; answer every user question and waive every user-owned approval with your recommendation, record each as your call, never the user's, and report them at the end. Autonomy never stands in for a cross-family review, Tech Lead approval, verification evidence, spec compliance, or host permissions, and never passes an unsatisfied gate. On a one-way door take the safe default: keep the stated requirement, stay under every line and dispatch cap, keep uncertain leftovers, and merge or release only when the goal or instruction covers delivery.
 
 ## Step 2 — run the track
 
@@ -51,7 +53,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 ### Standard
 
 1. User approves track unless waived.
-2. Survey per [reference/industry-survey.md](reference/industry-survey.md), then write a bullet spec in chat: purpose · files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets · must-pass full-suite command · non-goals · prior-art table and any trade-off rows. Run [reference/design-check.md](reference/design-check.md), including its blind second opinion unless the design is super straightforward. Look up facts; ask only user-owned decisions.
+2. Think first: research through `/fc-research` per [reference/industry-survey.md](reference/industry-survey.md), take the approaches and recommendation from `/fc-brainstorm`, settle the direction and decisions with `/fc-grill-me`, then write a bullet spec in chat: purpose · files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets · must-pass full-suite command · non-goals · prior-art table and any trade-off rows. Run [reference/design-check.md](reference/design-check.md); the `/fc-brainstorm` panel is its second opinion, and after an explicit skip its blind second opinion applies unless the design is super straightforward. Look up facts; ask only user-owned decisions.
 3. **Cross-audit the spec** when it touches the escalation list. Otherwise skip as one of the two exemptions in the audit rule.
 4. User approves spec unless waived.
 5. Implement TDD: failing test → observe failure → minimal code → observe pass → refactor.
@@ -62,7 +64,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 
 ### Complex
 
-Load [reference/complex-track.md](reference/complex-track.md) and follow it. Entry requires an approved spec from `/fc-brainstorm` or one written inline; verify actual approval.
+Load [reference/complex-track.md](reference/complex-track.md) and follow it. Entry requires an approved spec written after the *Think first* pass, or inline after an explicit skip; verify actual approval, or under autonomy the recorded waiver.
 
 ## Hard gates
 
@@ -75,7 +77,7 @@ Blocking; no forward motion until satisfied.
 5. **Implementation matches the approved spec.** Unmet requirements or absent required tests block regardless of severity.
 6. **Tech Lead approval** before merging Complex work.
 
-Verification, spec compliance, and Complex Tech Lead approval cannot be waived. Other findings are advisory unless they confirm correctness, security, or data-loss defects.
+Verification, spec compliance, and Complex Tech Lead approval cannot be waived. Autonomy (*Think first*) waives only gates 1–3. Other findings are advisory unless they confirm correctness, security, or data-loss defects.
 
 ## Cross-family audit at hard gates
 

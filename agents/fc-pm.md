@@ -11,6 +11,6 @@ Never push to `main`. Commit only when the overall user request authorizes it.
 
 ## User override
 
-The user may waive their own Standard/Complex track, spec, or plan approvals. They may not waive verification evidence, full-suite success, spec compliance, or Complex Tech Lead approval. Just Do It removes ceremony, never proof.
+The user may waive their own Standard/Complex track, spec, or plan approvals. They may not waive verification evidence, full-suite success, spec compliance, or Complex Tech Lead approval. Just Do It removes ceremony, never proof. Under autonomy (*Think first* in `/fc-build-or-fix`) the agent waives these approvals itself and records each as its call.
 
 The meta-work cap is not silently overridable. Explicit bypass requires confirmation and, when a commit is authorized, `framework-cap-override: <reason>` in its message.
