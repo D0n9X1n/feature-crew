@@ -4,7 +4,7 @@ Loaded by `/fc-build-or-fix` for every Standard or Complex design, and by `/fc-b
 
 ## When
 
-Survey before the first design unless the design is super straightforward, as [design-check.md](design-check.md) defines it. Just Do It never surveys. Reuse a survey for an unchanged problem; never repeat it.
+Survey before every Standard and Complex design unless the user explicitly skipped research for that change (*Think first* in [../SKILL.md](../SKILL.md)). Just Do It never surveys. Reuse a survey for an unchanged problem; never repeat it.
 
 ## How
 
@@ -20,4 +20,4 @@ A prior-art table, `practice | source | fit with our constraints | evidence`, re
 
 ## Requirement trade-offs
 
-Research never changes a requirement by itself. When the strongest approach needs a stated requirement relaxed, do not drop it silently: record a row, `requirement | alternative + evidence | gain | sacrifice | reversibility | compliant fallback`, and keep the compliant design until the user decides. The user decides each row; approval waivers do not decide it. An accepted row changes the requirement and sends the spec back for approval.
+Research never changes a requirement by itself. When the strongest approach needs a stated requirement relaxed, do not drop it silently: record a row, `requirement | alternative + evidence | gain | sacrifice | reversibility | compliant fallback`, and keep the compliant design until the user decides. The user decides each row; approval waivers do not decide it. In an autonomous session the compliant design stands and the row is reported. An accepted row changes the requirement and sends the spec back for approval.

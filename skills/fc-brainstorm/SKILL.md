@@ -1,11 +1,11 @@
 ---
 name: fc-brainstorm
-description: Generates genuinely different approaches to a problem using a panel of subagents with opposing stances, then converges on one recommendation and writes an approved spec. Use when the user knows the problem but not the solution — "how should I", "what's the best way to", "I'm torn between". Do NOT use for gathering facts (use /fc-research), for pinning down decisions on an approach already chosen (use /fc-grill-me), or for implementing (use /fc-build-or-fix).
+description: Generates genuinely different approaches to a problem using a panel of subagents with opposing stances, then converges on one recommendation; invoked directly, it also writes an approved spec. Use when the user knows the problem but not the solution — "how should I", "what's the best way to", "I'm torn between". Do NOT use for gathering facts (use /fc-research), for pinning down decisions on an approach already chosen (use /fc-grill-me), or for implementing (use /fc-build-or-fix).
 ---
 
 # fc-brainstorm
 
-Produces an approved spec by exploring the solution space before committing to it.
+Explores the solution space before committing to it: returns the approaches and a recommendation to a calling flow, or, invoked directly, produces an approved spec.
 
 ## 1 — Frame
 
@@ -49,11 +49,11 @@ If an approach needs a stated requirement relaxed, show its trade-off row from [
 
 ## 5 — Spec
 
-Once the user picks a direction, invoke `/fc-grill-me` only for remaining user-owned decisions; it returns the settled result here. Then write the spec to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap 1000 words** — over it, decompose into sub-projects.
+If another flow invoked this skill, return the approaches and your recommendation to it now, without writing or approving a spec; that flow grills and writes its own spec (*Think first* in `/fc-build-or-fix`). Invoked directly: once the user picks a direction, invoke `/fc-grill-me` for the remaining user-owned decisions, or for one question confirming the plan when none remain; it returns the settled result here. Then write the spec to `docs/specs/YYYY-MM-DD-<topic>-design.md`. **Hard cap 1000 words** — over it, decompose into sub-projects.
 
 Cross-audit the spec with the dynamic hard-gate selector in `/fc-build-or-fix` before asking for approval. Address CRITICAL findings first.
 
-The user approving the spec is a hard gate. If another flow invoked this skill, return the approved spec and approval evidence to the originator; do not invoke `/fc-build-or-fix`. Only if the user invoked this skill directly, offer `/fc-build-or-fix` after approval.
+The user approving the spec is a hard gate. Never invoke `/fc-build-or-fix` from inside a flow. Only if the user invoked this skill directly, offer `/fc-build-or-fix` after approval.
 
 ## Caps
 

@@ -31,9 +31,15 @@ copilot plugin install feature-crew@feature-crew
 
 精确的分类器只在 `skills/fc-build-or-fix/SKILL.md` 中写一次；本页不重复它。也可以直接使用这些命令：`/fc-research`、`/fc-grill-me`、`/fc-brainstorm`、`/fc-debug`、`/fc-explain`、`/fc-build-or-fix`、`/fc-ship`、`/fc-clean`、`/fc-review`、`/fc-second-opinion` 和 `/fc-update`。
 
+## 先思考再构建
+
+在构建 Standard 或 Complex 变更之前，Feature-Crew 先用 `/fc-research` 调研问题，用 `/fc-brainstorm` 比较三种方案，再用 `/fc-grill-me` 向你提问：至少一轮，问未决的决定，没有未决问题时用一个问题确认计划。Just Do It 变更（明显、低风险、可撤销）跳过这一步。要为某个变更跳过它，请明确说出来，例如“跳过调研”或“不用问了，直接做”；代理会说明跳过了什么。“开始吧”只批准计划，不跳过任何步骤。测试、跨家族审查和规格检查始终运行。
+
+在 Claude Code 的 `/goal` 或 Copilot CLI 的 autopilot 会话中，或在你说“你全权处理”之后，代理不再向你提问，直到该目标的清理和最终报告完成。调研和头脑风暴照常运行。它用自己的推荐回答自己的问题、代你豁免需要你批准的事项，把每一项记录为它自己的决定，并在最后报告。它不能豁免跨家族审查、Tech Lead 批准、验证、规格符合性或宿主权限。对于无法撤销的操作，它选择安全的做法：保留你说明的需求，不超过大小上限，保留无法证明由自己创建的残留，只有在目标涵盖交付时才合并或发布。仅开启 Claude Code 的 auto 模式不算：Feature-Crew 仍会提问。
+
 ## 会话路由
 
-技能只有在模型选择时才会运行，所以代码变更可能跳过 `/fc-build-or-fix`，尤其是一个小请求逐渐扩大成新仓库、重构或发布时。插件的 SessionStart 钩子会把一段简短的路由约定放进会话：在 Claude Code 中是启动、恢复、`/clear` 和压缩时；在 GitHub Copilot CLI 中是会话开始和恢复时。它输出 [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json)：把代码变更指向 `/fc-build-or-fix`，任务中途范围扩大时重新路由，推送、合并、发布和清理用 `/fc-ship`，跳过流程的工作在推送前用 `/fc-review`。不改代码的问题不受影响。这段文字只是指引，不是强制：它让路由更可能发生，但不能保证。要关闭它，用 `claude plugin disable feature-crew@feature-crew` 或 `copilot plugin disable feature-crew@feature-crew` 停用插件。
+技能只有在模型选择时才会运行，所以代码变更可能跳过 `/fc-build-or-fix`，尤其是一个小请求逐渐扩大成新仓库、重构或发布时。插件的 SessionStart 钩子会把一段简短的路由约定放进会话：在 Claude Code 中是启动、恢复、`/clear` 和压缩时；在 GitHub Copilot CLI 中是会话开始和恢复时。它输出 [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json)：把代码变更指向 `/fc-build-or-fix`，任务中途范围扩大时重新路由，推送、合并、发布和清理用 `/fc-ship`，跳过流程的工作在推送前用 `/fc-review`。需要证据的问题交给 `/fc-research`，方案选择交给 `/fc-brainstorm`，无法解释的故障交给 `/fc-debug`，简单问题直接回答；自主会话按上面的“先思考再构建”处理。这段文字只是指引，不是强制：它让路由更可能发生，但不能保证。要关闭它，用 `claude plugin disable feature-crew@feature-crew` 或 `copilot plugin disable feature-crew@feature-crew` 停用插件。
 
 **已知限制。**
 - Copilot CLI 在压缩后没有可用的钩子来源，所以压缩后的 Copilot 会话只依靠技能描述（[copilot-cli#5225](https://github.com/github/copilot-cli/issues/5225)）。Copilot 交互式 `/clear` 后是否会重新注入这段文字尚未测试；只有会话开始和恢复经过验证。

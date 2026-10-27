@@ -9,7 +9,7 @@ Ships authorized work: async CI with a callback, a verified merge, an optional r
 
 ## 1 — Authorize
 
-Commit, push, PR, merge, and tag/publish are separate authorizations; none implies another. Ask for every missing approval in one question up front, then do only what is approved.
+Commit, push, PR, merge, and tag/publish are separate authorizations; none implies another. Ask for every missing approval in one question up front, then do only what is approved. In an autonomous session (*Think first* in `/fc-build-or-fix`), ask nothing: the goal or instruction is the approval, and merge or release only when it covers delivery.
 
 ## 2 — Watch CI asynchronously
 

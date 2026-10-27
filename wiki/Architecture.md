@@ -87,7 +87,6 @@ sequenceDiagram
     actor Dev as Developer
     participant PM as PM in the main session
     participant Sub as Routed skill
-    participant SD as Blind second designer
     participant Aud as Spec auditor
     participant Rec as Session records
     participant QA as fc-qa-code
@@ -99,17 +98,16 @@ sequenceDiagram
     end
     PM->>Dev: propose Standard track, with reason
     Dev-->>PM: approve, or waive
-    par first design
-        PM->>PM: draft bullet spec and component map
-    and blind second opinion
-        PM->>SD: same brief, without the first design
-        SD-->>PM: component map, at most 300 words
-    end
+    PM->>Sub: think first: fc-research, then fc-brainstorm
+    Sub-->>PM: survey, three approaches, a recommendation
+    PM->>Dev: fc-grill-me: direction and open decisions, at least one round
+    Dev-->>PM: answers, or the agent's own calls under autonomy
+    PM->>PM: draft bullet spec and component map
     opt spec touches the escalation list
         PM->>Aud: spec and audit envelope, explicit model
         Aud-->>PM: verdict and findings
     end
-    PM->>Dev: spec with agree, differ, chosen table
+    PM->>Dev: spec with prior-art table and the chosen approach
     Dev-->>PM: approve, or waive
     PM->>PM: TDD, full suite, runtime proof when user-visible
     PM->>Rec: read recorded author model
@@ -137,23 +135,22 @@ sequenceDiagram
 
 **Legend:** the stick figure is a person and the boxes are software participants. A solid arrow is a request or action; a dashed arrow is a reply. `opt`, `alt`, and `par` mark optional, alternative, and parallel steps. The numbers match the walkthrough.
 
-**Takeaway:** a Standard request passes three user checkpoints: the track, the spec, and each ship step. It also needs two proofs that no approval can waive: pasted full-suite output, and spec compliance checked by a reviewer from another model family, where the family comes from the session transcript rather than the requested model name.
+**Takeaway:** a Standard request passes four user checkpoints: the track, the grill, the spec, and each ship step; an autonomous session answers them itself and reports. It also needs two proofs that no approval can waive: pasted full-suite output, and spec compliance checked by a reviewer from another model family, where the family comes from the session transcript rather than the requested model name.
 
 **Walkthrough**
 
 - **1–3 Entry.** The plugin's session hook, and `CLAUDE.md` in this repository, make the playbook the first step for any build, fix, or change. The PM looks up single facts itself and sends any other gap to exactly one skill.
 - **4–5 Track.** Standard fits one coherent feature. Just Do It is ruled out when the change touches the escalation list: runtime behavior, config, auth, secrets, persistence, public API, or deploy behavior.
-- **6–12 Spec.** First the PM surveys industry practice through `fc-research` per [industry-survey.md][survey]: every claim cites a URL, publisher, and date, and a better approach that needs a stated requirement relaxed becomes a trade-off row the user decides. The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. A blind second designer gets the same brief without the first design and returns at most 300 words, and the spec records an agree, differ, and chosen table; only a "super straightforward" design skips it. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
-- **13 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
-- **14–19 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. Whether the reviewer's record satisfies the gate is decided only by the canonical rule in [SKILL.md][bof] (*Cross-family audit at hard gates*); there is no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
-- **20–26 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Once the goal is achieved, `fc-clean` removes what the task's receipts cover and asks once about the rest.
+- **6–14 Spec.** Think first: the PM surveys industry practice through `fc-research` per [industry-survey.md][survey], where every claim cites a URL, publisher, and date and a better approach that needs a stated requirement relaxed becomes a trade-off row the user decides; then `fc-brainstorm` returns three approaches and a recommendation, and `fc-grill-me` settles the direction and open decisions in at least one round. The bullet spec lists purpose, files, a component map, 3–8 behaviors, the must-pass suite command, and non-goals. The panel is the design's second opinion; only after an explicit skip does a blind second designer run instead. A spec that touches the escalation list is audited by a reviewer from another family before the user approves it.
+- **15 Build.** Failing test, observed failure, minimal code, observed pass, refactor; then the full suite with pasted output, and runtime proof for user-visible changes.
+- **16–21 Gate.** The author's family comes from the model the transcript recorded, not the requested alias. `fc-qa-code` reviews spec compliance and code in one-clue mode. Whether the reviewer's record satisfies the gate is decided only by the canonical rule in [SKILL.md][bof] (*Cross-family audit at hard gates*); there is no fallback. CRITICAL is fixed; IMPORTANT is fixed or followed up; at most three fix cycles.
+- **22–28 Ship.** `fc-ship` asks for every missing approval in one question, pushes, and runs one background `gh pr checks --watch`. A failure goes to `fc-debug` and is fixed under the build gates. Before merging it re-checks the head and confirms it contains the base; it merges with `--match-head-commit`, then confirms MERGED and that the merged tree equals the head. Once the goal is achieved, `fc-clean` removes what the task's receipts cover and asks once about the rest.
 
 | Participant | Job in this flow | Key files |
 |---|---|---|
 | Developer | States the need; approves or waives the track and spec; approves each ship step | — |
 | PM in the main session | Runs the playbook, then `fc-ship`; writes the spec and, in Standard, the code; selects and verifies reviewers | [fc-build-or-fix][bof], [fc-ship][ship] |
 | Routed skill | Fills one gap; `fc-debug` also diagnoses CI failures | [fc-debug][debug] and the other routed skills |
-| Blind second designer | An independent component map from the same brief, in one round | [design-check.md][design] |
 | Spec auditor | Reviews a spec that touches the escalation list | [SKILL.md][bof]: *Standard*, step 3 |
 | Session records | The only accepted proof of which model answered | [gate-provenance.md][prov] |
 | fc-qa-code | Standard's combined spec and code review, one verdict | [fc-qa-code.md][qacode] |
@@ -203,7 +200,7 @@ Principles that hold on every track:
 **Inferred**
 
 - Outside this repository, a request reaches the playbook only if Claude Code matches its description to a plain-language request. The repository states that intent but cannot enforce it.
-- In Standard, the PM session writes the code itself: the build step names no developer, and the 2–3 dispatch budget fits the second designer, the optional spec audit, and `fc-qa-code`.
+- In Standard, the PM session writes the code itself: the build step names no developer; dispatches go to the survey, the brainstorm panel, the optional spec audit, and `fc-qa-code`.
 - Claude Code and Copilot CLI load the plugin's `skills/` and `agents/` from their plugin caches.
 
 **Unknown**

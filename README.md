@@ -24,7 +24,7 @@ Then describe the change you want in plain words; Feature-Crew picks the skill a
 - **Need-based routing:** facts are looked up; evidence, decisions, approaches, confidence checks, and unexplained failures each go to one skill that returns to the flow, and a session hook points every Claude Code and Copilot CLI session at that flow.
 - **Right-sized tracks:** Just Do It, Standard, and Complex, each with TDD and hard gates.
 - **Cross-family review:** every hard-gate artifact is reviewed by a model from another family, chosen from the two most capable models the agent can use and proven from the session record.
-- **Two designs before building:** Standard and Complex designs are compared against an independent second design; only a super straightforward Standard design skips it.
+- **Think first:** Standard and Complex changes research, compare three approaches, and ask you before the spec; say "skip the research" to skip that. In `/goal`, Copilot autopilot, or after "you handle all", the agent decides alone and reports its calls.
 - **Researched designs:** Standard and Complex designs start from a cited industry survey; a better approach that needs a requirement relaxed is shown to you as a trade-off.
 - **Verified shipping:** `/fc-ship` watches CI in the background and merges only the verified head.
 - **Clean finish:** once the goal is achieved, `/fc-clean` removes only the leftovers the task can prove it created, with no backups, and asks once about the rest.

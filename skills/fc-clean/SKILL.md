@@ -28,4 +28,4 @@ Check status, worktrees, sessions, and locks. Remove automatically only what a r
 
 ## Keep, ask once, report
 
-Keep dirty or unmerged work, stashes without a receipt, and anything uncertain, and list in one question everything kept that may be removable. Return to the updated base and report the final status and anything kept.
+Keep dirty or unmerged work, stashes without a receipt, and anything uncertain, and list in one question everything kept that may be removable. In an autonomous session (*Think first* in `/fc-build-or-fix`), keep them and report instead of asking. Return to the updated base and report the final status and anything kept.
