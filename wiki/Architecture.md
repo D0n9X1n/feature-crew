@@ -192,7 +192,7 @@ Principles that hold on every track:
 **Verified in the repository**
 
 - Everything Claude Code runs is Markdown: eleven skills, six reference files, and seven role prompts, plus one session hook that prints a static JSON file. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
-- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the five dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
+- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the six dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
 - The suite's rule-text checks prove a rule is present, not what it means; its header says so.

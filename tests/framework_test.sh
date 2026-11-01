@@ -3730,8 +3730,9 @@ fi
 # interface changes. The brief is authoring that the spec audit covers; the
 # critique is a hard-gate review through the selector. The user's preference or
 # the existing design system wins over every default. Section-scoped like T80:
-# each clause counts only in its own section, and removing one clause must
-# produce exactly its own diagnostic.
+# each clause counts only in its own section, which ends before the line that
+# starts the next one, and removing one clause must produce exactly its own
+# diagnostic. Relocating a dispatch to the next step is also rejected.
 t81_err=""
 t81_doc_designer=agents/fc-designer.md
 t81_doc_bof=skills/fc-build-or-fix/SKILL.md
@@ -3744,6 +3745,7 @@ t81_rules=(
   'user-wins|designer|^# Designer$|^## |An explicit user preference or the project'"'"'s existing design system always wins over every default below.'
   'brief-extend|designer|^## Brief mode$|^## |Read the existing screens, tokens, and components first, and extend them.'
   'brief-acceptance|designer|^## Brief mode$|^## |each item worded as an acceptance check'
+  'brief-full-coverage|designer|^## Brief mode$|^## |as short as full coverage allows'
   'brief-purpose|designer|^## Brief mode$|^## |the audience, the one main task, and what success looks like.'
   'brief-system|designer|^## Brief mode$|^## |4–6 hex color tokens with roles, font roles, and a spacing and type scale.'
   'brief-boldness|designer|^## Brief mode$|^## |Spend boldness in one place'
@@ -3755,6 +3757,7 @@ t81_rules=(
   'critique-brief|designer|^## Critique mode$|^## |Check it against the brief first.'
   'critique-non-web|designer|^## Critique mode$|^## |A non-web interface is captured in its own runtime and checked against its platform'"'"'s guidelines instead of the web tools.'
   'critique-widths|designer|^## Critique mode$|^## |capture your own with Playwright through Bash, at 1440, 768, and 375 px'
+  'critique-dark-mode|designer|^## Critique mode$|^## |in dark mode too when the product has one'
   'critique-axe|designer|^## Critique mode$|^## |Run axe with the WCAG 2.2 AA tags and require zero violations'
   'critique-keyboard|designer|^## Critique mode$|^## |walk every flow by keyboard, because automation finds only part of WCAG.'
   'critique-heuristics|designer|^## Critique mode$|^## |Nielsen'"'"'s 10 usability heuristics'
@@ -3780,13 +3783,13 @@ t81_contract() { # root holding the t81_doc_* paths
   for entry in "${t81_rules[@]}"; do
     IFS='|' read -r label doc from to text <<< "$entry"
     path="t81_doc_$doc"
-    section=$(sed -n "/$from/,/$to/p" "$1/${!path}" 2>/dev/null)
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
     [[ "$section" == *"$text"* ]] || errors="$errors $label"
   done
   for entry in "${t81_absent[@]}"; do
     IFS='|' read -r label doc from to text <<< "$entry"
     path="t81_doc_$doc"
-    section=$(sed -n "/$from/,/$to/p" "$1/${!path}" 2>/dev/null)
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
     [[ "$section" == *"$text"* ]] && errors="$errors absent:$label"
   done
   printf '%s\n' "$errors"
@@ -3815,8 +3818,13 @@ if [ -z "$t81_err" ]; then
   for t81_entry in "${t81_absent[@]}"; do
     IFS='|' read -r t81_label t81_doc t81_from t81_to t81_text <<< "$t81_entry"
     t81_path="t81_doc_$t81_doc"
-    # Append the forbidden text to the first line of its section.
-    awk -v pat="${t81_from}" -v add=" ${t81_text}" 'done != 1 && $0 ~ pat { $0 = $0 add; done = 1 } { print }' \
+    # Append the forbidden text to the first non-blank line inside its section:
+    # the start line when it is a step, or the line after a heading, which the
+    # exclusive range leaves out.
+    awk -v pat="${t81_from}" -v add=" ${t81_text}" '
+      seen == 1 && done != 1 && NF { $0 = $0 add; done = 1 }
+      seen != 1 && $0 ~ pat { seen = 1; if ($0 !~ /^#/) { $0 = $0 add; done = 1 } }
+      { print }' \
       "${!t81_path}" > "$t81_mut/${!t81_path}"
     t81_mut_out=$(t81_contract "$t81_mut")
     cp "${!t81_path}" "$t81_mut/${!t81_path}"
