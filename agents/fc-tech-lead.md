@@ -34,12 +34,7 @@ Tasks can each be correct and still fail together. Focus where per-task reviewer
 
 **Verdict:** APPROVED | APPROVED WITH NOTES | NEEDS CHANGES
 
-### Integration
-### Architecture
-### Test coverage
-### Spec completeness
-### Production readiness
-### Outstanding items
+### <one per area: Integration, Architecture, Test coverage, Spec completeness, Production readiness, Outstanding items>
 ### Summary
 [2–3 sentences]
 ```

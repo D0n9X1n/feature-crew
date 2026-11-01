@@ -23,12 +23,9 @@ Given to you inline — your task's full text, where it fits, dependencies, arch
 failing test → run it (must fail) → minimal code → run it (must pass) → refactor → commit
 ```
 
-- **RED** — one minimal test showing the desired behavior. Clear name. Real behavior, not mocks.
-- **Verify RED** — run it. Confirm it fails because the feature is missing, not because of a typo. A test that passes immediately is testing something that already exists; fix the test.
-- **GREEN** — the simplest code that passes. No extra features, no "while I'm here."
-- **Verify GREEN** — run everything. All passing, no new warnings.
-- **REFACTOR** — clean up, keep tests green.
-- **Commit.**
+- **RED** — one minimal test showing the desired behavior. Clear name. Real behavior, not mocks. **Verify RED:** run it and confirm it fails because the feature is missing, not because of a typo. A test that passes immediately is testing something that already exists; fix the test.
+- **GREEN** — the simplest code that passes. No extra features, no "while I'm here." **Verify GREEN:** run everything. All passing, no new warnings.
+- **REFACTOR** — clean up, keep tests green. Then commit.
 
 Code written before its test gets deleted and redone. No exceptions.
 
@@ -42,20 +39,11 @@ Code written before its test gets deleted and redone. No exceptions.
 
 ## Escalate rather than flounder
 
-It is always fine to say "this is too hard for me." Bad work is worse than no work.
-
-Stop and escalate when the task needs architectural decisions the plan doesn't cover, when you need context beyond what you were given, when you're unsure your approach is right, or when you've been reading file after file without progress.
-
-Report BLOCKED or NEEDS_CONTEXT with specifics.
+It is always fine to say "this is too hard for me": bad work is worse than no work. Stop and report BLOCKED or NEEDS_CONTEXT with specifics when the task needs architectural decisions the plan doesn't cover, when you need context beyond what you were given, when you're unsure your approach is right, or when you've been reading file after file without progress.
 
 ## Self-review before reporting
 
-- **Completeness** — everything in the task spec? Edge cases handled?
-- **Quality** — names accurate, code clean, existing patterns followed?
-- **Discipline** — only what was requested? Every test failed before it passed?
-- **Tests** — verifying behavior rather than mocks? Would they catch a regression?
-
-Fix what you find before reporting.
+Check completeness (everything in the task spec, edge cases handled), quality (accurate names, clean code, existing patterns), discipline (only what was requested; every test failed before it passed), and tests (real behavior, not mocks; would they catch a regression?). Fix what you find before reporting.
 
 ## Report
 
@@ -74,15 +62,6 @@ Fix what you find before reporting.
 **Concerns / Blocker / Missing context:** [if applicable]
 ```
 
-**Paste the test output; do not describe it.** "All tests pass" is a claim. The output is the evidence. A report without it is incomplete regardless of status.
+**Paste the test output; do not describe it.** "All tests pass" is a claim. The output is the evidence. A report without it is incomplete regardless of status. **The command must be the full suite, not just your task's test.** A focused test passing while the suite is red is not DONE — it is DONE_WITH_CONCERNS at best, and the failing output goes in the report. If the suite was already red before you started, say so and name the pre-existing failures, so nobody attributes them to your task.
 
-**The command must be the full suite, not just your task's test.** A focused test passing while the suite is red is not DONE — it is DONE_WITH_CONCERNS at best, and the failing output goes in the report. If the suite was already red before you started, say so and name the pre-existing failures, so nobody attributes them to your task.
-
-## Red flags
-
-- Writing code before a test exists
-- A test that passes immediately
-- Touching files outside your task
-- Adding features not in the task spec
-- "Just this once" on TDD
-- Guessing instead of looking it up or asking
+**Red flags:** code before its test, a test that passes immediately, files outside your task, features not in the task spec, "just this once" on TDD, and guessing instead of looking it up or asking.

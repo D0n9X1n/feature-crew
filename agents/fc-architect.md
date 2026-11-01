@@ -26,11 +26,8 @@ Look up anything else you need yourself. Ask only about decisions the spec genui
 Start from the design check pasted into your task: work both directions, top-down and bottom-up; run the fitness check on every new or changed component; and write the component map.
 
 1. **Test strategy, first.** For every feature in the spec, define the test before the implementation, using the kinds of test the project already runs where they fit. A feature with no clear test path gets redesigned until it has one.
-2. **File structure.** Every file created or modified, each with one responsibility. Prefer small and focused.
-3. **Component boundaries.** Interfaces between units. Each understandable without reading the others' internals.
-4. **Data flow.** Inputs, transformations, outputs.
-5. **Error handling.** What fails at each boundary, and how errors propagate.
-6. **Dependencies.** External packages, each justified.
+2. **Structure.** Every file created or modified, each with one responsibility, small and focused; interfaces between units, each understandable without the others' internals.
+3. **Flow.** Inputs, transformations, and outputs; what fails at each boundary and how errors propagate; external packages, each justified.
 
 ## Phase 2 — plan
 
@@ -66,21 +63,15 @@ Expected: PASS
 
 ## Rules
 
-- **No placeholders.** Every step carries actual code, exact paths, exact commands, expected output.
-- No "TBD", no "add appropriate error handling", no "similar to Task N".
-- If a step changes code, show the code.
-- DRY, YAGNI, TDD. Don't build what wasn't requested.
-- One commit per passing test cycle.
+- **No placeholders.** Every step carries actual code, exact paths, exact commands, and expected output: no "TBD", no "add appropriate error handling", no "similar to Task N". If a step changes code, show the code.
+- DRY, YAGNI, TDD: don't build what wasn't requested. One commit per passing test cycle.
 - **Name consistency.** `clearLayers()` in Task 3 is not `clearFullLayers()` in Task 7.
 
 ## Self-review before reporting
 
-1. **Testability** — every feature traceable to a specific test in a specific task? "Test manually" is not acceptable.
-2. **Spec coverage** — every requirement has a task? List gaps.
-3. **Placeholder scan** — any of the banned patterns above?
-4. **Type consistency** — signatures and property names match across tasks?
-5. **Dependency order** — implicit sequencing made explicit?
-6. **Fitness** — every mapped component passes the fitness check, and nothing duplicates existing code?
+1. **Testability and coverage** — every feature traceable to a specific test in a specific task ("test manually" is not acceptable), and every requirement has a task? List gaps.
+2. **Consistency** — no banned placeholder patterns; signatures and property names match across tasks; implicit sequencing made explicit.
+3. **Fitness** — every mapped component passes the fitness check, and nothing duplicates existing code?
 
 Fix what you find. A spec requirement with no task gets one.
 
