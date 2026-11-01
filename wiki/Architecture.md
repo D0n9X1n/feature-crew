@@ -71,7 +71,7 @@ flowchart TB
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
 | Installers | Install or update the plugin in each CLI on PATH, then remove an old script install; `--dry-run` previews and `--check` is read-only | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [Usage](Usage): *Install* |
 | Installed plugin | `feature-crew@feature-crew` in each CLI's plugin cache | `.claude-plugin/`, `skills/`, `agents/` | [Usage](Usage): *Install* |
-| Session routing hook | Prints one static routing pointer at session start, the same text under each host's output key | [hooks.json][hooks], [routing.json][routing] | [Usage](Usage): *Session routing*; suite T79 |
+| Session routing hook | Prints one static routing pointer and a short plain-answer style rule, which the user's own style or request overrides, at session start, the same text under each host's output key | [hooks.json][hooks], [routing.json][routing] | [Usage](Usage): *Session routing*; suite T79 |
 | Claude Code | Loads the skills (inferred), runs the session and subagents, and records transcripts | not in this repository | [gate-provenance.md][prov]: *Read the record* |
 | Self-test suite | Dev-only bash checks that exit nonzero on any failure; `FC_STRICT=1` turns skipped checks into failures | [framework_test.sh][suite] | the suite's header |
 | CI workflows | Run the suite, validate the plugin, test migration on Windows, publish this wiki, and cut releases | [.github/workflows/][wf] | [Development and Release](Development-and-Release) |

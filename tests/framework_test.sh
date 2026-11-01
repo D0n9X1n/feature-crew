@@ -3524,15 +3524,22 @@ text = hso.get("additionalContext", "")
 if set(routing) != {"additionalContext", "hookSpecificOutput"}: errs.append("routing-keys")
 if hso != {"hookEventName": "SessionStart", "additionalContext": text}: errs.append("hook-specific-output-shape")
 if routing.get("additionalContext") != text: errs.append("host-texts-differ")
-if not text.isascii() or not 0 < len(text) <= 900: errs.append("text-not-ascii-or-over-900")
+if not text.isascii() or not 0 < len(text) <= 1300: errs.append("text-not-ascii-or-over-1300")
 # The contract's clauses: what triggers routing, the think-first pass, re-routing
-# grown scope, delivery and review, routing plain questions, and autonomy.
+# grown scope, delivery and review, routing plain questions, autonomy, and the
+# answer style: answer first, the user's language, facts kept, full prose for
+# safety, no reasoning cap, and the user's own style winning.
 for need in ("build, fix, change, refactor, implement, add, or extend code", "invoke /fc-build-or-fix before editing",
              "researches, brainstorms, and asks the user before building",
              "grows mid-way", "route the new scope through /fc-build-or-fix", "/fc-ship", "/fc-review",
              "evidence from several places goes to /fc-research", "a choice between approaches to /fc-brainstorm",
              "an unexplained failure to /fc-debug", "answer simple questions directly",
-             "In a /goal or Copilot autopilot session", "'you handle all', ask the user nothing"):
+             "In a /goal or Copilot autopilot session", "'you handle all', ask the user nothing",
+             "Answer style: lead with the answer in plain words and the user's language.",
+             "Use short sentences and common terms; cut preamble, signposting, recaps, and filler, but keep every fact, qualifier, and negation.",
+             "Keep code, commands, and errors exact.",
+             "Write in full for safety warnings, destructive-action confirmations, and on request.",
+             "Trim padding, never reasoning.", "The user's own style or request wins."):
     if need not in text: errs.append(f"text-missing:{need}")
 if "| One discoverable fact |" in text: errs.append("text-duplicates-classifier")
 def run(argv, var):
@@ -3561,15 +3568,25 @@ elif m == "single-quoted-root": e["command"] = e["command"].replace('"', "'")
 elif m == "unquoted-root": e["command"] = e["command"].replace('"', "")
 elif m == "no-literal-path": e["powershell"] = e["powershell"].replace("-LiteralPath", "-Path")
 elif m == "matcher": h["hooks"]["SessionStart"][0]["matcher"] = "startup"
-elif m == "over-cap": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = "/fc-build-or-fix /fc-ship /fc-review " + "x" * 900
+elif m == "over-cap": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"] + "x" * 1300
 elif m == "no-ship": r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace("/fc-ship", "shipping")
 elif m == "event-name": r["hookSpecificOutput"]["hookEventName"] = "UserPromptSubmit"
-elif m in ("no-trigger", "no-reroute", "no-think-first", "no-question-routing", "no-autonomy"):
+elif m in ("no-trigger", "no-reroute", "no-think-first", "no-question-routing", "no-autonomy", "no-answer-first",
+           "no-user-language", "no-preserve", "no-full-prose", "no-on-request", "no-plain-terms", "no-exact-code", "no-reasoning-guard", "no-user-wins"):
     cut = {"no-trigger": "When a request asks to build, fix, change, refactor, implement, add, or extend code, ",
            "no-reroute": "If a task grows mid-way, such as a new repository, a refactor, or a release, pause and route the new scope through /fc-build-or-fix instead of continuing inline. ",
            "no-think-first": ", and other work researches, brainstorms, and asks the user before building",
            "no-question-routing": "A question that needs evidence from several places goes to /fc-research, a choice between approaches to /fc-brainstorm, and an unexplained failure to /fc-debug; answer simple questions directly. ",
-           "no-autonomy": " In a /goal or Copilot autopilot session, or after the user says 'you handle all', ask the user nothing; /fc-build-or-fix says how to decide alone."}[m]
+           "no-autonomy": " In a /goal or Copilot autopilot session, or after the user says 'you handle all', ask the user nothing; /fc-build-or-fix says how to decide alone.",
+           "no-answer-first": "lead with the answer in plain words",
+           "no-user-language": " and the user's language",
+           "no-preserve": ", but keep every fact, qualifier, and negation",
+           "no-full-prose": "Write in full for ",
+           "no-on-request": ", and on request",
+           "no-plain-terms": "Use short sentences and common terms; ",
+           "no-exact-code": " Keep code, commands, and errors exact.",
+           "no-reasoning-guard": " Trim padding, never reasoning.",
+           "no-user-wins": " The user's own style or request wins."}[m]
     assert cut in r["additionalContext"], m
     r["additionalContext"] = r["hookSpecificOutput"]["additionalContext"] = r["additionalContext"].replace(cut, "")
 hp.write_text(json.dumps(h)); rp.write_text(json.dumps(r))
@@ -3588,7 +3605,7 @@ else
   [ -n "${PWSH_BIN:-}" ] || skip "T79 PowerShell hook command (pwsh unavailable; set PWSH)"
   # A mutation counts only against a clean baseline; otherwise every mutation
   # "fails" for the baseline's reason and the check proves nothing.
-  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name no-trigger no-reroute no-think-first no-question-routing no-autonomy unquoted-root ${PWSH_BIN:+no-literal-path}; do
+  [ -z "$t79_out" ] && for t79_m in texts-differ single-quoted-root matcher over-cap no-ship event-name no-trigger no-reroute no-think-first no-question-routing no-autonomy no-answer-first no-user-language no-preserve no-full-prose no-on-request no-plain-terms no-exact-code no-reasoning-guard no-user-wins unquoted-root ${PWSH_BIN:+no-literal-path}; do
     rm -rf "$t79_root/hooks"; cp -R hooks "$t79_root/"
     t79_mutate "$t79_root" "$t79_m"
     [ -n "$(t79_check "$t79_root" "${PWSH_BIN:-}")" ] && ok "T79 mutation caught: $t79_m" \
