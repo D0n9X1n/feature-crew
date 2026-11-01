@@ -71,7 +71,7 @@ flowchart TB
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |
 | 安装器 | 在 PATH 上的每个 CLI 中安装或更新插件，然后删除旧的脚本安装；`--dry-run` 预览，`--check` 只读 | [install.sh][sh], [install.ps1][ps1], [published.sha256][pub] | [使用说明](Usage-zh-CN)：*安装* |
 | 已安装的插件 | 各 CLI 插件缓存中的 `feature-crew@feature-crew` | `.claude-plugin/`、`skills/`、`agents/` | [使用说明](Usage-zh-CN)：*安装* |
-| 会话路由钩子 | 会话开始时输出一段静态路由指引和一条简短的说人话回答风格规则，每个宿主的输出键下是同一段文字 | [hooks.json][hooks]、[routing.json][routing] | [使用说明](Usage-zh-CN)：*会话路由*；测试套件 T79 |
+| 会话路由钩子 | 会话开始时输出一段静态路由指引和一条简短的说人话回答风格规则（用户自己的风格或要求优先），每个宿主的输出键下是同一段文字 | [hooks.json][hooks]、[routing.json][routing] | [使用说明](Usage-zh-CN)：*会话路由*；测试套件 T79 |
 | Claude Code | 加载技能（推断），运行会话和子代理，保存会话记录 | 不在本仓库中 | [gate-provenance.md][prov]：*Read the record* |
 | 自测套件 | 仅供开发的 bash 检查，任何失败都以非零状态退出；`FC_STRICT=1` 把跳过的检查变成失败 | [framework_test.sh][suite] | 套件的文件头 |
 | CI 工作流 | 运行测试套件，验证插件，在 Windows 上测试迁移，发布本 wiki，并发布版本 | [.github/workflows/][wf] | [开发与发布](Development-and-Release-zh-CN) |
