@@ -65,7 +65,7 @@ flowchart TB
 |---|---|---|---|
 | fc-build-or-fix playbook | Makes the main session the PM: classifies the need, picks a track, runs it, enforces the hard gates, and selects reviewers. Loads run discipline (feedback checks, a checkpoint, runtime proof) at entry. `fc-pm.md` only points here. | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md: *Need classifier*, *Step 1*, *Hard gates*, *Cross-family audit at hard gates*; [run-discipline.md][run] |
 | Routed skills | Each resolves one missing ingredient and returns it to the caller; `fc-research` also has a focused path for one bounded question | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md: *Need classifier*; fc-research: *Focused path* |
-| Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, and the tech lead reviews Complex work as a whole. All five carry a committed least-privilege `tools:` list and `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
+| Role prompts | Subagent briefs: the architect writes a plan (≤500 lines), the developer does one TDD task, `fc-qa-spec` and `fc-qa-code` each return one verdict that lists every blocking finding, the tech lead reviews Complex work as a whole, and the designer writes the UI/UX brief and critiques the running UI. All six carry a committed least-privilege `tools:` list and `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]: *Flow* |
 | fc-ship | Asks for each approval separately, runs one background CI watch, squash-merges only the verified head, optionally releases, and hands off to fc-clean | [SKILL.md][ship] | fc-ship: sections 1–7 |
 | fc-clean | Never runs while the goal is unfinished; removes only what a receipt proves the task created, with no backups; asks once about the rest | [SKILL.md][clean] | fc-clean: *Goal gate*, *Receipts*, *Remove*, *Keep, ask once, report* |
 | Standalone skills | Opt-in review, diagrams, and reinstall, outside the build path | [fc-review][review], [fc-explain][explain], [fc-update][update] | each skill's description or related-skills list; fc-update steps 2–6 |
@@ -154,6 +154,7 @@ sequenceDiagram
 | Spec auditor | Reviews a spec that touches the escalation list | [SKILL.md][bof]: *Standard*, step 3 |
 | Session records | The only accepted proof of which model answered | [gate-provenance.md][prov] |
 | fc-qa-code | Standard's combined spec and code review, one verdict | [fc-qa-code.md][qacode] |
+| fc-designer | Only when a user-visible interface changes: a brief folded into the spec, then a critique of the running UI before QA | [fc-designer.md][designer] |
 | GitHub PR and CI | The target project's PR and checks, driven with `gh` | [fc-ship][ship] |
 
 **Other tracks**
@@ -190,8 +191,8 @@ Principles that hold on every track:
 
 **Verified in the repository**
 
-- Everything Claude Code runs is Markdown: eleven skills, six reference files, and six role prompts, plus one session hook that prints a static JSON file. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
-- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the five dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
+- Everything Claude Code runs is Markdown: eleven skills, six reference files, and seven role prompts, plus one session hook that prints a static JSON file. The code is the two installers, the suite, the CI workflows, and the wiki publisher and checker.
+- Role prompts and skills carry no `model` key, so the main agent runs the model the user chose. Agent frontmatter is committed: `name`, `description`, and on the six dispatched roles a `tools:` list plus `disallowedTools: Agent, Skill`; every authoring or review dispatch sets its model explicitly.
 - Gates fail closed: unknown provenance leaves a gate unsatisfied, and standalone `/fc-review` or `/fc-second-opinion` runs are not gate substitutes.
 - `/fc-review` dispatches at least one selector-chosen lens for every review, whatever the diff size; notes the main session writes itself are labeled same-session and never count as the independent review.
 - The suite's rule-text checks prove a rule is present, not what it means; its header says so.
@@ -232,6 +233,7 @@ Principles that hold on every track:
 [agents]: https://github.com/D0n9X1n/feature-crew/tree/main/agents
 [dev]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-developer.md
 [qacode]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-qa-code.md
+[designer]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-designer.md
 [research]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-research/SKILL.md
 [grill]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-grill-me/SKILL.md
 [brain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-brainstorm/SKILL.md

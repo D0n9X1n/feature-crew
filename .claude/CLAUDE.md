@@ -6,7 +6,7 @@ Users describe needs naturally; slash-command knowledge is not required. The can
 
 ## Models
 
-All six installed role agents and every skill carry no `model` key; the main agent runs whatever model the user chose. For every model-authored hard-gate review, apply the artifact-author-provenance selector, exact Agent override, audit envelope, and fail-closed behavior canonical in `skills/fc-build-or-fix/SKILL.md`. Do not restate it here.
+All seven installed role agents and every skill carry no `model` key; the main agent runs whatever model the user chose. For every model-authored hard-gate review, apply the artifact-author-provenance selector, exact Agent override, audit envelope, and fail-closed behavior canonical in `skills/fc-build-or-fix/SKILL.md`. Do not restate it here.
 
 Standalone `/fc-review` and `/fc-second-opinion` are not hard-gate substitutes.
 

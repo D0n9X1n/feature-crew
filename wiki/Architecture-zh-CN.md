@@ -65,7 +65,7 @@ flowchart TB
 |---|---|---|---|
 | fc-build-or-fix 主流程 | 让主会话担任 PM：对需求分类、选择轨道并执行、执行硬性关卡、选择审查者。进入时加载运行纪律（反馈检查、检查点、运行时证据）。`fc-pm.md` 只指向这里。 | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md：*Need classifier*、*Step 1*、*Hard gates*、*Cross-family audit at hard gates*；[run-discipline.md][run] |
 | 路由技能 | 各自解决一个缺失要素并把结果返回调用方；`fc-research` 还有一条针对单个有界问题的聚焦路径 | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md：*Need classifier*；fc-research：*Focused path* |
-| 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作。五个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
+| 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作，designer 编写 UI/UX 设计简报并评审运行中的界面。六个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
 | fc-ship | 分别请求每项批准，运行一个后台 CI 监视，只 squash 合并已验证的 head，可选发布，并移交给 fc-clean | [SKILL.md][ship] | fc-ship：第 1–7 节 |
 | fc-clean | 目标未完成时绝不运行；只删除凭据证明由任务创建的内容，不做备份；其余内容询问一次 | [SKILL.md][clean] | fc-clean：*Goal gate*、*Receipts*、*Remove*、*Keep, ask once, report* |
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |
@@ -154,6 +154,7 @@ sequenceDiagram
 | 规格审计者 | 审查触及升级清单的规格 | [SKILL.md][bof]：*Standard*，第 3 步 |
 | 会话记录 | 证明哪个模型作答的唯一可接受证据 | [gate-provenance.md][prov] |
 | fc-qa-code | Standard 的规格与代码合并审查，给出一个结论 | [fc-qa-code.md][qacode] |
+| fc-designer | 仅在用户可见的界面变化时：设计简报并入规格，QA 之前评审运行中的界面 | [fc-designer.md][designer] |
 | GitHub PR 与 CI | 目标项目的 PR 和检查，用 `gh` 驱动 | [fc-ship][ship] |
 
 **其他轨道**
@@ -190,8 +191,8 @@ sequenceDiagram
 
 **已在仓库中验证**
 
-- Claude Code 运行的一切都是 Markdown：十一个技能、六个参考文件和六个角色提示词，外加一个输出静态 JSON 文件的会话钩子。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
-- 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。代理的 frontmatter 已提交到仓库：`name`、`description`，五个被派发的角色还有 `tools:` 列表和 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
+- Claude Code 运行的一切都是 Markdown：十一个技能、六个参考文件和七个角色提示词，外加一个输出静态 JSON 文件的会话钩子。代码是两个安装器、测试套件、CI 工作流，以及 wiki 发布器和检查器。
+- 角色提示词和技能都不带 `model` 键，因此主代理运行用户选择的模型。代理的 frontmatter 已提交到仓库：`name`、`description`，六个被派发的角色还有 `tools:` 列表和 `disallowedTools: Agent, Skill`；每次编写或审查派发都显式设置模型。
 - 关卡失败即关闭：来源未知会让关卡不满足，单独运行的 `/fc-review` 或 `/fc-second-opinion` 不能替代关卡。
 - `/fc-review` 无论差异大小，每次审查都至少派发一个由选择器选定模型的审查视角（lens）；主会话自己写的笔记标注为同会话，永远不算作独立审查。
 - 套件的规则文本检查只能证明规则存在，不能证明其含义；套件的文件头就是这么说的。
@@ -232,6 +233,7 @@ sequenceDiagram
 [agents]: https://github.com/D0n9X1n/feature-crew/tree/main/agents
 [dev]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-developer.md
 [qacode]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-qa-code.md
+[designer]: https://github.com/D0n9X1n/feature-crew/blob/main/agents/fc-designer.md
 [research]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-research/SKILL.md
 [grill]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-grill-me/SKILL.md
 [brain]: https://github.com/D0n9X1n/feature-crew/blob/main/skills/fc-brainstorm/SKILL.md

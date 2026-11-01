@@ -47,7 +47,7 @@ skip() {
 }
 
 SKILL_NAMES=(fc-research fc-grill-me fc-brainstorm fc-debug fc-explain fc-build-or-fix fc-review fc-second-opinion fc-update fc-ship fc-clean)
-ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead)
+ROLE_AGENTS=(fc-pm fc-architect fc-developer fc-qa-spec fc-qa-code fc-tech-lead fc-designer)
 
 skill_files() { find skills -name 'SKILL.md' | sort; }
 
@@ -112,7 +112,7 @@ fi
 # ---------------------------------------------------------------- T5
 # The plugin loads agents/*.md as committed, so their frontmatter is the
 # contract. No role carries a model key: hard-gate dispatchers select an
-# explicit override from artifact-author provenance. The five dispatched roles
+# explicit override from artifact-author provenance. The six dispatched roles
 # carry a least-privilege tools allowlist, which both Claude Code and Copilot
 # CLI enforce, plus disallowedTools: Agent, Skill, which Claude Code also
 # enforces. fc-pm runs as the main session and is unrestricted.
@@ -125,7 +125,7 @@ validate_role_frontmatter() {
 import sys, re, glob, os, yaml
 review = {"Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "TodoWrite"}
 want = {"fc-pm": None, "fc-architect": review, "fc-developer": review | {"Edit", "Write"},
-        "fc-qa-spec": review, "fc-qa-code": review, "fc-tech-lead": review}
+        "fc-qa-spec": review, "fc-qa-code": review, "fc-tech-lead": review, "fc-designer": review}
 def tools(v):
     return {str(t).strip() for t in (v if isinstance(v, list) else str(v or "").split(",")) if str(t).strip()}
 errs, seen = [], set()
@@ -2508,7 +2508,7 @@ for d in sorted(n for n in os.listdir("skills") if not n.startswith(".")):
     if not m or m.group(1).strip() != d: errs.append(f"skill-name-mismatch:{d}")
 for f in sorted(n for n in os.listdir("agents") if not n.startswith(".")):
     if not f.startswith("fc-"): errs.append(f"agent-unprefixed:{f}")
-roles = "architect|developer|qa-spec|qa-code|tech-lead"
+roles = "architect|developer|qa-spec|qa-code|tech-lead|designer"
 bare = re.compile(r"`fc-(%s)`" % roles)
 for line in pathlib.Path("skills/fc-build-or-fix/SKILL.md").read_text().splitlines():
     if re.search(r"[Dd]ispatch", line) and bare.search(line): errs.append("bare-dispatch-in-build-or-fix")
@@ -3723,6 +3723,120 @@ if [ -z "$t80_err" ]; then
 fi
 [ -z "$t80_err" ] && ok "T80 static contract alarm: think-first pass, explicit skip, and autonomy pinned with their pointers" \
                    || bad "T80 think-first contract" "missing:$t80_err"
+
+# ---------------------------------------------------------------- T81
+# v6.4.0 designer role (#72): fc-designer writes the UI/UX brief before the
+# plan and critiques the running UI after the build, only when a user-visible
+# interface changes. The brief is authoring that the spec audit covers; the
+# critique is a hard-gate review through the selector. The user's preference or
+# the existing design system wins over every default. Section-scoped like T80:
+# each clause counts only in its own section, which ends before the line that
+# starts the next one, and removing one clause must produce exactly its own
+# diagnostic. Relocating a dispatch to the next step is also rejected.
+t81_err=""
+t81_doc_designer=agents/fc-designer.md
+t81_doc_bof=skills/fc-build-or-fix/SKILL.md
+t81_doc_complex=skills/fc-build-or-fix/reference/complex-track.md
+t81_doc_claude=.claude/CLAUDE.md
+t81_docs=(designer bof complex claude)
+# label|doc|section start|section end|clause
+t81_rules=(
+  'when-not|designer|^---$|^---$|Dispatched by /fc-build-or-fix only when a user-visible interface changes; not for code review.'
+  'user-wins|designer|^# Designer$|^## |An explicit user preference or the project'"'"'s existing design system always wins over every default below.'
+  'brief-extend|designer|^## Brief mode$|^## |Read the existing screens, tokens, and components first, and extend them.'
+  'brief-acceptance|designer|^## Brief mode$|^## |each item worded as an acceptance check'
+  'brief-full-coverage|designer|^## Brief mode$|^## |as short as full coverage allows'
+  'brief-purpose|designer|^## Brief mode$|^## |the audience, the one main task, and what success looks like.'
+  'brief-system|designer|^## Brief mode$|^## |4–6 hex color tokens with roles, font roles, and a spacing and type scale.'
+  'brief-boldness|designer|^## Brief mode$|^## |Spend boldness in one place'
+  'brief-states|designer|^## Brief mode$|^## |empty, loading, error, success, disabled, hover, and focus'
+  'brief-options|designer|^## Brief mode$|^## |2–3 options at 1440, 768, and 375 px, then your recommendation'
+  'brief-anti-defaults|designer|^## Brief mode$|^## |Inter everywhere, purple gradients, uniform rounded shadowed cards, uppercase eyebrows, arrows on every action, and repeated entrance animations.'
+  'brief-non-web|designer|^## Brief mode$|^## |Non-web interfaces follow their platform'"'"'s own guidelines'
+  'critique-running|designer|^## Critique mode$|^## |Judge the running interface, not the diff.'
+  'critique-brief|designer|^## Critique mode$|^## |Check it against the brief first.'
+  'critique-non-web|designer|^## Critique mode$|^## |A non-web interface is captured in its own runtime and checked against its platform'"'"'s guidelines instead of the web tools.'
+  'critique-widths|designer|^## Critique mode$|^## |capture your own with Playwright through Bash, at 1440, 768, and 375 px'
+  'critique-dark-mode|designer|^## Critique mode$|^## |in dark mode too when the product has one'
+  'critique-axe|designer|^## Critique mode$|^## |Run axe with the WCAG 2.2 AA tags and require zero violations'
+  'critique-keyboard|designer|^## Critique mode$|^## |walk every flow by keyboard, because automation finds only part of WCAG.'
+  'critique-heuristics|designer|^## Critique mode$|^## |Nielsen'"'"'s 10 usability heuristics'
+  'critique-thresholds|designer|^## Critique mode$|^## |text contrast 4.5:1, large text and controls 3:1, targets at least 24×24 px, focus visible and never fully hidden'
+  'critique-guidelines|designer|^## Critique mode$|^## |(https://github.com/vercel-labs/web-interface-guidelines)'
+  'critique-no-runtime|designer|^## Critique mode$|^## |With no runtime, report "cannot verify"; never pass on code alone.'
+  'critique-verdict|designer|^## Critique mode$|^## |**Verdict:** PASS | CRITICAL | IMPORTANT'
+  'critique-blockers|designer|^## Critique mode$|^## |List every CRITICAL and every unmet brief item, because each blocks the gate on its own; otherwise report the single most material finding.'
+  'standard-brief|bof|^2\. Think first|^3\. |When the change alters a user-visible interface, dispatch `feature-crew:fc-designer` in brief mode with an explicit `model` override from the authoring rule and fold its brief into the spec.'
+  'standard-critique|bof|^7\. |^8\. |For a user-visible interface change, first dispatch `feature-crew:fc-designer` in critique mode with the selector below'
+  'complex-brief|complex|^2\. \*\*Spec|^3\. |When the change alters a user-visible interface, fold a `feature-crew:fc-designer` brief into the spec'
+  'complex-critique|complex|^9\. \*\*Per-task QA|^10\. |For a user-visible interface, also select an override for the implementation author before `feature-crew:fc-designer` in critique mode.'
+  'claude-seven-roles|claude|^## Models|^## |All seven installed role agents'
+)
+# label|doc|section start|section end|text that must stay absent from that section
+t81_absent=(
+  'jdi-no-designer|bof|^### Just Do It|^### |fc-designer'
+  'standard-no-late-brief|bof|^7\. |^8\. |in brief mode'
+  'standard-no-early-critique|bof|^2\. Think first|^3\. |in critique mode'
+)
+t81_contract() { # root holding the t81_doc_* paths
+  local entry label doc from to text path section errors=""
+  for entry in "${t81_rules[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t81_doc_$doc"
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] || errors="$errors $label"
+  done
+  for entry in "${t81_absent[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t81_doc_$doc"
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] && errors="$errors absent:$label"
+  done
+  printf '%s\n' "$errors"
+}
+t81_err=$(t81_contract .)
+if [ -z "$t81_err" ]; then
+  t81_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t81_mut")
+  for t81_doc in "${t81_docs[@]}"; do
+    t81_path="t81_doc_$t81_doc"
+    mkdir -p "$t81_mut/$(dirname "${!t81_path}")" && cp "${!t81_path}" "$t81_mut/${!t81_path}"
+  done
+  for t81_entry in "${t81_rules[@]}"; do
+    IFS='|' read -r t81_label t81_doc t81_from t81_to t81_text <<< "$t81_entry"
+    t81_path="t81_doc_$t81_doc"
+    t81_orig=$(cat "${!t81_path}")
+    printf '%s\n' "${t81_orig/"$t81_text"/}" > "$t81_mut/${!t81_path}"
+    t81_mut_out=$(t81_contract "$t81_mut")
+    cp "${!t81_path}" "$t81_mut/${!t81_path}"
+    if [ "$t81_mut_out" = " $t81_label" ]; then
+      ok "T81 removal mutation: $t81_label rejected by its own check"
+    else
+      bad "T81 removal mutation: $t81_label" "got '${t81_mut_out:-<empty>}', want ' $t81_label'"
+    fi
+  done
+  for t81_entry in "${t81_absent[@]}"; do
+    IFS='|' read -r t81_label t81_doc t81_from t81_to t81_text <<< "$t81_entry"
+    t81_path="t81_doc_$t81_doc"
+    # Append the forbidden text to the first non-blank line inside its section:
+    # the start line when it is a step, or the line after a heading, which the
+    # exclusive range leaves out.
+    awk -v pat="${t81_from}" -v add=" ${t81_text}" '
+      seen == 1 && done != 1 && NF { $0 = $0 add; done = 1 }
+      seen != 1 && $0 ~ pat { seen = 1; if ($0 !~ /^#/) { $0 = $0 add; done = 1 } }
+      { print }' \
+      "${!t81_path}" > "$t81_mut/${!t81_path}"
+    t81_mut_out=$(t81_contract "$t81_mut")
+    cp "${!t81_path}" "$t81_mut/${!t81_path}"
+    if [ "$t81_mut_out" = " absent:$t81_label" ]; then
+      ok "T81 injection mutation: $t81_label rejected by its own check"
+    else
+      bad "T81 injection mutation: $t81_label" "got '${t81_mut_out:-<empty>}', want ' absent:$t81_label'"
+    fi
+  done
+fi
+[ -z "$t81_err" ] && ok "T81 designer role: brief, critique, user-wins, and its dispatch points pinned" \
+                   || bad "T81 designer contract" "missing:$t81_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then
