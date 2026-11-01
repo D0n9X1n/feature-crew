@@ -39,7 +39,7 @@ copilot plugin install feature-crew@feature-crew
 
 ## 会话路由
 
-技能只有在模型选择时才会运行，所以代码变更可能跳过 `/fc-build-or-fix`，尤其是一个小请求逐渐扩大成新仓库、重构或发布时。插件的 SessionStart 钩子会把一段简短的路由约定放进会话：在 Claude Code 中是启动、恢复、`/clear` 和压缩时；在 GitHub Copilot CLI 中是会话开始和恢复时。它输出 [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json)：把代码变更指向 `/fc-build-or-fix`，任务中途范围扩大时重新路由，推送、合并、发布和清理用 `/fc-ship`，跳过流程的工作在推送前用 `/fc-review`。需要证据的问题交给 `/fc-research`，方案选择交给 `/fc-brainstorm`，无法解释的故障交给 `/fc-debug`，简单问题直接回答；自主会话按上面的“先思考再构建”处理。这段文字只是指引，不是强制：它让路由更可能发生，但不能保证。要关闭它，用 `claude plugin disable feature-crew@feature-crew` 或 `copilot plugin disable feature-crew@feature-crew` 停用插件。
+技能只有在模型选择时才会运行，所以代码变更可能跳过 `/fc-build-or-fix`，尤其是一个小请求逐渐扩大成新仓库、重构或发布时。插件的 SessionStart 钩子会把一段简短的路由约定放进会话：在 Claude Code 中是启动、恢复、`/clear` 和压缩时；在 GitHub Copilot CLI 中是会话开始和恢复时。它输出 [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json)：把代码变更指向 `/fc-build-or-fix`，任务中途范围扩大时重新路由，推送、合并、发布和清理用 `/fc-ship`，跳过流程的工作在推送前用 `/fc-review`。需要证据的问题交给 `/fc-research`，方案选择交给 `/fc-brainstorm`，无法解释的故障交给 `/fc-debug`，简单问题直接回答；自主会话按上面的“先思考再构建”处理。它还设定了一种说人话的回答风格，取自 [caveman](https://github.com/JuliusBrussee/caveman) 和 [shuorenhua（说人话）](https://github.com/MrGeDiao/shuorenhua) 技能：先给答案，用你的语言；句子短、用词常见；删掉客套和废话，但保留每个事实、限定条件和否定；代码和报错原样保留；安全警告和破坏性操作的确认要写完整；只删冗余，不删推理。你自己的输出风格或明确要求优先于它。这段文字只是指引，不是强制：它让路由更可能发生，但不能保证。要关闭它，用 `claude plugin disable feature-crew@feature-crew` 或 `copilot plugin disable feature-crew@feature-crew` 停用插件。
 
 **已知限制。**
 - Copilot CLI 在压缩后没有可用的钩子来源，所以压缩后的 Copilot 会话只依靠技能描述（[copilot-cli#5225](https://github.com/github/copilot-cli/issues/5225)）。Copilot 交互式 `/clear` 后是否会重新注入这段文字尚未测试；只有会话开始和恢复经过验证。
