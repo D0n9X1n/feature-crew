@@ -3971,9 +3971,10 @@ git check-ignore -q evals/results/x || t82b_err="$t82b_err results-not-ignored"
 # to run its failing test each passed the first suite. The graders must check
 # a limit and trigger and an actual call, and the documented run grants a
 # sandboxed python3 so TDD can run.
-grep -qF "pattern: '#\\s*shortcut:\\s*[^,\\s][^,]*,\\s*\\S'" \
+grep -qF "pattern: '#[ \\t]*shortcut:[ \\t]*[^,\\s][^,\\n]*,[ \\t]*\\S'" \
   evals/marks-shortcut/graders/shortcut-marker.md || t82b_err="$t82b_err shortcut-needs-limit-and-trigger"
-grep -qF "pattern: 'slugify\\('" evals/reuses-existing-helper/graders/calls-helper.md 2>/dev/null \
+{ grep -qF "pattern: '^[^#\\n]*slugify\\('" evals/reuses-existing-helper/graders/calls-helper.md \
+  && grep -qx 'flags: m' evals/reuses-existing-helper/graders/calls-helper.md; } 2>/dev/null \
   || t82b_err="$t82b_err reuse-needs-call"
 for t82b_doc in wiki/Development-and-Release.md wiki/Development-and-Release-zh-CN.md; do
   grep -qF -- '--allow-tools Edit Write "Bash(python3 *)"' "$t82b_doc" || t82b_err="$t82b_err $t82b_doc:no-shell-grant"
@@ -4001,11 +4002,19 @@ t83_rules=(
   'notice-impeccable|notices|^## Impeccable$|^## |[Apache License 2.0](https://github.com/pbakaus/impeccable/blob/main/LICENSE)'
   'notice-changes|notices|^## Impeccable$|^## |rewritten in our own words, shortened, and reduced to non-blocking checks'
   'notice-ponytail|notices|^## Ponytail$|^## |[MIT License](https://github.com/DietrichGebert/ponytail/blob/main/LICENSE)'
+  'notice-impeccable-copyright|notices|^## Impeccable$|^## |Copyright 2025 Paul Bakaus'
+  'notice-impeccable-used|notices|^## Impeccable$|^## |Used in: the brief and critique floor checks in `agents/fc-designer.md`.'
+  'notice-ponytail-copyright|notices|^## Ponytail$|^## |Copyright (c) 2026 DietrichGebert'
+  'notice-ponytail-used|notices|^## Ponytail$|^## |Used in: `skills/fc-build-or-fix/reference/smallest-change.md`'
+  'notice-ponytail-changes|notices|^## Ponytail$|^## |Changes: rewritten in our own words, limited to production code'
 )
 # label|doc|section start|section end|text that must stay absent from that section
 t83_absent=(
   'no-option-cap|designer|^## Critique mode$|^## |≤4'
   'no-scoring|designer|^## Critique mode$|^## |/40'
+  'no-persona-walk|designer|^## Critique mode$|^## |persona'
+  'no-brief-percent|designer|^## Brief mode$|^## |30–40%'
+  'no-brief-item-count|designer|^## Brief mode$|^## |1000+'
 )
 t83_contract() { # root holding the t83_doc_* paths
   local entry label doc from to text path section errors=""

@@ -1,5 +1,5 @@
 ---
 type: regex
 target: { source: file, path: prices.py }
-pattern: '#\s*shortcut:\s*[^,\s][^,]*,\s*\S'
+pattern: '#[ \t]*shortcut:[ \t]*[^,\s][^,\n]*,[ \t]*\S'
 ---
