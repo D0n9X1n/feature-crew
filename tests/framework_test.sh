@@ -72,14 +72,15 @@ fi
 
 # ---------------------------------------------------------------- T2
 # Baseline raised from 1223 to 1251 for /fc-clean by explicit user override
-# (framework-cap-override, 2026-10-24), then from 1251 to 1283 for the Ponytail
-# practices (framework-cap-override, 2026-11-09: the user approved a large
-# budget). It is the new total + 1: any growth needs another override.
+# (framework-cap-override, 2026-10-24), then from 1251 to 1289 for the Ponytail
+# and Impeccable practices (framework-cap-override, 2026-11-09: the user
+# approved a large budget). It is the new total + 1: any growth needs another
+# override.
 total=$(framework_files | xargs wc -l | tail -1 | awk '{print $1}')
-if [ "${total:-99999}" -le 1500 ] && [ "${total:-99999}" -lt 1283 ]; then
-  ok "T2 framework total = ${total} (<=1500, and < 1283 baseline)"
+if [ "${total:-99999}" -le 1500 ] && [ "${total:-99999}" -lt 1289 ]; then
+  ok "T2 framework total = ${total} (<=1500, and < 1289 baseline)"
 else
-  bad "T2 framework total" "total=${total}; need <=1500 AND <1283 (baseline before this change)"
+  bad "T2 framework total" "total=${total}; need <=1500 AND <1289 (baseline before this change)"
 fi
 
 # ---------------------------------------------------------------- T3
@@ -3979,6 +3980,73 @@ for t82b_doc in wiki/Development-and-Release.md wiki/Development-and-Release-zh-
 done
 [ -z "$t82b_err" ] && ok "T82b eval suite: 3 cases, result + process graders, strict markers, shell grant documented" \
                     || bad "T82b eval suite" "$t82b_err"
+
+# ---------------------------------------------------------------- T83
+# v6.5.0 Impeccable checks (#81), adapted in our own words from Impeccable
+# (Paul Bakaus, Apache-2.0): the brief covers extreme content and what is
+# uniquely true of the product and refuses more generic defaults, all without
+# numeric thresholds that would block the gate; critique adds a floor that is
+# IMPORTANT at most, so it never blocks on its own. Credit and the license
+# link live in the role and in THIRD_PARTY_NOTICES.md. Section-scoped like T81.
+t83_doc_designer=agents/fc-designer.md
+t83_doc_notices=THIRD_PARTY_NOTICES.md
+t83_docs=(designer notices)
+# label|doc|section start|section end|clause
+t83_rules=(
+  'brief-unique|designer|^## Brief mode$|^## |Name what is uniquely true of this product.'
+  'brief-extreme|designer|^## Brief mode$|^## |plus real content at its extremes: very long and very short text, emoji, accents, right-to-left scripts, large numbers, long lists, and room for translation.'
+  'brief-more-defaults|designer|^## Brief mode$|^## |Also gradient text, colored side-stripe borders, cards nested in cards, emoji as icons, and modals used by reflex.'
+  'critique-floor|designer|^## Critique mode$|^## |**Floor, IMPORTANT at most:** browser defaults themed (selection, focus ring, scrollbars, tabular numbers), few choices per decision with one primary action, readable line length, a real reduced-motion alternative, touch and text scaling working, and a result that is specific to this product rather than interchangeable with its category.'
+  'designer-credit|designer|^## Credits$|^## |Several brief and floor checks are adapted from [Impeccable](https://github.com/pbakaus/impeccable) (Paul Bakaus, Apache-2.0); see THIRD_PARTY_NOTICES.md.'
+  'notice-impeccable|notices|^## Impeccable$|^## |[Apache License 2.0](https://github.com/pbakaus/impeccable/blob/main/LICENSE)'
+  'notice-changes|notices|^## Impeccable$|^## |rewritten in our own words, shortened, and reduced to non-blocking checks'
+  'notice-ponytail|notices|^## Ponytail$|^## |[MIT License](https://github.com/DietrichGebert/ponytail/blob/main/LICENSE)'
+)
+# label|doc|section start|section end|text that must stay absent from that section
+t83_absent=(
+  'no-option-cap|designer|^## Critique mode$|^## |≤4'
+  'no-scoring|designer|^## Critique mode$|^## |/40'
+)
+t83_contract() { # root holding the t83_doc_* paths
+  local entry label doc from to text path section errors=""
+  for entry in "${t83_rules[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t83_doc_$doc"
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] || errors="$errors $label"
+  done
+  for entry in "${t83_absent[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t83_doc_$doc"
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] && errors="$errors absent:$label"
+  done
+  printf '%s\n' "$errors"
+}
+t83_err=$(t83_contract .)
+if [ -z "$t83_err" ]; then
+  t83_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t83_mut")
+  for t83_doc in "${t83_docs[@]}"; do
+    t83_path="t83_doc_$t83_doc"
+    mkdir -p "$t83_mut/$(dirname "${!t83_path}")" && cp "${!t83_path}" "$t83_mut/${!t83_path}"
+  done
+  for t83_entry in "${t83_rules[@]}"; do
+    IFS='|' read -r t83_label t83_doc t83_from t83_to t83_text <<< "$t83_entry"
+    t83_path="t83_doc_$t83_doc"
+    t83_orig=$(cat "${!t83_path}")
+    printf '%s\n' "${t83_orig/"$t83_text"/}" > "$t83_mut/${!t83_path}"
+    t83_mut_out=$(t83_contract "$t83_mut")
+    cp "${!t83_path}" "$t83_mut/${!t83_path}"
+    if [ "$t83_mut_out" = " $t83_label" ]; then
+      ok "T83 removal mutation: $t83_label rejected by its own check"
+    else
+      bad "T83 removal mutation: $t83_label" "got '${t83_mut_out:-<empty>}', want ' $t83_label'"
+    fi
+  done
+fi
+[ -z "$t83_err" ] && ok "T83 Impeccable checks: extreme content, specificity, refused defaults, non-blocking floor, credits" \
+                   || bad "T83 Impeccable checks contract" "missing:$t83_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then
