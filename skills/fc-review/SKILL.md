@@ -19,7 +19,7 @@ Identify exactly what is under review and pin its boundaries.
 | Branch | `git diff <base>...HEAD` |
 | PR | `gh pr diff <n>` |
 | Spec or plan | the file, plus the requirement it claims to satisfy |
-| Shortcut ledger | `git grep -nE '(#|//|/[*]) ?shortcut:'`; one row per marker with its limit and trigger, tagged `no-trigger` when it names none |
+| Shortcut ledger | `git grep -nE '(#|//|/[*]|--|;)[[:space:]]*shortcut:'`; one row per marker with its limit and trigger, tagged `no-trigger` when it names none |
 
 Read the artifact yourself. A description of a change is not the change.
 

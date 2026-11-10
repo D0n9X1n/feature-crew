@@ -63,10 +63,10 @@ Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md
 FC_STRICT=1 bash tests/framework_test.sh
 ```
 
-The suite checks that rules are present, not that they change what the model does. `evals/` holds behavior cases for `claude plugin eval`: each runs with and without the plugin, with a result grader and a process grader. They call real models and cost money, so they run by hand before a release that changes prompts, not in CI. Two cases seed a small project with a scaffold script, so pass `--scaffold` and grant the edit tools:
+The suite checks that rules are present, not that they change what the model does. `evals/` holds behavior cases for `claude plugin eval`: each runs with and without the plugin, with a result grader and a process grader. They call real models and cost money, so they run by hand before a release that changes prompts, not in CI. Two cases seed a small project with a scaffold script, so pass `--scaffold`, grant the edit tools, and grant a sandboxed `python3` so the writer can run its failing test first:
 
 ```bash
-claude plugin eval . --scaffold --allow-tools Edit Write --runs 2 --max-cost-usd 5 --no-publish
+claude plugin eval . --scaffold --allow-tools Edit Write "Bash(python3 *)" --runs 2 --max-cost-usd 5 --no-publish
 ```
 
 ## Layout

@@ -3840,7 +3840,7 @@ fi
                    || bad "T81 designer contract" "missing:$t81_err"
 
 # ---------------------------------------------------------------- T82
-# v6.5.0 Ponytail practices (#77-#81), adapted from Ponytail (MIT): writers
+# v6.5.0 Ponytail practices (#76-#80), adapted from Ponytail (MIT): writers
 # take the smallest complete change and never shrink tests; QA and /fc-review
 # add lean and scale lenses that never outrank correctness; /fc-review reports
 # numbered findings with Verdict and Not checked; a deliberate shortcut
@@ -3855,7 +3855,8 @@ t82_doc_dev=agents/fc-developer.md
 t82_doc_qacode=agents/fc-qa-code.md
 t82_doc_qaspec=agents/fc-qa-spec.md
 t82_doc_review=skills/fc-review/SKILL.md
-t82_docs=(small run complex dev qacode qaspec review)
+t82_doc_bof=skills/fc-build-or-fix/SKILL.md
+t82_docs=(small run complex dev qacode qaspec review bof)
 # label|doc|section start|section end|clause
 t82_rules=(
   'small-credit|small|^# Smallest change$|^## |Adapted from [Ponytail](https://github.com/DietrichGebert/ponytail) (MIT).'
@@ -3873,6 +3874,8 @@ t82_rules=(
   'edge-tie|small|^## Complete, not lazy$|^## |Between options of equal size, take the one that is correct on edge cases.'
   'never-cut|small|^## Never cut$|^## |validation at trust boundaries, error handling that prevents data loss, security, accessibility, the failing test and its edge cases, and anything the user asked for.'
   'shortcut-mark|small|^## Shortcuts$|^## |A deliberate shortcut with a known limit carries a code comment: `shortcut: <the limit>, <when to upgrade>`.'
+  'bof-jdi-small|bof|^### Just Do It$|^### |3. Make the smallest complete change per [reference/smallest-change.md](reference/smallest-change.md).'
+  'bof-standard-small|bof|^### Standard$|^### |minimal code per [reference/smallest-change.md](reference/smallest-change.md)'
   'run-load|run|^## Change size$|^## |Load [smallest-change.md](smallest-change.md) before writing production code, and paste it into every developer task.'
   'complex-paste|complex|^8\. \*\*Implementation|^9\. |Paste each task'"'"'s full text inline, with [smallest-change.md](smallest-change.md),'
   'dev-green|dev|^## TDD, non-negotiable$|^## |apply the smallest-change rules pasted into your task'
@@ -3884,7 +3887,7 @@ t82_rules=(
   'qa-shortcut|qacode|^## Rules$|^## |A `shortcut:` comment that names its limit is a decision, not a finding, unless the assumed load already crosses it.'
   'qa-not-checked|qacode|^## Report format$|^## |**Not checked:** <what you could not verify>'
   'qaspec-not-checked|qaspec|^## Report format$|^## |**Not checked:** <what you could not verify>'
-  'review-ledger|review|^## 1 — Establish the artifact$|^## |Shortcut ledger | `git grep -nE '"'"'(#|//|/[*]) ?shortcut:'"'"'`; one row per marker with its limit and trigger, tagged `no-trigger` when it names none'
+  'review-ledger|review|^## 1 — Establish the artifact$|^## |Shortcut ledger | `git grep -nE '"'"'(#|//|/[*]|--|;)[[:space:]]*shortcut:'"'"'`; one row per marker with its limit and trigger, tagged `no-trigger` when it names none'
   'review-lean|review|^## 2 — Pick lenses$|^## |**Lean** — code that should not exist or should be smaller; name the helper or library to reuse.'
   'review-scale|review|^## 2 — Pick lenses$|^## |**Scale** — state the load you assumed; races, lists that only grow, a query per item.'
   'review-summary|review|^## 3 — Report$|^## |Start with `What this change does:` in two or three plain sentences.'
@@ -3963,7 +3966,18 @@ for t82b_case in evals/reuses-existing-helper evals/marks-shortcut; do
     || t82b_err="$t82b_err $t82b_case:scaffold"
 done
 git check-ignore -q evals/results/x || t82b_err="$t82b_err results-not-ignored"
-[ -z "$t82b_err" ] && ok "T82b eval suite: 3 cases, each with a prompt and result + process graders" \
+# QA (v6.5.0): an empty marker, an unused import, and a writer with no shell
+# to run its failing test each passed the first suite. The graders must check
+# a limit and trigger and an actual call, and the documented run grants a
+# sandboxed python3 so TDD can run.
+grep -qF "pattern: '#\\s*shortcut:\\s*[^,\\s][^,]*,\\s*\\S'" \
+  evals/marks-shortcut/graders/shortcut-marker.md || t82b_err="$t82b_err shortcut-needs-limit-and-trigger"
+grep -qF "pattern: 'slugify\\('" evals/reuses-existing-helper/graders/calls-helper.md 2>/dev/null \
+  || t82b_err="$t82b_err reuse-needs-call"
+for t82b_doc in wiki/Development-and-Release.md wiki/Development-and-Release-zh-CN.md; do
+  grep -qF -- '--allow-tools Edit Write "Bash(python3 *)"' "$t82b_doc" || t82b_err="$t82b_err $t82b_doc:no-shell-grant"
+done
+[ -z "$t82b_err" ] && ok "T82b eval suite: 3 cases, result + process graders, strict markers, shell grant documented" \
                     || bad "T82b eval suite" "$t82b_err"
 
 echo
