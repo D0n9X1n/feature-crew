@@ -44,7 +44,7 @@ Explore before production edits. If exploration reveals ambiguity, coupling, ris
 
 1. Explore enough to confirm eligibility and the existing pattern.
 2. Write a failing test first; for docs, write objective acceptance checks first.
-3. Make the minimal change.
+3. Make the smallest complete change per [reference/smallest-change.md](reference/smallest-change.md).
 4. Run observed verification and paste its output.
 5. Commit only if the overall user request authorizes a commit.
 
@@ -56,7 +56,7 @@ No track approval, spec, role-agent dispatch, or QA pass.
 2. Think first: research through `/fc-research` per [reference/industry-survey.md](reference/industry-survey.md), take the approaches and recommendation from `/fc-brainstorm`, settle the direction and decisions with `/fc-grill-me`, then write a bullet spec in chat: purpose · files (each with its one job and the existing code it extends) · component map · 3–8 behavior bullets · must-pass full-suite command · non-goals · prior-art table and any trade-off rows. Run [reference/design-check.md](reference/design-check.md); the `/fc-brainstorm` panel is its second opinion, and after an explicit skip its blind second opinion applies unless the design is super straightforward. When the change alters a user-visible interface, dispatch `feature-crew:fc-designer` in brief mode with an explicit `model` override from the authoring rule and fold its brief into the spec. Look up facts; ask only user-owned decisions.
 3. **Cross-audit the spec** when it touches the escalation list. Otherwise skip as one of the two exemptions in the audit rule.
 4. User approves spec unless waived.
-5. Implement TDD: failing test → observe failure → minimal code → observe pass → refactor.
+5. Implement TDD: failing test → observe failure → minimal code per [reference/smallest-change.md](reference/smallest-change.md) → observe pass → refactor.
 6. Run the must-pass full suite and paste output.
 7. For a user-visible interface change, first dispatch `feature-crew:fc-designer` in critique mode with the selector below. Dispatch `feature-crew:fc-qa-code` in one-clue mode for combined spec + code review, using the selector below.
 8. Judge the finding: CRITICAL → fix; IMPORTANT → fix or follow-up; PASS → done.

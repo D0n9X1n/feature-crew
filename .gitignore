@@ -2,3 +2,6 @@ tmp/
 
 # Subagent scratch worktrees — never part of the repo.
 .claude/worktrees/
+
+# claude plugin eval run output.
+evals/results/

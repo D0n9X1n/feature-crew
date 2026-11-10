@@ -18,6 +18,8 @@ You verify that an implementation matches its specification — nothing more, no
 - File: <path:line>
 - Issue: <which spec requirement is violated, and how>
 - Repro: <command or steps that show the gap>
+
+**Not checked:** <what you could not verify>
 ```
 
 List every violated or untested requirement, one block each: each one blocks the gate on its own, and nothing collects deferred findings.

@@ -63,9 +63,9 @@ flowchart TB
 
 | 组件 | 职责 | 关键文件 | 证据 |
 |---|---|---|---|
-| fc-build-or-fix 主流程 | 让主会话担任 PM：对需求分类、选择轨道并执行、执行硬性关卡、选择审查者。进入时加载运行纪律（反馈检查、检查点、运行时证据）。`fc-pm.md` 只指向这里。 | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md：*Need classifier*、*Step 1*、*Hard gates*、*Cross-family audit at hard gates*；[run-discipline.md][run] |
+| fc-build-or-fix 主流程 | 让主会话担任 PM：对需求分类、选择轨道并执行、执行硬性关卡、选择审查者。进入时加载运行纪律（反馈检查、检查点、最小改动规则、运行时证据）。`fc-pm.md` 只指向这里。 | [SKILL.md][bof], [reference/][ref], [fc-pm.md][pm] | SKILL.md：*Need classifier*、*Step 1*、*Hard gates*、*Cross-family audit at hard gates*；[run-discipline.md][run] |
 | 路由技能 | 各自解决一个缺失要素并把结果返回调用方；`fc-research` 还有一条针对单个有界问题的聚焦路径 | [research][research], [grill-me][grill], [brainstorm][brain], [second-opinion][second], [debug][debug] | SKILL.md：*Need classifier*；fc-research：*Focused path* |
-| 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论，tech lead 整体审查 Complex 工作，designer 编写 UI/UX 设计简报并评审运行中的界面。六个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
+| 角色提示词 | 子代理简报：architect 写计划（≤500 行），developer 用最小的完整改动完成一个 TDD 任务，`fc-qa-spec` 和 `fc-qa-code` 各返回一个列出全部阻断性问题的结论（`fc-qa-code` 还检查精简和规模），tech lead 整体审查 Complex 工作，designer 编写 UI/UX 设计简报并评审运行中的界面。六个角色都提交了最小权限的 `tools:` 列表和 `disallowedTools: Agent, Skill` | [agents/][agents] | [complex-track.md][complex]：*Flow* |
 | fc-ship | 分别请求每项批准，运行一个后台 CI 监视，只 squash 合并已验证的 head，可选发布，并移交给 fc-clean | [SKILL.md][ship] | fc-ship：第 1–7 节 |
 | fc-clean | 目标未完成时绝不运行；只删除凭据证明由任务创建的内容，不做备份；其余内容询问一次 | [SKILL.md][clean] | fc-clean：*Goal gate*、*Receipts*、*Remove*、*Keep, ask once, report* |
 | 独立技能 | 可选的审查、图示和重装，不在构建路径上 | [fc-review][review], [fc-explain][explain], [fc-update][update] | 各技能的描述或相关技能列表；fc-update 第 2–6 步 |

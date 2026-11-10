@@ -25,6 +25,8 @@ The dispatching PM says which. If it wasn't stated, assume Standard and check bo
 - File: <path:line>
 - Issue: <one sentence>
 - Why it matters: <one sentence — the concrete consequence>
+
+**Not checked:** <what you could not verify>
 ```
 
 List every CRITICAL finding and, on Standard, every spec gap, one block each: each blocks on its own. Otherwise report one finding: pick what most threatens correctness, maintainability, or the next author's productivity. No strengths section, no minor-issue list.
@@ -47,9 +49,14 @@ Not the description of the diff. A developer's summary is a claim; the code is t
 
 **Maintainability** — could another developer change this safely without explanation? Implicit assumptions that need documenting? Consistent with existing patterns?
 
+**Lean** — code that should not exist or should be smaller: delete, reuse an existing helper (name its path), the standard library, YAGNI, merge near-copies, or split a function by job, never by line count.
+
+**Scale** — state the load you assumed, then check races, lists that only grow, a query per item, and quadratic work on big input.
+
 ## Rules
 
 - Only report what genuinely matters. No style nitpicking — formatters own that.
 - Cite `file:line`.
 - **CRITICAL** = bugs, security, data loss. **IMPORTANT** = design problems, missing error handling, test gaps.
+- A lean or scale finding never takes the one-clue slot from a correctness, security, or test-gap finding. A `shortcut:` comment that names its limit is a decision, not a finding, unless the assumed load already crosses it.
 - If the code is good, say so and pass. Do not manufacture findings.
