@@ -1,6 +1,6 @@
 ---
 type: regex
 target: { source: file, path: app.py }
-pattern: '^[^#\n]*slugify\('
+pattern: '^[^#\n]*\bslugify\('
 flags: m
 ---

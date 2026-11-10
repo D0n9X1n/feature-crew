@@ -3973,7 +3973,7 @@ git check-ignore -q evals/results/x || t82b_err="$t82b_err results-not-ignored"
 # sandboxed python3 so TDD can run.
 grep -qF "pattern: '#[ \\t]*shortcut:[ \\t]*[^,\\s][^,\\n]*,[ \\t]*\\S'" \
   evals/marks-shortcut/graders/shortcut-marker.md || t82b_err="$t82b_err shortcut-needs-limit-and-trigger"
-{ grep -qF "pattern: '^[^#\\n]*slugify\\('" evals/reuses-existing-helper/graders/calls-helper.md \
+{ grep -qF "pattern: '^[^#\\n]*\\bslugify\\('" evals/reuses-existing-helper/graders/calls-helper.md \
   && grep -qx 'flags: m' evals/reuses-existing-helper/graders/calls-helper.md; } 2>/dev/null \
   || t82b_err="$t82b_err reuse-needs-call"
 for t82b_doc in wiki/Development-and-Release.md wiki/Development-and-Release-zh-CN.md; do
