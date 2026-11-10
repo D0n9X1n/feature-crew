@@ -19,6 +19,7 @@ Identify exactly what is under review and pin its boundaries.
 | Branch | `git diff <base>...HEAD` |
 | PR | `gh pr diff <n>` |
 | Spec or plan | the file, plus the requirement it claims to satisfy |
+| Shortcut ledger | `git grep -nE '(#|//|/[*]) ?shortcut:'`; one row per marker with its limit and trigger, tagged `no-trigger` when it names none |
 
 Read the artifact yourself. A description of a change is not the change.
 
@@ -31,32 +32,23 @@ Two or three, matched to the artifact. More lenses produce longer reports, not b
 - **Maintainability** — could a stranger change this safely in six months?
 - **Test quality** — do the tests verify behavior or mocks? Would they catch a regression?
 - **Security** — only when the artifact touches auth, secrets, input handling, or persistence.
+- **Lean** — code that should not exist or should be smaller; name the helper or library to reuse.
+- **Scale** — state the load you assumed; races, lists that only grow, a query per item.
 
 Dispatch at least one lens subagent for every review, whatever the diff size; add parallel lenses when the diff is large. One lens per agent; each returns every finding that has a failure scenario, most severe first. Notes the main session writes itself are labeled same-session and never count as the independent review.
 Every lens dispatch carries an explicit `model` override chosen by the canonical selector in `/fc-build-or-fix` when the artifact has a known model author. For a human or unknown author, request the first review-pair member and label the review advisory with independence unverified. Read the recorded model of each lens as [gate-provenance.md](../fc-build-or-fix/reference/gate-provenance.md) describes and exclude any result with missing or unknown provenance or a model in the author family. Zero usable lenses makes the review unavailable, never PASS or an inline review.
 
 ## 3 — Report
 
-Findings first, ranked by severity. For each:
+Start with `What this change does:` in two or three plain sentences. Number findings across **Must fix**, **Should fix**, and **Nice to have**, so the user can say "fix 2 and 5". Each finding gives `file:line`, the problem in one sentence, **a concrete failure scenario**, the smallest fix, and what happens if it is skipped.
 
-- `file:line`
-- what is wrong, in one sentence
-- **a concrete failure scenario** — inputs or state that produce the wrong result
+A finding with no failure scenario is a preference, not a defect; drop it or label it as taste, and leave style to formatters. A `shortcut:` comment that names its limit is a decision, not a finding, unless the assumed load already crosses it. Report every finding that has a failure scenario; keep lower-severity ones to one line each.
 
-A finding with no failure scenario is a preference, not a defect. Drop it or label it as taste.
-
-End with a verdict:
-
-- **PASS** — nothing material found.
-- **CRITICAL** — correctness, security, or data-loss defect. Merging causes harm.
-- **IMPORTANT** — real problem, not a blocker on its own.
-
-Report every finding that has a failure scenario; keep lower-severity ones to one line each.
+End with `Verdict:`, then `Not checked:` naming anything material you could not verify. **PASS** — nothing material found. **CRITICAL** — a Must fix: correctness, security, or data loss; merging causes harm. **IMPORTANT** — a Should fix: a real problem, not a blocker on its own.
 
 ## Rules
 
 - Do not manufacture findings. "This is clean" is a valid, useful result.
-- No style nitpicking — formatters own that.
 - Verify claims against the code; a developer's report is a claim, not evidence.
 - Say when you could not verify something rather than assuming it works.
 

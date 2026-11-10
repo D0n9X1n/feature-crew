@@ -72,13 +72,14 @@ fi
 
 # ---------------------------------------------------------------- T2
 # Baseline raised from 1223 to 1251 for /fc-clean by explicit user override
-# (framework-cap-override, 2026-10-24). It is the new total + 1: any growth
-# needs another override.
+# (framework-cap-override, 2026-10-24), then from 1251 to 1283 for the Ponytail
+# practices (framework-cap-override, 2026-11-09: the user approved a large
+# budget). It is the new total + 1: any growth needs another override.
 total=$(framework_files | xargs wc -l | tail -1 | awk '{print $1}')
-if [ "${total:-99999}" -le 1500 ] && [ "${total:-99999}" -lt 1251 ]; then
-  ok "T2 framework total = ${total} (<=1500, and < 1251 baseline)"
+if [ "${total:-99999}" -le 1500 ] && [ "${total:-99999}" -lt 1283 ]; then
+  ok "T2 framework total = ${total} (<=1500, and < 1283 baseline)"
 else
-  bad "T2 framework total" "total=${total}; need <=1500 AND <1251 (baseline before this change)"
+  bad "T2 framework total" "total=${total}; need <=1500 AND <1283 (baseline before this change)"
 fi
 
 # ---------------------------------------------------------------- T3
@@ -3837,6 +3838,133 @@ if [ -z "$t81_err" ]; then
 fi
 [ -z "$t81_err" ] && ok "T81 designer role: brief, critique, user-wins, and its dispatch points pinned" \
                    || bad "T81 designer contract" "missing:$t81_err"
+
+# ---------------------------------------------------------------- T82
+# v6.5.0 Ponytail practices (#77-#81), adapted from Ponytail (MIT): writers
+# take the smallest complete change and never shrink tests; QA and /fc-review
+# add lean and scale lenses that never outrank correctness; /fc-review reports
+# numbered findings with Verdict and Not checked; a deliberate shortcut
+# carries a `shortcut:` marker that review treats as a decision and can list;
+# and evals/ holds paired with/without-plugin behavior cases. Section-scoped
+# like T81: removing one clause must produce exactly its own diagnostic.
+t82_err=""
+t82_doc_small=skills/fc-build-or-fix/reference/smallest-change.md
+t82_doc_run=skills/fc-build-or-fix/reference/run-discipline.md
+t82_doc_complex=skills/fc-build-or-fix/reference/complex-track.md
+t82_doc_dev=agents/fc-developer.md
+t82_doc_qacode=agents/fc-qa-code.md
+t82_doc_qaspec=agents/fc-qa-spec.md
+t82_doc_review=skills/fc-review/SKILL.md
+t82_docs=(small run complex dev qacode qaspec review)
+# label|doc|section start|section end|clause
+t82_rules=(
+  'small-credit|small|^# Smallest change$|^## |Adapted from [Ponytail](https://github.com/DietrichGebert/ponytail) (MIT).'
+  'small-scope|small|^# Smallest change$|^## |It governs production code only; tests follow TDD and are never shrunk to save lines.'
+  'ladder-need|small|^## Ladder$|^## |1. Does it need to exist? Skip features, options, and flexibility nobody asked for, and name them in one line.'
+  'ladder-reuse|small|^## Ladder$|^## |2. Already in this codebase? Reuse the helper, component, or pattern the way the surrounding code does.'
+  'ladder-stdlib|small|^## Ladder$|^## |3. The standard library or a platform feature, unless the project has its own.'
+  'ladder-dep|small|^## Ladder$|^## |4. An installed dependency. Never add a dependency for a few lines.'
+  'ladder-line|small|^## Ladder$|^## |5. One line a reader gets at a glance.'
+  'ladder-min|small|^## Ladder$|^## |6. Otherwise, the minimum code that works.'
+  'complete|small|^## Complete, not lazy$|^## |Be lazy about the solution, never about the change: reach every caller, test, fixture, config, and export the change touches.'
+  'root-cause|small|^## Complete, not lazy$|^## |For a bug fix, grep every caller of the function first, then fix the root cause once in the shared code.'
+  'no-speculative|small|^## Complete, not lazy$|^## |No abstraction, wrapper, option, config, or "for later" code nobody asked for. Deletion beats addition.'
+  'keep-guards|small|^## Complete, not lazy$|^## |Code you move or merge keeps its error handling and validation.'
+  'edge-tie|small|^## Complete, not lazy$|^## |Between options of equal size, take the one that is correct on edge cases.'
+  'never-cut|small|^## Never cut$|^## |validation at trust boundaries, error handling that prevents data loss, security, accessibility, the failing test and its edge cases, and anything the user asked for.'
+  'shortcut-mark|small|^## Shortcuts$|^## |A deliberate shortcut with a known limit carries a code comment: `shortcut: <the limit>, <when to upgrade>`.'
+  'run-load|run|^## Change size$|^## |Load [smallest-change.md](smallest-change.md) before writing production code, and paste it into every developer task.'
+  'complex-paste|complex|^8\. \*\*Implementation|^9\. |Paste each task'"'"'s full text inline, with [smallest-change.md](smallest-change.md),'
+  'dev-green|dev|^## TDD, non-negotiable$|^## |apply the smallest-change rules pasted into your task'
+  'dev-not-checked|dev|^## Report$|^## |**Not checked:** [what you skipped or could not verify, and any risk]'
+  'dev-flag|dev|^## Report$|^## |a known limit without a `shortcut:` marker'
+  'qa-lean|qacode|^## What to look for$|^## |**Lean** — code that should not exist or should be smaller: delete, reuse an existing helper (name its path), the standard library, YAGNI, merge near-copies, or split a function by job, never by line count.'
+  'qa-scale|qacode|^## What to look for$|^## |**Scale** — state the load you assumed, then check races, lists that only grow, a query per item, and quadratic work on big input.'
+  'qa-rank|qacode|^## Rules$|^## |A lean or scale finding never takes the one-clue slot from a correctness, security, or test-gap finding.'
+  'qa-shortcut|qacode|^## Rules$|^## |A `shortcut:` comment that names its limit is a decision, not a finding, unless the assumed load already crosses it.'
+  'qa-not-checked|qacode|^## Report format$|^## |**Not checked:** <what you could not verify>'
+  'qaspec-not-checked|qaspec|^## Report format$|^## |**Not checked:** <what you could not verify>'
+  'review-ledger|review|^## 1 — Establish the artifact$|^## |Shortcut ledger | `git grep -nE '"'"'(#|//|/[*]) ?shortcut:'"'"'`; one row per marker with its limit and trigger, tagged `no-trigger` when it names none'
+  'review-lean|review|^## 2 — Pick lenses$|^## |**Lean** — code that should not exist or should be smaller; name the helper or library to reuse.'
+  'review-scale|review|^## 2 — Pick lenses$|^## |**Scale** — state the load you assumed; races, lists that only grow, a query per item.'
+  'review-summary|review|^## 3 — Report$|^## |Start with `What this change does:` in two or three plain sentences.'
+  'review-numbered|review|^## 3 — Report$|^## |Number findings across **Must fix**, **Should fix**, and **Nice to have**, so the user can say "fix 2 and 5".'
+  'review-fields|review|^## 3 — Report$|^## |`file:line`, the problem in one sentence, **a concrete failure scenario**, the smallest fix, and what happens if it is skipped'
+  'review-shortcut|review|^## 3 — Report$|^## |A `shortcut:` comment that names its limit is a decision, not a finding, unless the assumed load already crosses it.'
+  'review-not-checked|review|^## 3 — Report$|^## |End with `Verdict:`, then `Not checked:` naming anything material you could not verify.'
+)
+# label|doc|section start|section end|text that must stay absent from that section
+t82_absent=(
+  'tests-not-shrunk|small|^## Ladder$|^## |shrink the test'
+)
+t82_contract() { # root holding the t82_doc_* paths
+  local entry label doc from to text path section errors=""
+  for entry in "${t82_rules[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t82_doc_$doc"
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] || errors="$errors $label"
+  done
+  for entry in "${t82_absent[@]}"; do
+    IFS='|' read -r label doc from to text <<< "$entry"
+    path="t82_doc_$doc"
+    section=$(sed -n "/$from/,/$to/{/$to/!p;}" "$1/${!path}" 2>/dev/null)
+    [[ "$section" == *"$text"* ]] && errors="$errors absent:$label"
+  done
+  printf '%s\n' "$errors"
+}
+t82_err=$(t82_contract .)
+if [ -z "$t82_err" ]; then
+  t82_mut=$(mktemp -d)
+  CLEANUP_PATHS+=("$t82_mut")
+  for t82_doc in "${t82_docs[@]}"; do
+    t82_path="t82_doc_$t82_doc"
+    mkdir -p "$t82_mut/$(dirname "${!t82_path}")" && cp "${!t82_path}" "$t82_mut/${!t82_path}"
+  done
+  for t82_entry in "${t82_rules[@]}"; do
+    IFS='|' read -r t82_label t82_doc t82_from t82_to t82_text <<< "$t82_entry"
+    t82_path="t82_doc_$t82_doc"
+    t82_orig=$(cat "${!t82_path}")
+    printf '%s\n' "${t82_orig/"$t82_text"/}" > "$t82_mut/${!t82_path}"
+    t82_mut_out=$(t82_contract "$t82_mut")
+    cp "${!t82_path}" "$t82_mut/${!t82_path}"
+    if [ "$t82_mut_out" = " $t82_label" ]; then
+      ok "T82 removal mutation: $t82_label rejected by its own check"
+    else
+      bad "T82 removal mutation: $t82_label" "got '${t82_mut_out:-<empty>}', want ' $t82_label'"
+    fi
+  done
+fi
+[ -z "$t82_err" ] && ok "T82 Ponytail practices: ladder, never-cut, lenses, report, shortcut marker pinned" \
+                   || bad "T82 Ponytail practices contract" "missing:$t82_err"
+
+# T82b: the behavior eval suite loads. `claude plugin eval` rejects a case
+# without a grader, so every case directory needs a prompt.md and at least one
+# graders/*.md with a known type; results/ stays out of git. The suite itself
+# costs model calls and runs by hand (Development and Release), not here.
+t82b_err=""
+t82b_cases=(evals/routes-build-request evals/reuses-existing-helper evals/marks-shortcut)
+for t82b_case in "${t82b_cases[@]}"; do
+  [ -f "$t82b_case/prompt.md" ] || { t82b_err="$t82b_err $t82b_case:no-prompt"; continue; }
+  head -1 "$t82b_case/prompt.md" | grep -qx -- '---' || t82b_err="$t82b_err $t82b_case:no-frontmatter"
+  t82b_n=0
+  for t82b_g in "$t82b_case"/graders/*.md; do
+    [ -f "$t82b_g" ] || continue
+    t82b_n=$((t82b_n + 1))
+    sed -n '2,/^---$/p' "$t82b_g" | grep -qE '^type: (regex|tool_used|tool_order|file_exists|llm|baseline)$' \
+      || t82b_err="$t82b_err $t82b_g:bad-type"
+  done
+  [ "$t82b_n" -ge 2 ] || t82b_err="$t82b_err $t82b_case:needs-result-and-process-graders"
+done
+for t82b_case in evals/reuses-existing-helper evals/marks-shortcut; do
+  [ -f "$t82b_case/case.yaml" ] && [ -f "$t82b_case/fixture.sh" ] \
+    && grep -q '^  scaffold_script: fixture.sh$' "$t82b_case/case.yaml" \
+    && bash -n "$t82b_case/fixture.sh" 2>/dev/null \
+    || t82b_err="$t82b_err $t82b_case:scaffold"
+done
+git check-ignore -q evals/results/x || t82b_err="$t82b_err results-not-ignored"
+[ -z "$t82b_err" ] && ok "T82b eval suite: 3 cases, each with a prompt and result + process graders" \
+                    || bad "T82b eval suite" "$t82b_err"
 
 echo
 if [ "$SKIP" -gt 0 ]; then

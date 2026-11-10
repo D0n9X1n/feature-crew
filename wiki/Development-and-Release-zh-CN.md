@@ -63,6 +63,12 @@ Feature-Crew 的修改最多走 Standard 轨道。编排层（`agents/fc-pm.md` 
 FC_STRICT=1 bash tests/framework_test.sh
 ```
 
+测试套件只检查规则是否存在，不检查它们是否改变了模型的行为。`evals/` 存放 `claude plugin eval` 的行为用例：每个用例分别在加载和不加载插件时运行，并带一个结果评分器和一个过程评分器。它们会调用真实模型并产生费用，所以在修改提示词的版本发布前手动运行，不在 CI 中运行。有两个用例用脚手架脚本生成一个小项目，所以要传 `--scaffold` 并授予编辑工具：
+
+```bash
+claude plugin eval . --scaffold --allow-tools Edit Write --runs 2 --max-cost-usd 5 --no-publish
+```
+
 ## 目录结构
 
 ```text
@@ -74,6 +80,7 @@ feature-crew/
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test
 ├── wiki/                      # this wiki: English pages and -zh-CN twins
+├── evals/                     # claude plugin eval 行为用例（手动运行）
 ├── tests/framework_test.sh
 ├── .claude/CLAUDE.md          # repository instructions
 └── install.sh / install.ps1

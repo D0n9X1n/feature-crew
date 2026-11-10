@@ -52,6 +52,7 @@ The wiki is Feature-Crew's documentation center; README.md keeps only an introdu
 | Role prompts | `agents/fc-*.md` |
 | Session routing hook and its payload | `hooks/` |
 | Self-test | `tests/framework_test.sh` |
+| Behavior evals (`claude plugin eval`, run by hand) | `evals/` |
 | CI | `.github/workflows/` |
 | Wiki pages (English entry points) | `wiki/Home.md`, `wiki/Usage.md`, `wiki/Architecture.md`, `wiki/Development-and-Release.md` |
 | Wiki publisher, checker, and their test | `scripts/` |

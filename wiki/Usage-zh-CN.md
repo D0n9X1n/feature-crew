@@ -41,6 +41,12 @@ copilot plugin install feature-crew@feature-crew
 
 当 Standard 或 Complex 变更改动了用户能看到的界面时，`fc-designer` 角色会参与两次。计划之前，它先读你现有的界面和设计系统，再把一份设计简报写进规格：目标用户和主要任务、4–6 个颜色 token、字体角色、间距和字号比例、每种状态（空、加载、错误、成功、禁用、悬停、焦点），以及在 1440、768、375 px 下的 2–3 种布局。它还会点名要避免的 AI 通用默认样式，比如处处用 Inter、紫色渐变。构建之后，它用这三种宽度的截图评审运行中的界面，对照设计简报、Nielsen 可用性原则和 WCAG 2.2 AA，要求 axe 零违规，并用键盘走一遍。评审由另一模型家族运行。没有运行环境时，它报告“无法验证”，不会直接通过。你明确的偏好或现有设计系统始终优先于它的默认值。Just Do It 变更不经过它。
 
+## 最小改动与审查
+
+每个写代码的角色，不论是 PM 会话还是 developer 子代理，都采用第一个能完整解决问题的方案：跳过没人要求的东西，复用代码库已有的部分，其次是标准库，再次是已安装的依赖（绝不为几行代码新增依赖），然后是一行清楚的代码，最后才写新代码。它仍然要覆盖改动涉及的每个调用方、测试和测试数据，在根源处一次修好 bug，并且绝不删减信任边界上的校验、防止数据丢失的错误处理、安全、无障碍、失败的测试，以及你要求的任何内容。测试绝不会为了省行数而缩减。有已知限制的刻意捷径要带一条 `shortcut:` 注释，写明限制和何时升级。审查者把标注过的捷径当作决定，`/fc-review` 可以把所有标注列成一张台账，并标出没写升级条件的那些。
+
+QA 和 `/fc-review` 还会多看两个视角：精简（不该存在的代码、可以复用的辅助函数或库、应该合并的近似副本）和规模（它们假设的负载、竞态、只增不减的列表、每项一次查询）。精简或规模问题永远不会挤掉正确性、安全或测试缺口问题。`/fc-review` 先说明这次改动做了什么，把问题按“必须修”“应该修”“可以改”统一编号，方便你回答“修 2 和 5”，最后给出结论和一行 `Not checked:`。每份最终报告都以未检查的内容收尾。这些做法改编自 [Ponytail](https://github.com/DietrichGebert/ponytail)（MIT）。
+
 ## 会话路由
 
 技能只有在模型选择时才会运行，所以代码变更可能跳过 `/fc-build-or-fix`，尤其是一个小请求逐渐扩大成新仓库、重构或发布时。插件的 SessionStart 钩子会把一段简短的路由约定放进会话：在 Claude Code 中是启动、恢复、`/clear` 和压缩时；在 GitHub Copilot CLI 中是会话开始和恢复时。它输出 [routing.json](https://github.com/D0n9X1n/feature-crew/blob/main/hooks/routing.json)：把代码变更指向 `/fc-build-or-fix`，任务中途范围扩大时重新路由，推送、合并、发布和清理用 `/fc-ship`，跳过流程的工作在推送前用 `/fc-review`。需要证据的问题交给 `/fc-research`，方案选择交给 `/fc-brainstorm`，无法解释的故障交给 `/fc-debug`，简单问题直接回答；自主会话按上面的“先思考再构建”处理。它还设定了一种说人话的回答风格，取自 [caveman](https://github.com/JuliusBrussee/caveman) 和 [shuorenhua（说人话）](https://github.com/MrGeDiao/shuorenhua) 技能：先给答案，用你的语言；句子短、用词常见；删掉客套和废话，但保留每个事实、限定条件和否定；代码和报错原样保留；安全警告和破坏性操作的确认要写完整；只删冗余，不删推理。你自己的输出风格或明确要求优先于它。这段文字只是指引，不是强制：它让路由更可能发生，但不能保证。要关闭它，用 `claude plugin disable feature-crew@feature-crew` 或 `copilot plugin disable feature-crew@feature-crew` 停用插件。

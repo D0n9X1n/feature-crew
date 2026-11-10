@@ -24,7 +24,7 @@ failing test → run it (must fail) → minimal code → run it (must pass) → 
 ```
 
 - **RED** — one minimal test showing the desired behavior. Clear name. Real behavior, not mocks. **Verify RED:** run it and confirm it fails because the feature is missing, not because of a typo. A test that passes immediately is testing something that already exists; fix the test.
-- **GREEN** — the simplest code that passes. No extra features, no "while I'm here." **Verify GREEN:** run everything. All passing, no new warnings.
+- **GREEN** — the simplest code that passes: apply the smallest-change rules pasted into your task. No extra features, no "while I'm here." **Verify GREEN:** run everything. All passing, no new warnings.
 - **REFACTOR** — clean up, keep tests green. Then commit.
 
 Code written before its test gets deleted and redone. No exceptions.
@@ -59,9 +59,10 @@ Check completeness (everything in the task spec, edge cases handled), quality (a
 **Files:** created / modified
 **Commits:** [hash] [message]
 **Self-review:** [what you found and fixed]
+**Not checked:** [what you skipped or could not verify, and any risk]
 **Concerns / Blocker / Missing context:** [if applicable]
 ```
 
 **Paste the test output; do not describe it.** "All tests pass" is a claim. The output is the evidence. A report without it is incomplete regardless of status. **The command must be the full suite, not just your task's test.** A focused test passing while the suite is red is not DONE — it is DONE_WITH_CONCERNS at best, and the failing output goes in the report. If the suite was already red before you started, say so and name the pre-existing failures, so nobody attributes them to your task.
 
-**Red flags:** code before its test, a test that passes immediately, files outside your task, features not in the task spec, "just this once" on TDD, and guessing instead of looking it up or asking.
+**Red flags:** code before its test, a test that passes immediately, files outside your task, features not in the task spec, a known limit without a `shortcut:` marker, "just this once" on TDD, and guessing instead of looking it up or asking.

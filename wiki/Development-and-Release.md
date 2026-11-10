@@ -63,6 +63,12 @@ Feature-Crew changes are Standard-track maximum. Orchestration (`agents/fc-pm.md
 FC_STRICT=1 bash tests/framework_test.sh
 ```
 
+The suite checks that rules are present, not that they change what the model does. `evals/` holds behavior cases for `claude plugin eval`: each runs with and without the plugin, with a result grader and a process grader. They call real models and cost money, so they run by hand before a release that changes prompts, not in CI. Two cases seed a small project with a scaffold script, so pass `--scaffold` and grant the edit tools:
+
+```bash
+claude plugin eval . --scaffold --allow-tools Edit Write --runs 2 --max-cost-usd 5 --no-publish
+```
+
 ## Layout
 
 ```text
@@ -74,6 +80,7 @@ feature-crew/
 ├── .github/workflows/         # test, release, and wiki pipelines
 ├── scripts/                   # wiki publisher, checker, and their test
 ├── wiki/                      # this wiki: English pages and -zh-CN twins
+├── evals/                     # claude plugin eval behavior cases (run by hand)
 ├── tests/framework_test.sh
 ├── .claude/CLAUDE.md          # repository instructions
 └── install.sh / install.ps1
